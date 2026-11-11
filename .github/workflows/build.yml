@@ -1,0 +1,54 @@
+name: Build
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Configure
+        run: cmake -S . -B build -A x64
+
+      - name: Build
+        run: cmake --build build --config Release --target DefectRefect --parallel
+
+      - name: Collect
+        shell: pwsh
+        run: |
+          $v = (Select-String -Path CMakeLists.txt -Pattern 'project\(DefectRefect VERSION ([0-9.]+)').Matches[0].Groups[1].Value
+          "VERSION=$v" | Out-File -FilePath $env:GITHUB_ENV -Append
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item "build/DefectRefect_artefacts/Release/Defect Refect.exe" "dist/Defect Refect v$v.exe"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DefectRefect-v${{ env.VERSION }}-windows
+          path: dist/
+
+  macos:
+    # Mac builds only when asked (they use a lot of Actions minutes). Set to true for that run.
+    if: false
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v5
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0
+      - name: Build
+        run: cmake --build build --config Release --target DefectRefect --parallel
+      - name: Collect
+        run: |
+          v=$(sed -n 's/.*project(DefectRefect VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)
+          echo "VERSION=$v" >> "$GITHUB_ENV"
+          mkdir -p dist
+          ditto "build/DefectRefect_artefacts/Release/Defect Refect.app" "dist/Defect Refect v$v.app"
+          cd dist && ditto -c -k --keepParent "Defect Refect v$v.app" "Defect Refect v$v-mac.zip" && rm -rf "Defect Refect v$v.app"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DefectRefect-v${{ env.VERSION }}-mac
+          path: dist/
