@@ -7,6 +7,7 @@
 #include "Hand.h"
 #include "Inspector.h"
 #include <functional>
+#include <future>
 #include <set>
 
 namespace dr
@@ -281,6 +282,108 @@ inline Stereo motionControl (const Stereo& y, double s, double rate)
     }
     return istft (S);
 }
+
+// ---------------------------------------------------------------- sweep fit (estimate.fit_lfo): speed, start phase and shape
+// The source's tone-over-time picture is matched against pink noise run through the effect.
+struct ToneLane { std::vector<Vec> L; std::vector<char> act; };
+inline ToneLane toneLane (const Vec& m, int perOct)
+{
+    const size_t n = 4096, hop = 1024, pad = n / 2, total = m.size() + 2 * pad, T = total >= n ? 1 + (total - n + hop - 1) / hop : 1;
+    static const Vec w = hannPeriodic (4096);
+    std::vector<double> e; for (int i = 0; ; ++i) { const double v = 60 * std::pow (2.0, (double) i / perOct); if (i > 0 && v > 16000 * 1.0000001) break; e.push_back (v); }
+    // numpy: arange(0, int(log2(16000/60)*perOct)+1)
+    e.resize ((size_t) (std::log2 (16000.0 / 60.0) * perOct) + 1);
+    for (size_t i = 0; i < e.size(); ++i) e[i] = 60 * std::pow (2.0, (double) i / perOct);
+    const size_t B = e.size() - 1; std::vector<std::vector<size_t>> sel (B);
+    for (size_t b = 0; b < B; ++b)
+    {
+        for (size_t k = 0; k <= n / 2; ++k) { const double f = (double) k * SR / (double) n; if (f >= e[b] && f < e[b + 1]) sel[b].push_back (k); }
+        if (sel[b].empty()) sel[b].push_back ((size_t) std::lround (e[b] * (double) n / SR));
+    }
+    ToneLane o; o.L.assign (B, Vec (T)); o.act.resize (T); Vec tot (T);
+    Vec re (n), im (n);
+    for (size_t t = 0; t < T; ++t)
+    {
+        for (size_t i = 0; i < n; ++i) { const long j = (long) (t * hop + i) - (long) pad; re[i] = (j >= 0 && j < (long) m.size()) ? m[(size_t) j] * w[i] : 0.0; im[i] = 0; }
+        fft (re, im); double sum = 0; Vec P (n / 2 + 1);
+        for (size_t k = 0; k <= n / 2; ++k) { P[k] = re[k] * re[k] + im[k] * im[k]; sum += P[k]; }
+        tot[t] = 10 * std::log10 (sum + 1e-12);
+        for (size_t b = 0; b < B; ++b) { double a = 0; for (size_t k : sel[b]) a += P[k]; o.L[b][t] = 10 * std::log10 (a / (double) sel[b].size() + 1e-12) - tot[t]; }
+    }
+    const double mx = *std::max_element (tot.begin(), tot.end());
+    for (size_t t = 0; t < T; ++t) o.act[t] = tot[t] > mx - 40;
+    for (auto& row : o.L)
+    {
+        Vec a; for (size_t t = 0; t < T; ++t) if (o.act[t]) a.push_back (row[t]);
+        const double med = a.empty() ? 0 : median (a);
+        for (size_t t = 0; t < T; ++t) row[t] = o.act[t] ? row[t] - med : 0.0;
+    }
+    return o;
+}
+inline double laneCorr (const ToneLane& A, const ToneLane& P)
+{
+    const size_t T = std::min (A.act.size(), P.act.size()); double sa = 0, sb = 0, saa = 0, sbb = 0, sab = 0, n = 0;
+    for (size_t b = 0; b < A.L.size(); ++b) for (size_t t = 0; t < T; ++t) if (A.act[t])
+    { const double x = A.L[b][t], y = P.L[b][t]; sa += x; sb += y; saa += x * x; sbb += y * y; sab += x * y; n += 1; }
+    if (n < 2) return -1;
+    const double cov = sab - sa * sb / n, va = saa - sa * sa / n, vb = sbb - sb * sb / n;
+    return va > 0 && vb > 0 ? cov / std::sqrt (va * vb) : -1;
+}
+inline const Vec& pinkProbe (size_t n)
+{
+    static Vec p;
+    if (p.size() < n)
+    {
+        const size_t N = nextPow2 (n); std::mt19937 rng (5); std::normal_distribution<double> nd; Vec x (N); for (auto& v : x) v = nd (rng);
+        auto X = rfft (x, N); for (size_t k = 0; k < X.size(); ++k) X[k] /= std::sqrt (std::max ((double) k * SR / (double) N, 20.0));
+        p = irfft (X, N); double pk = 0; for (double v : p) pk = std::max (pk, std::abs (v)); for (auto& v : p) v /= pk * 2;
+    }
+    return p;
+}
+inline Vec runMono (const std::string& f, const Vec& x, const Params& p)
+{
+    if (f == "flanger") return fx::flanger (x, p, 0);
+    if (f == "phaser") return fx::phaser (x, p, 0);
+    if (f == "filtersweep") return fx::filterSweep (x, p, 0);
+    const Vec a = fx::chorus (x, p, 0), b = fx::chorus (x, p, 1); Vec m (a.size()); for (size_t i = 0; i < m.size(); ++i) m[i] = 0.5 * (a[i] + b[i]); return m;
+}
+inline std::vector<Params> lfoGrid (const std::string& f)
+{
+    std::vector<Params> g;
+    if (f == "flanger") for (double a : { 0.3e-3, 1e-3, 2e-3 }) for (double b : { 3e-3, 5e-3, 8e-3 }) g.push_back ({ { "dmin", a }, { "dmax", b }, { "depth", 0.7 } });
+    if (f == "phaser") for (double s : { 4.0, 8.0 }) for (double a : { 150.0, 400.0 }) for (double b : { 2000.0, 5000.0 }) g.push_back ({ { "stages", s }, { "fmin", a }, { "fmax", b }, { "fb", 0.4 }, { "mix", 0.5 } });
+    if (f == "filtersweep") for (double a : { 200.0, 500.0 }) for (double b : { 2000.0, 6000.0 }) for (double q : { 2.0, 6.0 }) g.push_back ({ { "fmin", a }, { "fmax", b }, { "q", q } });
+    if (f == "chorus") for (double b : { 10e-3, 20e-3 }) for (double w : { 2e-3, 6e-3 }) g.push_back ({ { "base", b }, { "width", w }, { "voices", 2 }, { "mix", 0.5 } });
+    return g;
+}
+inline int lfoPerOct (const std::string& f) { return f == "phaser" ? 12 : f == "filtersweep" ? 6 : 24; }
+inline Params fitLfo (const Stereo& y, const std::string& f, double rate0, const Params* shape, double& match, double secs = 6.0)
+{
+    const size_t n = std::min (y.size(), (size_t) (secs * SR)); const int po = lfoPerOct (f);
+    Vec m (n); for (size_t i = 0; i < n; ++i) m[i] = 0.5 * (y.l[i] + y.r[i]);
+    const ToneLane LD = toneLane (m, po); const Vec pr (pinkProbe (n).begin(), pinkProbe (n).begin() + (long) n);
+    auto score = [&] (const Params& q) { return laneCorr (LD, toneLane (runMono (f, pr, q), po)); };
+    auto with = [] (Params g, double r, double ph) { g["rate"] = r; g["phase"] = ph; return g; };
+    const auto grid = lfoGrid (f); std::vector<Params> shapes; if (shape) shapes.push_back (*shape); else shapes.assign (grid.begin(), grid.begin() + 4);
+    double best = -9; Params cur;
+    for (double k : { 0.6, 0.75, 0.87, 1.0, 1.15, 1.33, 1.6 })
+        for (auto& g : shapes)
+            for (int i = 0; i < 8; ++i) { const Params q = with (g, rate0 * k, i / 8.0); const double c = score (q); if (c > best) { best = c; cur = q; } }
+    if (! shape) for (auto& g : grid) { const Params q = with (g, cur["rate"], cur["phase"]); const double c = score (q); if (c > best) { best = c; cur = q; } }
+    for (auto [dr_, dp] : { std::pair<double, double> { 0.04, 0.06 }, { 0.02, 0.03 }, { 0.01, 0.015 }, { 0.005, 0.008 } })
+    {
+        const Params base = cur;
+        for (int v = 0; v < 4; ++v)
+        {
+            Params q = base;
+            if (v == 0) q["rate"] *= 1 + dr_; else if (v == 1) q["rate"] *= 1 - dr_;
+            else { double ph = q["phase"] + (v == 2 ? dp : -dp); q["phase"] = ph - std::floor (ph); }
+            const double c = score (q); if (c > best) { best = c; cur = q; }
+        }
+    }
+    if (f == "filtersweep" && ! shape) for (double qq : { 1.5, 3.0, 5.0, 8.0 }) { Params q = cur; q["q"] = qq; const double c = score (q); if (c > best) { best = c; cur = q; } }
+    match = best; return cur;
+}
 } // namespace est
 
 // ---------------------------------------------------------------- what was found, and its faders
@@ -327,6 +430,7 @@ inline std::vector<Knob> knobsFor (const std::string& f)
 inline std::vector<FoundFx> estimate (const Inspection& I, const Stereo& y, double cut = 0.65)
 {
     std::vector<FoundFx> out;
+    (void) est::pinkProbe ((size_t) (6 * SR));      // built once before the fits run in parallel
     auto S = [&] (const std::string& f, const char* k, double d) { auto a = I.settings.find (f); if (a == I.settings.end()) return d; auto b = a->second.find (k); return b == a->second.end() ? d : b->second; };
     auto L = [&] (const std::string& f, const char* k, const std::string& d) { auto a = I.labels.find (f); if (a == I.labels.end()) return d; auto b = a->second.find (k); return b == a->second.end() ? d : b->second; };
     auto R = [&] (const std::string& f, double d) { auto a = I.reg.find (f); return a == I.reg.end() ? d : a->second; };
@@ -360,7 +464,16 @@ inline std::vector<FoundFx> estimate (const Inspection& I, const Stereo& y, doub
             if (f == "chorus") { e["base"] = S (f, "base", 15e-3); e["width"] = S (f, "width", 4e-3); e["voices"] = std::stod (L (f, "voices", "2")); e["mix"] = std::clamp (S (f, "mix", 0.5), 0.1, 1.0); }
             if (f == "phaser") { e["stages"] = std::stod (L (f, "stages", "6")); e["fmin"] = S (f, "fmin", 200); e["fmax"] = S (f, "fmax", 3000); e["fb"] = std::clamp (S (f, "fb", 0.3), 0.0, 0.9); e["mix"] = std::clamp (S (f, "mix", 0.5), 0.1, 1.0); if (e["fmin"] >= e["fmax"]) e["fmax"] = e["fmin"] * 4; }
             if (f == "filtersweep") { e["fmin"] = S (f, "fmin", 300); e["fmax"] = S (f, "fmax", 5000); e["q"] = S (f, "q", 4); if (e["fmin"] >= e["fmax"]) e["fmax"] = e["fmin"] * 4; }
-            F.lfoRate = rate;
+            // speed and start phase: match the source's movement (two speed guesses, reader's shape or a grid; keep the best)
+            Params shape = e; shape.erase ("rate"); shape.erase ("phase");
+            double bestM = -9; Params bestP = e;
+            std::set<double> r0s { std::round (std::clamp (R (f, rate), 0.08, 3.0) * 1000) / 1000, std::round (std::clamp (rate, 0.08, 3.0) * 1000) / 1000 };
+            std::vector<std::future<std::pair<double, Params>>> jobs;     // the fits run side by side
+            for (double r0 : r0s) for (int useShape = 1; useShape >= 0; --useShape)
+                jobs.push_back (std::async (std::launch::async, [&y, &f, &shape, r0, useShape] { double mt; Params q = est::fitLfo (y, f, r0, useShape ? &shape : nullptr, mt); return std::make_pair (mt, q); }));
+            for (auto& j : jobs) { auto [mt, q] = j.get(); if (mt > bestM) { bestM = mt; bestP = q; } }
+            e = bestP; e["match"] = bestM;
+            F.lfoRate = e["rate"];
         }
         out.push_back (std::move (F));
     }

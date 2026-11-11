@@ -111,7 +111,7 @@ class DropZone : public juce::Component, public juce::FileDragAndDropTarget, pub
 public:
     DropZone (juce::String t, juce::String h, juce::Colour c) : title (std::move (t)), hint (std::move (h)), col (c)
     {
-        addAndMakeVisible (clear); clear.setButtonText ("x"); clear.setTooltip ("Remove this sound");
+        addChildComponent (clear); clear.setButtonText ("x"); clear.setTooltip ("Remove this sound");
         clear.onClick = [this] { if (onClear) onClear(); };
     }
     std::function<void (const juce::File&)> onFile;
@@ -410,7 +410,7 @@ private:
         busy = true; ++generation; const int gen = generation.load();
         auto fx = found; auto vals = faders.values; auto out = std::make_shared<dr::Stereo>();
         modeLabel.setText ("Working...", juce::dontSendNotification);
-        startWorker ([=, this]
+        startWorker ([src, two, fx, vals, out, gen, this]
                      {
                          auto cancel = [this, gen] { return generation.load() != gen; };
                          *out = two ? dr::applyTo (*src, fx, vals, cancel) : dr::reshape (*src, fx, vals, cancel);
