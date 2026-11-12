@@ -404,7 +404,8 @@ inline std::string titleFor (const std::string& f)
 {
     static const std::map<std::string, std::string> t { { "flanger", "FLANGER" }, { "chorus", "CHORUS" }, { "phaser", "PHASER" }, { "haas", "HAAS WIDTH" },
         { "width", "STEREO WIDTH" }, { "delay", "DELAY" }, { "reverb", "REVERB" }, { "distortion", "DISTORTION" }, { "bitcrush", "BITCRUSH" },
-        { "filtersweep", "FILTER SWEEP" }, { "tremolo", "TREMOLO" }, { "autopan", "AUTO PAN" } };
+        { "filtersweep", "FILTER SWEEP" }, { "tremolo", "TREMOLO" }, { "autopan", "AUTO PAN" },
+        { "saturation", "SATURATION" }, { "exciter", "EXCITER" }, { "ringmod", "RING MOD" }, { "filter", "FILTER" }, { "stutter", "STUTTER" }, { "gatedrhythm", "GATED RHYTHM" } };
     auto it = t.find (f); return it == t.end() ? f : it->second;
 }
 
@@ -421,12 +422,21 @@ inline std::vector<Knob> knobsFor (const std::string& f)
     else if (f == "reverb") { k.push_back (K ("rt60", "Length", "Decay time.", 0, 0.1, 10)); k.push_back (K ("mix", "Mix", "Level of the room.", 0, 0, 1)); }
     else if (f == "distortion") k.push_back (K ("drive_scale", "Drive", "How hard it is pushed.", 0, 0.05, 4));
     else if (f == "bitcrush") { k.push_back (K ("bits", "Bit Depth", "Fewer levels to the right.", 16, 1, 16)); k.push_back (K ("down", "Sample Rate", "Coarser steps to the right.", 1, 1, 32)); }
+    else if (f == "saturation") k.push_back (K ("drive", "Drive", "How hard it is pushed (dB).", 0, 0, 36));
+    else if (f == "exciter") { k.push_back (K ("amount", "Intensity", "Level of the added sparkle.", 0, 0, 1.5)); k.push_back (K ("freq", "Frequency", "Where the sparkle starts.", 0, 500, 14000)); }
+    else if (f == "ringmod") { k.push_back (K ("carrier", "Carrier", "Ring frequency.", 0, 5, 5000)); k.push_back (K ("mix", "Mix", "Level of the ringing part.", 0, 0, 1)); }
+    else if (f == "filter") { k.push_back (K ("cutoff", "Cutoff", "Filter frequency.", 0, 20, 20000)); k.push_back (K ("resonance", "Resonance", "Peak at the cutoff.", 0, 0.3, 12)); }
+    else if (f == "stutter") { k.push_back (K ("slice_ms", "Slice", "Length of each repeated slice.", 0, 10, 1000)); k.push_back (K ("repeats", "Repeats", "How many times a slice repeats.", 1, 1, 16)); k.push_back (K ("prob", "Chance", "How often it stutters.", 0, 0, 1)); }
+    else if (f == "gatedrhythm") { k.push_back (K ("rate", "Speed", "Steps per second.", 0, 0.2, 40)); k.push_back (K ("duty", "Open", "How long each step stays open.", 0, 0.05, 1)); k.push_back (K ("depth", "Depth", "How far it cuts down.", 0, 0, 1)); }
     else if (f == "tremolo" || f == "autopan") { k.push_back (K ("rate", "Speed", "Wobble speed.", 0, 0.02, 20)); k.push_back (K ("amp_db", "Depth", "How deep the movement goes.", 0, 0, 40)); }
     for (auto& x : k) x.id = f + "." + (x.key.empty() ? std::string ("amount") : x.key);
     return k;
 }
 
 // Settings of each found effect (estimate.estimate, without the slower sweep fit for now).
+inline bool isNewFx (const std::string& f) { return f == "saturation" || f == "exciter" || f == "ringmod" || f == "filter" || f == "stutter" || f == "gatedrhythm"; }
+// The 0.2.0 additions come from the larger 27-effect detector; they need a higher score to be named.
+constexpr double newCut = 0.8;
 inline std::vector<FoundFx> estimate (const Inspection& I, const Stereo& y, double cut = 0.65)
 {
     std::vector<FoundFx> out;
@@ -436,7 +446,7 @@ inline std::vector<FoundFx> estimate (const Inspection& I, const Stereo& y, doub
     auto R = [&] (const std::string& f, double d) { auto a = I.reg.find (f); return a == I.reg.end() ? d : a->second; };
     for (const auto& f : chainOrder())
     {
-        auto pit = I.prob.find (f); if (pit == I.prob.end() || pit->second <= cut) continue;
+        auto pit = I.prob.find (f); if (pit == I.prob.end() || pit->second <= (isNewFx (f) ? std::max (cut, newCut) : cut)) continue;
         FoundFx F; F.name = f; F.title = titleFor (f); F.prob = pit->second; F.knobs = knobsFor (f); Params& e = F.est;
         if (f == "delay")
         {
@@ -448,7 +458,7 @@ inline std::vector<FoundFx> estimate (const Inspection& I, const Stereo& y, doub
         else if (f == "haas") e["lag"] = (double) hand::gccPhat (y, 30.0).lag;
         else if (f == "width") e["amount"] = std::clamp (S (f, "amount", 0.5), 0.05, 1.2);
         else if (f == "autopan") { const auto s = est::fitSineGrid (est::panLane (y), 200, 0.1, 4); e = { { "rate", s.rate }, { "amp_db", s.amp }, { "phase", s.phase } }; }
-        else if (f == "tremolo") { const double r0 = std::clamp (R (f, 5), 0.3, 20.0); const auto s = est::fitSineGrid (est::tremLane (y), 200, r0 / 1.5, r0 * 1.5); e = { { "rate", s.rate }, { "amp_db", s.amp }, { "phase", s.phase } }; }
+        else if (f == "tremolo") { const double r0 = std::clamp (R (f, 5), 0.3, 20.0); const auto s = est::fitSineGrid (est::tremLane (y), 200, r0 / 1.5, r0 * 1.5); e = { { "rate", s.rate }, { "amp_db", std::min (s.amp, 24.0) }, { "phase", s.phase } }; }
         else if (f == "bitcrush") { const auto nl = hand::nonlinear (y); e = { { "bits", nl.bits > 0 ? std::round (nl.bits) : 8.0 }, { "down", std::max (1.0, std::round (nl.hold)) } }; }
         else if (f == "distortion")
         {
@@ -456,6 +466,16 @@ inline std::vector<FoundFx> estimate (const Inspection& I, const Stereo& y, doub
             e = { { "top", (double) c / (double) std::max<size_t> (1, m.size()) }, { "kind", L (f, "kind", "tanh") == "tanh" ? 1.0 : 0.0 }, { "drive", S (f, "drive", 8) }, { "drive_scale", 1.0 } };
         }
         else if (f == "reverb") { int n = 0; const double t = est::rt60FromDecays (y, n); e = { { "rt60", std::clamp (t > 0 ? t : S (f, "rt60", 1.5), 0.3, 5.0) }, { "mix", std::clamp (S (f, "mix", 0.35), 0.05, 0.8) } }; }
+        else if (f == "saturation") e = { { "drive", std::clamp (S (f, "drive", 8), 0.0, 30.0) }, { "tone", std::clamp (S (f, "tone", 0.5), 0.0, 1.0) }, { "kind", L (f, "kind", "tape") == "tape" ? 1.0 : 0.0 } };
+        else if (f == "exciter") e = { { "amount", std::clamp (S (f, "amount", 0.3), 0.05, 1.0) }, { "freq", std::clamp (S (f, "freq", 3000), 800.0, 12000.0) } };
+        else if (f == "ringmod") e = { { "carrier", std::clamp (S (f, "carrier", 200), 10.0, 4000.0) }, { "mix", std::clamp (S (f, "mix", 0.8), 0.1, 1.0) }, { "drift", std::clamp (S (f, "drift", 0), 0.0, 0.5) }, { "phase", 0 } };
+        else if (f == "filter")
+        {
+            const std::string t = L (f, "type", "low");
+            e = { { "type", t == "band" ? 0.0 : t == "high" ? 1.0 : 2.0 }, { "cutoff", std::clamp (S (f, "cutoff", 1500), 30.0, 18000.0) }, { "resonance", std::clamp (S (f, "resonance", 0.707), 0.3, 8.0) }, { "slope", L (f, "slope", "12") == "24" ? 1.0 : 0.0 } };
+        }
+        else if (f == "stutter") e = { { "slice_ms", std::clamp (S (f, "slice_ms", 120), 20.0, 600.0) }, { "repeats", std::stod (L (f, "repeats", "4")) }, { "prob", std::clamp (S (f, "prob", 0.4), 0.05, 1.0) }, { "seed", 3 } };
+        else if (f == "gatedrhythm") e = { { "rate", std::clamp (S (f, "rate", 8), 0.5, 32.0) }, { "duty", std::clamp (S (f, "duty", 0.5), 0.05, 1.0) }, { "depth", std::clamp (S (f, "depth", 1), 0.1, 1.0) }, { "phase", 0 } };
         else   // flanger, chorus, phaser, filtersweep: shape and speed from the settings reader
         {
             const double rate = std::clamp (S (f, "rate", R (f, 0.5)), 0.05, 4.0);
@@ -477,7 +497,32 @@ inline std::vector<FoundFx> estimate (const Inspection& I, const Stereo& y, doub
         }
         out.push_back (std::move (F));
     }
+    // a gated rhythm also reads as a deep tremolo at the same speed: keep only the gate
+    auto gr = std::find_if (out.begin(), out.end(), [] (const FoundFx& F) { return F.name == "gatedrhythm"; });
+    if (gr != out.end())
+    {
+        const double r = get (gr->est, "rate", 0);
+        out.erase (std::remove_if (out.begin(), out.end(), [r] (const FoundFx& F) { return F.name == "tremolo" && std::abs (get (F.est, "rate", 0) / std::max (r, 1e-6) - 1) < 0.2; }), out.end());
+    }
     return out;
+}
+
+// Take the six 0.2.0 effects (probability, settings, speed guess) from the 27-effect inspection.
+inline void mergeNew (Inspection& I, const Inspection& I27)
+{
+    for (const char* f : { "saturation", "exciter", "ringmod", "filter", "stutter", "gatedrhythm" })
+    {
+        auto p = I27.prob.find (f); if (p != I27.prob.end()) I.prob[f] = p->second;
+        auto s = I27.settings.find (f); if (s != I27.settings.end()) I.settings[f] = s->second;
+        auto l = I27.labels.find (f); if (l != I27.labels.end()) I.labels[f] = l->second;
+        auto r = I27.reg.find (f); if (r != I27.reg.end()) I.reg[f] = r->second;
+    }
+    // When one of the six is there, the 12-effect detector can mistake it for a relative (a static filter for a
+    // filter sweep, a gated rhythm for bitcrush). The 27-effect detector knows both: drop what it clearly rules out.
+    bool anyNew = false; for (auto& [f, v] : I.prob) if (isNewFx (f) && v > newCut) anyNew = true;
+    if (anyNew)
+        for (auto& [f, v] : I.prob)
+            if (! isNewFx (f)) { auto q = I27.prob.find (f); if (q != I27.prob.end() && q->second < 0.15) v = std::min (v, q->second); }
 }
 
 // The settings with each setting fader applied (fader value v in 0..2, 1 = as found).
@@ -521,7 +566,7 @@ inline Stereo applyTo (const Stereo& target, const std::vector<FoundFx>& found, 
 
 // One sound: take the found effects out (left), leave as is (middle) or double (right).
 // Settings faders move the effect's settings by adding the difference they make.
-inline bool canRemove (const std::string& f) { return f != "reverb" && f != "distortion" && f != "bitcrush"; }
+inline bool canRemove (const std::string& f) { return f != "reverb" && f != "distortion" && f != "bitcrush" && ! isNewFx (f); }
 inline Stereo reshape (const Stereo& src, const std::vector<FoundFx>& found, const std::map<std::string, double>& faders, const std::function<bool()>& cancelled = {})
 {
     Stereo y = src;

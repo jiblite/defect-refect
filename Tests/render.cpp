@@ -1,4 +1,4 @@
-// render models.bin src.wav [target.wav|-] out.wav [fader=value ...]  : the app's processing without the UI
+// render ResourcesDir src.wav [target.wav|-] out.wav [fader=value ...]  : the app's processing without the UI
 #include <chrono>
 #include <fstream>
 #include <iostream>
@@ -16,13 +16,13 @@ static void writeWav (const std::string& p, const dr::Stereo& y)
 int main (int argc, char** argv)
 {
     using clk = std::chrono::steady_clock; auto t0 = clk::now();
-    std::ifstream f (argv[1], std::ios::binary); std::vector<char> b ((std::istreambuf_iterator<char> (f)), {});
-    dr::Models M; M.load (b.data(), b.size());
+    auto loadM = [] (const std::string& p) { std::ifstream f (p, std::ios::binary); std::vector<char> b ((std::istreambuf_iterator<char> (f)), {}); dr::Models m; m.load (b.data(), b.size()); return m; };
+    const std::string dir = argv[1]; const dr::Models M = loadM (dir + "/models.bin"), M27 = loadM (dir + "/models27.bin");
     dr::Stereo src, tgt; double sr; dr::readWav (argv[2], src, sr);
     const bool two = std::string (argv[3]) != "-"; if (two) dr::readWav (argv[3], tgt, sr);
     std::map<std::string, double> fad;
     for (int i = 5; i < argc; ++i) { std::string a = argv[i]; auto e = a.find ('='); fad[a.substr (0, e)] = std::stod (a.substr (e + 1)); }
-    auto I = dr::inspect (M, src); auto t1 = clk::now();
+    auto I = dr::inspect (M, src); dr::mergeNew (I, dr::inspect (M27, src)); auto t1 = clk::now();
     auto found = dr::estimate (I, src); auto t2 = clk::now();
     for (auto& F : found) { std::cout << F.name << " p=" << F.prob; for (auto& [k, v] : F.est) std::cout << " " << k << "=" << v; std::cout << "\n"; }
     auto out = two ? dr::applyTo (tgt, found, fad) : dr::reshape (src, found, fad); auto t3 = clk::now();

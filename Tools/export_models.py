@@ -3,7 +3,9 @@ into one little-endian binary file the app reads (Resources/models.bin).
 Layout: magic 'DRFX', version u32, then sections. All floats f32, ints i32."""
 import sys, pickle, struct, numpy as np, torch
 sys.path.insert(0, sys.argv[1])            # folder with model.py
-from model import Net, FX
+import os
+if os.environ.get("DR_MODEL27"): from model27 import Net, FX
+else: from model import Net, FX
 out=open(sys.argv[2],'wb')
 def u32(v): out.write(struct.pack('<I',v))
 def i32(v): out.write(struct.pack('<i',v))
@@ -43,6 +45,7 @@ st=pickle.load(open(sys.argv[4],'rb')); u32(len(FX))
 for f in FX: s(f); trees(st[f])
 sm=pickle.load(open(sys.argv[5],'rb')); u32(len(sm))
 for fx,params in sm.items():
+    params={k:v for k,v in params.items() if v[0] in ('log','lin','cat')}   # 'signedlog' readers are not used by the app
     s(fx); u32(len(params))
     for k,(kind,m,cats) in params.items():
         s(k); s(kind); u32(len(cats or [])); [s(c) for c in (cats or [])]; trees(m)

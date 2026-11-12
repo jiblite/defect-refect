@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(DefectRefect VERSION 0.1.0 LANGUAGES C CXX)
+project(DefectRefect VERSION 0.2.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -17,7 +17,7 @@ FetchContent_Declare(JUCE
 FetchContent_MakeAvailable(JUCE)
 
 # The trained models, built into the exe.
-juce_add_binary_data(dr_models SOURCES Resources/models.bin)
+juce_add_binary_data(dr_models SOURCES Resources/models.bin Resources/models27.bin)
 
 juce_add_gui_app(DefectRefect
   PRODUCT_NAME "Defect Refect"
@@ -48,3 +48,5 @@ target_link_libraries(DefectRefect PRIVATE
 
 # Headless check of the processing (no JUCE): Tests/render.cpp
 add_executable(drrender Tests/render.cpp)
+find_package(Threads REQUIRED)
+target_link_libraries(drrender PRIVATE Threads::Threads)

@@ -47,6 +47,24 @@ struct Biquad
         const double K = std::tan (PI * std::min (fc, SR * 0.49) / SR), s2 = std::sqrt (2.0), nrm = 1.0 / (1 + s2 * K + K * K);
         b0 = K * K * nrm; b1 = 2 * b0; b2 = b0; a1 = 2 * (K * K - 1) * nrm; a2 = (1 - s2 * K + K * K) * nrm;
     }
+    // RBJ cookbook (fxlib27._biquad): kind 0 peak, 1 lowshelf, 2 highshelf, 3 low, 4 high, 5 band
+    void setRbj (int kind, double f, double gDb = 0.0, double q = 0.707)
+    {
+        const double A = std::pow (10.0, gDb / 40), w = 2 * PI * std::min (f, SR * 0.49) / SR, cw = std::cos (w), sw = std::sin (w), al = sw / (2 * q);
+        double b[3], a[3];
+        if (kind == 0) { b[0] = 1 + al * A; b[1] = -2 * cw; b[2] = 1 - al * A; a[0] = 1 + al / A; a[1] = -2 * cw; a[2] = 1 - al / A; }
+        else if (kind == 1 || kind == 2)
+        {
+            const double sA = 2 * std::sqrt (A) * al, sg = kind == 1 ? 1.0 : -1.0;
+            b[0] = A * ((A + 1) - sg * (A - 1) * cw + sA); b[1] = sg * 2 * A * ((A - 1) - sg * (A + 1) * cw); b[2] = A * ((A + 1) - sg * (A - 1) * cw - sA);
+            a[0] = (A + 1) + sg * (A - 1) * cw + sA; a[1] = -sg * 2 * ((A - 1) + sg * (A + 1) * cw); a[2] = (A + 1) + sg * (A - 1) * cw - sA;
+        }
+        else if (kind == 3) { b[0] = (1 - cw) / 2; b[1] = 1 - cw; b[2] = (1 - cw) / 2; a[0] = 1 + al; a[1] = -2 * cw; a[2] = 1 - al; }
+        else if (kind == 4) { b[0] = (1 + cw) / 2; b[1] = -(1 + cw); b[2] = (1 + cw) / 2; a[0] = 1 + al; a[1] = -2 * cw; a[2] = 1 - al; }
+        else { b[0] = al; b[1] = 0; b[2] = -al; a[0] = 1 + al; a[1] = -2 * cw; a[2] = 1 - al; }
+        b0 = b[0] / a[0]; b1 = b[1] / a[0]; b2 = b[2] / a[0]; a1 = a[1] / a[0]; a2 = a[2] / a[0]; z1 = z2 = 0;
+    }
+    void run (Vec& x) { for (auto& v : x) v = tick (v); }
     void setPeak (double fc, double q)                        // scipy iirpeak
     {
         const double w0 = 2 * std::min (fc, SR * 0.49) / SR * PI, bw = w0 / q;
@@ -196,12 +214,93 @@ inline Stereo widenerMs (const Vec& x, double amount)
     for (size_t i = 0; i < x.size(); ++i) { o.l[i] = (x[i] + amount * s[i]) / (1 + amount); o.r[i] = (x[i] - amount * s[i]) / (1 + amount); }
     return o;
 }
+
+// ---------------------------------------------------------------- the six added in 0.2.0 (fxlib27)
+inline Vec saturation (const Vec& x, const Params& p, int)
+{
+    const double drive = get (p, "drive", 8.0), tone = std::clamp (get (p, "tone", 0.5), 0.0, 1.0); const bool tape = get (p, "kind", 1) > 0.5;
+    const double pk = peakOf (x) + 1e-12, k = std::pow (10.0, drive / 20) * 0.5; Vec y (x.size());
+    for (size_t i = 0; i < x.size(); ++i) y[i] = x[i] / pk * k;
+    if (tape)
+    {
+        Biquad pre; pre.setRbj (2, 3000, 4.0); pre.run (y);
+        const double b = 0.25; for (auto& v : y) v = std::tanh (v + b) - std::tanh (b);
+        Biquad de; de.setRbj (2, 3000, -4.0); de.run (y); Biquad bump; bump.setRbj (1, 90, 2.0, 0.9); bump.run (y);
+    }
+    else for (auto& v : y) v = std::tanh (v);
+    const double fc = 2000 * std::pow (8.0, tone); if (fc < 0.45 * SR) { Biquad lp; lp.setRbj (3, fc, 0, 0.6); lp.run (y); }
+    const double nrm = std::tanh (k); for (auto& v : y) v /= nrm;
+    return y;
+}
+inline Vec exciter (const Vec& x, const Params& p, int)
+{
+    const double amount = get (p, "amount", 0.3), freq = std::clamp (get (p, "freq", 3000.0), 200.0, 16000.0);
+    Biquad hp; hp.setRbj (4, freq); Vec h = x; hp.run (h); const double hk = peakOf (h) + 1e-12;
+    Vec g (x.size()); double m = 0; for (size_t i = 0; i < x.size(); ++i) { const double v = h[i] / hk; g[i] = std::tanh (4 * v) + 0.5 * std::abs (v); m += g[i]; }
+    m /= (double) std::max<size_t> (1, x.size()); for (auto& v : g) v -= m;
+    Biquad h1; h1.setRbj (4, freq); h1.run (g); Biquad h2; h2.setRbj (4, freq); h2.run (g);
+    const double k = rmsOf (x) / (rmsOf (g) + 1e-12); Vec y (x.size()); for (size_t i = 0; i < x.size(); ++i) y[i] = x[i] + amount * g[i] * k;
+    return y;
+}
+inline Vec ringmod (const Vec& x, const Params& p, int)
+{
+    const double c0 = get (p, "carrier", 200.0), mix = std::clamp (get (p, "mix", 0.8), 0.0, 1.0), drift = get (p, "drift", 0.0); double ph = get (p, "phase", 0.0);
+    Vec y (x.size());
+    for (size_t i = 0; i < x.size(); ++i)
+    {
+        const double f = c0 * (1 + drift * std::sin (2 * PI * 0.3 * (double) i / SR)); ph += 2 * PI * f / SR;
+        y[i] = (1 - mix) * x[i] + mix * x[i] * std::sin (ph) * std::sqrt (2.0);
+    }
+    return y;
+}
+inline Vec staticFilter (const Vec& x, const Params& p, int)     // type 0 band, 1 high, 2 low (reader order)
+{
+    const int t = (int) std::lround (get (p, "type", 2)); const int kind = t == 0 ? 5 : t == 1 ? 4 : 3;
+    const double fc = std::clamp (get (p, "cutoff", 1500.0), 20.0, 20000.0), q = std::clamp (get (p, "resonance", 0.707), 0.2, 20.0);
+    Vec y = x; Biquad a; a.setRbj (kind, fc, 0, q); a.run (y);
+    if (get (p, "slope", 0) > 0.5) { Biquad b; b.setRbj (kind, fc, 0, 0.707); b.run (y); }
+    return y;
+}
+inline Vec stutter (const Vec& x, const Params& p, int)
+{
+    const size_t L = (size_t) std::max (64.0, get (p, "slice_ms", 120.0) * 1e-3 * SR); const int reps = std::max (1, (int) std::lround (get (p, "repeats", 4)));
+    const double prob = std::clamp (get (p, "prob", 0.4), 0.0, 1.0); std::mt19937 rng ((unsigned) get (p, "seed", 3)); std::uniform_real_distribution<double> u (0, 1);
+    const size_t n = x.size(), fl = std::min ((size_t) (0.002 * SR), L / 2); Vec y = x; size_t pos = 0;
+    while (pos + L <= n)
+    {
+        if (u (rng) < prob)
+        {
+            for (int k = 0; k < reps; ++k)
+            {
+                const size_t a = pos + (size_t) k * L; if (a >= n) break;
+                for (size_t i = 0; i < L && a + i < n; ++i) { double w = 1; if (i < fl) w = (double) i / (double) fl; else if (i + fl >= L) w = (double) (L - 1 - i) / (double) fl; y[a + i] = x[pos + i] * w; }
+            }
+            pos += (size_t) reps * L;
+        }
+        else pos += L;
+    }
+    return y;
+}
+inline Vec gatedRhythm (const Vec& x, const Params& p, int)
+{
+    const double rate = get (p, "rate", 8.0), duty = std::clamp (get (p, "duty", 0.5), 0.02, 1.0), depth = std::clamp (get (p, "depth", 1.0), 0.0, 1.0), ph = get (p, "phase", 0.0);
+    const unsigned pattern = (unsigned) get (p, "pattern", 0xFFFF); const double c = std::exp (-1.0 / (std::max (get (p, "smooth", 2.0), 0.01) * 1e-3 * SR));
+    Vec y (x.size()); double g = 0;
+    for (size_t i = 0; i < x.size(); ++i)
+    {
+        const double sp = (double) i / SR * rate + ph, fl = std::floor (sp); const int step = ((int) fl % 16 + 16) % 16;
+        const double on = ((pattern >> step) & 1u) && (sp - fl) < duty ? 1.0 : 0.0;
+        g = c * g + (1 - c) * on; y[i] = x[i] * (1 - depth * (1 - g));
+    }
+    return y;
+}
 } // namespace fx
 
 // The order the chain is rebuilt in (estimate.ORDER).
 inline const std::vector<std::string>& chainOrder()
 {
-    static const std::vector<std::string> o { "distortion", "bitcrush", "filtersweep", "phaser", "flanger", "chorus", "tremolo", "width", "haas", "delay", "reverb", "autopan" };
+    static const std::vector<std::string> o { "distortion", "bitcrush", "saturation", "filter", "exciter", "filtersweep", "phaser", "flanger", "chorus", "ringmod",
+                                              "tremolo", "gatedrhythm", "stutter", "width", "haas", "delay", "reverb", "autopan" };
     return o;
 }
 inline bool isLfoFx (const std::string& f) { return f == "flanger" || f == "chorus" || f == "phaser" || f == "filtersweep"; }
@@ -231,6 +330,12 @@ inline Stereo applyEffect (const std::string& f, const Stereo& y, const Params& 
     else if (f == "filtersweep") perCh (fx::filterSweep);
     else if (f == "reverb") perCh (fx::reverb);
     else if (f == "bitcrush") perCh (fx::bitcrush);
+    else if (f == "saturation") perCh (fx::saturation);
+    else if (f == "exciter") perCh (fx::exciter);
+    else if (f == "ringmod") perCh (fx::ringmod);
+    else if (f == "filter") perCh (fx::staticFilter);
+    else if (f == "stutter") { o.l = fx::stutter (y.l, e, 0); o.r = fx::stutter (y.r, e, 1); }   // same seed: both sides cut together
+    else if (f == "gatedrhythm") perCh (fx::gatedRhythm);
     else if (f == "distortion")
     {
         Params q = e; q["drive"] = get (e, "top", -1) >= 0 ? distortionDriveFor (y.mid(), get (e, "top", 0), get (e, "kind", 1) > 0.5) * get (e, "drive_scale", 1.0) : get (e, "drive", 8);

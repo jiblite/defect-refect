@@ -278,9 +278,10 @@ public:
         setWantsKeyboardFocus (true);
         setSize (1120, 820);
         updateUi();
-        // models load in the background (14 MB)
+        // models load in the background (the 12-effect detector and the 27-effect one for the six added in 0.2.0)
         busy = true; modeLabel.setText ("Loading the detector...", juce::dontSendNotification);
-        startWorker ([this] { auto m = std::make_shared<dr::Models>(); m->load (BinaryData::models_bin, (size_t) BinaryData::models_binSize); models = m; },
+        startWorker ([this] { auto m = std::make_shared<dr::Models>(); m->load (BinaryData::models_bin, (size_t) BinaryData::models_binSize);
+                             auto m27 = std::make_shared<dr::Models>(); m27->load (BinaryData::models27_bin, (size_t) BinaryData::models27_binSize); models27 = m27; models = m; },
                      [this] { busy = false; updateUi(); if (pending[0].exists()) load (0, pending[0]); if (pending[1].exists()) load (1, pending[1]); });
         startTimerHz (20);
     }
@@ -324,7 +325,7 @@ private:
     juce::Label modeLabel; juce::Viewport view; FaderPanel faders;
     juce::AudioDeviceManager dev; juce::AudioSourcePlayer srcPlayer; Player player; std::unique_ptr<juce::ResamplingAudioSource> resampler;
     struct DevListener : juce::ChangeListener { std::function<void()> fn; void changeListenerCallback (juce::ChangeBroadcaster*) override { if (fn) fn(); } } devListener;
-    std::shared_ptr<dr::Models> models;
+    std::shared_ptr<dr::Models> models, models27;
     std::shared_ptr<const dr::Stereo> sound[2], result;
     juce::String names[2]; juce::File pending[2], lastDir;
     std::vector<dr::FoundFx> found; bool inspected = false;
@@ -380,11 +381,14 @@ private:
     {
         ++generation; busy = true; inspected = false; found.clear(); faders.build ({}, false); updateUi();
         zoneA.setStatus ("inspecting..."); modeLabel.setText ("Looking for effects on the first sound...", juce::dontSendNotification);
-        auto src = sound[0]; auto M = models; auto out = std::make_shared<std::vector<dr::FoundFx>>();
+        auto src = sound[0]; auto M = models; auto M27 = models27; auto out = std::make_shared<std::vector<dr::FoundFx>>();
         const int gen = generation.load();
-        startWorker ([src, M, out, gen, this]
+        startWorker ([src, M, M27, out, gen, this]
                      {
-                         const auto I = dr::inspect (*M, *src, [this, gen] (float) { return generation.load() == gen; });
+                         auto alive = [this, gen] (float) { return generation.load() == gen; };
+                         auto I = dr::inspect (*M, *src, alive);
+                         if (generation.load() != gen) return;
+                         dr::mergeNew (I, dr::inspect (*M27, *src, alive));
                          if (generation.load() != gen) return;
                          *out = dr::estimate (I, *src);
                      },
@@ -392,7 +396,7 @@ private:
                      {
                          busy = false; found = *out; inspected = true;
                          zoneA.setStatus (juce::String ((int) found.size()) + (found.size() == 1 ? " effect found" : " effects found"));
-                         emptyText = "No effects found on this sound (from the 12 it knows so far).";
+                         emptyText = "No effects found on this sound (from the 18 it knows so far).";
                          faders.build (found, sound[1] != nullptr); resized(); renderNow(); updateUi();
                      });
     }
