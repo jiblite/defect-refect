@@ -7,6 +7,7 @@
 #include <juce_gui_extra/juce_gui_extra.h>
 
 #include <atomic>
+#include <set>
 #include <thread>
 
 #include "BinaryData.h"
@@ -43,8 +44,12 @@ public:
         const auto col = s.findColour (juce::Slider::thumbColourId);
         const float cy = (float) y + (float) h * 0.5f, mid = (float) x + (float) w * 0.5f;
         g.setColour (theme::outline); g.fillRoundedRectangle ((float) x, cy - 2.0f, (float) w, 4.0f, 2.0f);
-        g.setColour (col.withAlpha (0.6f)); g.fillRect (juce::jmin (mid, pos), cy - 2.0f, std::abs (pos - mid), 4.0f);
-        g.setColour (theme::textDim); g.fillRect (mid - 0.5f, cy - 7.0f, 1.0f, 14.0f);
+        if (s.getProperties().contains ("fromLeft")) { g.setColour (col.withAlpha (0.45f)); g.fillRect ((float) x, cy - 2.0f, pos - (float) x, 4.0f); }
+        else
+        {
+            g.setColour (col.withAlpha (0.6f)); g.fillRect (juce::jmin (mid, pos), cy - 2.0f, std::abs (pos - mid), 4.0f);
+            g.setColour (theme::textDim); g.fillRect (mid - 0.5f, cy - 7.0f, 1.0f, 14.0f);
+        }
         g.setColour (col); g.fillRoundedRectangle (pos - 5.0f, cy - 8.0f, 10.0f, 16.0f, 2.0f);
     }
 };
@@ -185,9 +190,10 @@ class FaderPanel : public juce::Component
 public:
     std::function<void()> onChange;
     std::map<std::string, double> values;
-    void build (const std::vector<dr::FoundFx>& found, bool twoSounds)
+    void build (const std::vector<dr::FoundFx>& found, bool twoSounds, bool keepValues = false)
     {
-        rows.clear(); heads.clear(); values.clear();
+        const auto old = values;
+        groups.clear(); rows.clear(); heads.clear(); values.clear();
         for (auto& F : found)
         {
             auto h = std::make_unique<juce::Label>(); h->setText (juce::String (F.title) + "   " + juce::String (juce::roundToInt (F.prob * 100)) + "% sure", juce::dontSendNotification);
@@ -211,6 +217,7 @@ public:
                 s.textFromValueFunction = [] (double v) { return std::abs (v - 1.0) < 0.005 ? juce::String ("as found") : juce::String (juce::roundToInt (v * 100)) + "%"; };
                 s.updateText();
                 const std::string id = k.id; values[id] = 1.0;
+                if (keepValues) { auto it = old.find (id); if (it != old.end()) { values[id] = it->second; s.setValue (it->second, juce::dontSendNotification); } }
                 s.onValueChange = [this, id, &s] { values[id] = s.getValue(); if (onChange) onChange(); };
                 addAndMakeVisible (row->label); addAndMakeVisible (s);
                 grp.rows.push_back (row.get()); rows.push_back (std::move (row));
@@ -268,6 +275,16 @@ public:
         resetBtn.setButtonText ("Reset Faders"); resetBtn.setTooltip ("All faders back to the middle (as found).");
         resetBtn.onClick = [this] { faders.resetAll(); };
         addAndMakeVisible (modeLabel); modeLabel.setFont (juce::FontOptions (13.0f)); modeLabel.setColour (juce::Label::textColourId, theme::textDim);
+        addAndMakeVisible (sureLabel); sureLabel.setText ("Sureness", juce::dontSendNotification); sureLabel.setFont (juce::FontOptions (12.0f)); sureLabel.setColour (juce::Label::textColourId, theme::textDim);
+        addAndMakeVisible (sure); sure.setSliderStyle (juce::Slider::LinearHorizontal); sure.setRange (30.0, 99.0, 1.0); sure.setValue (65.0, juce::dontSendNotification); sure.getProperties().set ("fromLeft", true);
+        sure.setDoubleClickReturnValue (true, 65.0); sure.setTextBoxStyle (juce::Slider::TextBoxRight, true, 64, 18); sure.setTextValueSuffix ("%");
+        sure.setColour (juce::Slider::thumbColourId, theme::text); sure.setColour (juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack); sure.setColour (juce::Slider::textBoxTextColourId, theme::textDim);
+        {
+            const juce::String tip = "How sure the app must be before it shows an effect. Left shows more effects (including guesses), right shows only the clear ones. "
+                                     "The six newer effects (saturation, exciter, ring mod, filter, stutter, gated rhythm) need 15% more. Double-click for 65%.";
+            sure.setTooltip (tip); sureLabel.setTooltip (tip);
+        }
+        sure.onValueChange = [this] { sureQueued = true; sureDelay = 6; };
         addAndMakeVisible (view); view.setViewedComponent (&faders, false); view.setScrollBarsShown (true, false);
         faders.onChange = [this] { renderSoon(); };
         dev.initialiseWithDefaultDevices (0, 2);
@@ -291,6 +308,7 @@ public:
         dev.removeAudioCallback (&srcPlayer); srcPlayer.setSource (nullptr); setLookAndFeel (nullptr);
     }
     void loadFromCommandLine (const juce::File& a, const juce::File& b) { pending[0] = a; pending[1] = b; }
+    void setSureness (double v) { sure.setValue (v, juce::sendNotificationSync); }   // test hook: sure=NN on the command line
 
     void resized() override
     {
@@ -303,7 +321,9 @@ public:
         playBtn.setBounds (bar.removeFromLeft (80)); bar.removeFromLeft (8); abBtn.setBounds (bar.removeFromLeft (90)); bar.removeFromLeft (8);
         exportBtn.setBounds (bar.removeFromRight (90)); bar.removeFromRight (8); resetBtn.setBounds (bar.removeFromRight (110)); bar.removeFromRight (8);
         modeLabel.setBounds (bar.reduced (6, 0));
-        r.removeFromTop (12);
+        r.removeFromTop (8);
+        auto sr = r.removeFromTop (26); sureLabel.setBounds (sr.removeFromLeft (92)); sure.setBounds (sr.removeFromLeft (360));
+        r.removeFromTop (8);
         view.setBounds (r); faders.setSize (r.getWidth() - 12, faders.getHeight()); faders.layout();
     }
     void paint (juce::Graphics& g) override
@@ -322,13 +342,16 @@ private:
     LookAndFeel lnf; juce::TooltipWindow tips { this, 500 };
     DropZone zoneA, zoneB;
     juce::TextButton swapBtn, playBtn, abBtn, exportBtn, resetBtn;
-    juce::Label modeLabel; juce::Viewport view; FaderPanel faders;
+    juce::Label modeLabel, sureLabel; juce::Slider sure; juce::Viewport view; FaderPanel faders;
     juce::AudioDeviceManager dev; juce::AudioSourcePlayer srcPlayer; Player player; std::unique_ptr<juce::ResamplingAudioSource> resampler;
     struct DevListener : juce::ChangeListener { std::function<void()> fn; void changeListenerCallback (juce::ChangeBroadcaster*) override { if (fn) fn(); } } devListener;
     std::shared_ptr<dr::Models> models, models27;
     std::shared_ptr<const dr::Stereo> sound[2], result;
     juce::String names[2]; juce::File pending[2], lastDir;
     std::vector<dr::FoundFx> found; bool inspected = false;
+    std::shared_ptr<const dr::Inspection> inspection; std::map<std::string, dr::FoundFx> cache;   // every effect read so far, by name
+    bool sureQueued = false; int sureDelay = 0;
+    double cut() const { return sure.getValue() / 100.0; }
     std::thread worker; std::atomic<int> generation { 0 }; bool busy = false, renderQueued = false; int renderDelay = 0;
     juce::String emptyText = "Drop a sound on the left. Faders for the effects found on it appear here.";
     std::unique_ptr<juce::FileChooser> chooser;
@@ -379,26 +402,50 @@ private:
     }
     void inspect()
     {
-        ++generation; busy = true; inspected = false; found.clear(); faders.build ({}, false); updateUi();
+        ++generation; busy = true; inspected = false; found.clear(); cache.clear(); inspection.reset(); faders.build ({}, false); updateUi();
         zoneA.setStatus ("inspecting..."); modeLabel.setText ("Looking for effects on the first sound...", juce::dontSendNotification);
         auto src = sound[0]; auto M = models; auto M27 = models27; auto out = std::make_shared<std::vector<dr::FoundFx>>();
+        auto insp = std::make_shared<dr::Inspection>(); const double c = cut();
         const int gen = generation.load();
-        startWorker ([src, M, M27, out, gen, this]
+        startWorker ([src, M, M27, out, insp, c, gen, this]
                      {
                          auto alive = [this, gen] (float) { return generation.load() == gen; };
                          auto I = dr::inspect (*M, *src, alive);
                          if (generation.load() != gen) return;
                          dr::mergeNew (I, dr::inspect (*M27, *src, alive));
                          if (generation.load() != gen) return;
-                         *out = dr::estimate (I, *src);
+                         *out = dr::estimate (I, *src, c); *insp = I;
                      },
-                     [this, out]
+                     [this, out, insp]
                      {
-                         busy = false; found = *out; inspected = true;
+                         busy = false; found = *out; inspected = true; inspection = insp;
+                         for (auto& F : found) cache[F.name] = F;
                          zoneA.setStatus (juce::String ((int) found.size()) + (found.size() == 1 ? " effect found" : " effects found"));
                          emptyText = "No effects found on this sound (from the 18 it knows so far).";
                          faders.build (found, sound[1] != nullptr); resized(); renderNow(); updateUi();
                      });
+    }
+    // The Sureness slider moved: show the effects above it, reading the settings of any not read yet.
+    void applySureness()
+    {
+        if (! inspected || ! inspection) return;
+        const auto names = dr::namesAbove (*inspection, cut());
+        std::set<std::string> missing; for (auto& n : names) if (! cache.count (n)) missing.insert (n);
+        auto show = [this, names]
+        {
+            std::vector<dr::FoundFx> f; for (auto& n : names) f.push_back (cache.at (n));
+            dr::pruneFound (f);
+            std::vector<std::string> a, b; for (auto& x : f) a.push_back (x.name); for (auto& x : found) b.push_back (x.name);
+            if (a == b) return;
+            found = f; faders.build (found, sound[1] != nullptr, true); resized();
+            zoneA.setStatus (juce::String ((int) found.size()) + (found.size() == 1 ? " effect shown" : " effects shown"));
+            renderNow(); updateUi();
+        };
+        if (missing.empty()) { show(); return; }
+        busy = true; ++generation; modeLabel.setText ("Reading the settings of the newly shown effects...", juce::dontSendNotification);
+        auto I = inspection; auto src = sound[0]; auto out = std::make_shared<std::vector<dr::FoundFx>>();
+        startWorker ([I, src, missing, out] { *out = dr::estimate (*I, *src, 0.0, &missing); },
+                     [this, out, show] { busy = false; for (auto& F : *out) cache[F.name] = F; show(); updateUi(); });
     }
     void modeChanged()     // one sound <-> two sounds: the faders mean something else, so they start from the middle
     {
@@ -468,6 +515,7 @@ private:
     }
     void timerCallback() override
     {
+        if (sureQueued && --sureDelay <= 0 && ! busy) { sureQueued = false; applySureness(); }
         if (renderQueued && --renderDelay <= 0 && ! busy) { renderQueued = false; renderNow(); }
         const double t = player.isPlaying() ? player.position() : 0.0; const bool two = sound[1] != nullptr;
         zoneA.setPlayhead (two ? 0.0 : t); zoneB.setPlayhead (two ? t : 0.0);
@@ -486,6 +534,13 @@ public:
         window = std::make_unique<Window> (getApplicationName() + "  v" + getApplicationVersion());
         auto args = juce::StringArray::fromTokens (cmd, true); args.trim(); for (auto& a : args) a = a.unquoted();
         auto cwd = juce::File::getCurrentWorkingDirectory();
+        for (int i = args.size(); --i >= 0;)
+            if (args[i].startsWith ("sure="))
+            {
+                const double v = args[i].fromFirstOccurrenceOf ("=", false, false).getDoubleValue(); args.remove (i);
+                juce::Component::SafePointer<juce::Component> c (window->getContentComponent());
+                juce::Timer::callAfterDelay (20000, [c, v] { if (auto* m = dynamic_cast<app::Main*> (c.getComponent())) m->setSureness (v); });
+            }
         if (args.size() > 0 && args[0].isNotEmpty())
             if (auto* m = dynamic_cast<app::Main*> (window->getContentComponent()))
                 m->loadFromCommandLine (cwd.getChildFile (args[0]), args.size() > 1 ? cwd.getChildFile (args[1]) : juce::File());

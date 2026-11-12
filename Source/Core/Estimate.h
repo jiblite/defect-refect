@@ -435,9 +435,27 @@ inline std::vector<Knob> knobsFor (const std::string& f)
 
 // Settings of each found effect (estimate.estimate, without the slower sweep fit for now).
 inline bool isNewFx (const std::string& f) { return f == "saturation" || f == "exciter" || f == "ringmod" || f == "filter" || f == "stutter" || f == "gatedrhythm"; }
-// The 0.2.0 additions come from the larger 27-effect detector; they need a higher score to be named.
-constexpr double newCut = 0.8;
-inline std::vector<FoundFx> estimate (const Inspection& I, const Stereo& y, double cut = 0.65)
+// The 0.2.0 additions come from the larger 27-effect detector; they need a higher score to be named
+// (by default 80 %; with the Sureness slider: the slider's value plus newExtra).
+constexpr double newCut = 0.8, newExtra = 0.15;
+inline double cutFor (const std::string& f, double cut) { return isNewFx (f) ? std::min (0.99, std::max (cut + newExtra, cut == 0.65 ? newCut : 0.0)) : cut; }
+// The effects shown at a given sureness, in chain order.
+inline std::vector<std::string> namesAbove (const Inspection& I, double cut)
+{
+    std::vector<std::string> n;
+    for (const auto& f : chainOrder()) { auto p = I.prob.find (f); if (p != I.prob.end() && p->second > cutFor (f, cut)) n.push_back (f); }
+    return n;
+}
+// A gated rhythm also reads as a deep tremolo at the same speed: keep only the gate.
+inline void pruneFound (std::vector<FoundFx>& out)
+{
+    auto gr = std::find_if (out.begin(), out.end(), [] (const FoundFx& F) { return F.name == "gatedrhythm"; });
+    if (gr == out.end()) return;
+    const double r = get (gr->est, "rate", 0);
+    out.erase (std::remove_if (out.begin(), out.end(), [r] (const FoundFx& F) { return F.name == "tremolo" && std::abs (get (F.est, "rate", 0) / std::max (r, 1e-6) - 1) < 0.2; }), out.end());
+}
+// only: estimate exactly these effects (whatever their score); otherwise all above `cut`.
+inline std::vector<FoundFx> estimate (const Inspection& I, const Stereo& y, double cut = 0.65, const std::set<std::string>* only = nullptr)
 {
     std::vector<FoundFx> out;
     (void) est::pinkProbe ((size_t) (6 * SR));      // built once before the fits run in parallel
@@ -446,7 +464,8 @@ inline std::vector<FoundFx> estimate (const Inspection& I, const Stereo& y, doub
     auto R = [&] (const std::string& f, double d) { auto a = I.reg.find (f); return a == I.reg.end() ? d : a->second; };
     for (const auto& f : chainOrder())
     {
-        auto pit = I.prob.find (f); if (pit == I.prob.end() || pit->second <= (isNewFx (f) ? std::max (cut, newCut) : cut)) continue;
+        auto pit = I.prob.find (f); if (pit == I.prob.end()) continue;
+        if (only ? ! only->count (f) : pit->second <= cutFor (f, cut)) continue;
         FoundFx F; F.name = f; F.title = titleFor (f); F.prob = pit->second; F.knobs = knobsFor (f); Params& e = F.est;
         if (f == "delay")
         {
@@ -497,13 +516,7 @@ inline std::vector<FoundFx> estimate (const Inspection& I, const Stereo& y, doub
         }
         out.push_back (std::move (F));
     }
-    // a gated rhythm also reads as a deep tremolo at the same speed: keep only the gate
-    auto gr = std::find_if (out.begin(), out.end(), [] (const FoundFx& F) { return F.name == "gatedrhythm"; });
-    if (gr != out.end())
-    {
-        const double r = get (gr->est, "rate", 0);
-        out.erase (std::remove_if (out.begin(), out.end(), [r] (const FoundFx& F) { return F.name == "tremolo" && std::abs (get (F.est, "rate", 0) / std::max (r, 1e-6) - 1) < 0.2; }), out.end());
-    }
+    if (! only) pruneFound (out);
     return out;
 }
 
