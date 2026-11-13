@@ -384,11 +384,11 @@ inline Stereo applyStep (const std::string& f, const Stereo& prev, const Params&
 // The effect at strength s (0 = none, 1 = as found, 2 = double) by turning the effect's own controls
 // (mix, depth, drive, time...) instead of pushing the sound past the found result, which is what made
 // faders beyond +-20 % clip and hiss. Effects without a mix control are also cross-faded below 1.
-inline Stereo applyAmount (const std::string& f, const Stereo& prev, const Params& e0, double s)
+// The settings an effect runs with at strength s; fade: also cross-fade with the dry sound below 1.
+inline Params mapAmount (const std::string& f, const Params& e0, double s, bool& fade)
 {
     s = std::clamp (s, 0.0, 2.0);
-    if (s < 1e-6) return prev;
-    Params e = e0; const double up = std::max (0.0, s - 1.0); bool fade = false;
+    Params e = e0; const double up = std::max (0.0, s - 1.0); fade = false;
     auto mul = [&] (const char* k, double d, double lo, double hi) { e[k] = std::clamp (get (e, k, d) * s, lo, hi); };
     if (f == "flanger") { const double d = get (e, "depth", 0.7) * s; e["depth"] = std::min (d, 0.95); if (d > 0.95) e["fb"] = std::min (0.6, get (e, "fb", 0.0) + 0.5 * (d - 0.95)); }
     else if (f == "chorus") mul ("mix", 0.5, 0.0, 1.5);
@@ -404,11 +404,7 @@ inline Stereo applyAmount (const std::string& f, const Stereo& prev, const Param
     else if (f == "haas") e["lag"] = get (e, "lag", 0) * s;
     else if (f == "delay") { mul ("mix", 0.4, 0.0, 1.2); if (up > 0) e["fb"] = std::min (0.88, get (e, "fb", 0.4) + 0.15 * up); }
     else if (f == "reverb") { mul ("mix", 0.35, 0.0, 0.92); if (up > 0) e["rt60"] = get (e, "rt60", 1.8) * (1 + 0.3 * up); }
-    else if (f == "distortion")
-    {
-        const double d0 = get (e, "top", -1) >= 0 ? distortionDriveFor (prev.mid(), get (e, "top", 0), get (e, "kind", 1) > 0.5) : get (e, "drive", 8);
-        e["drive"] = std::clamp (std::pow (std::max (1.0, d0), s) * get (e, "drive_scale", 1.0), 0.5, 200.0); e["top"] = -1; fade = true;
-    }
+    else if (f == "distortion") { e["drive"] = std::clamp (std::pow (std::max (1.0, get (e, "drive", 8.0)), s) * get (e, "drive_scale", 1.0), 0.5, 200.0); e["top"] = -1; fade = true; }
     else if (f == "bitcrush") { e["bits"] = std::max (2.0, 16 - s * (16 - get (e, "bits", 6))); e["down"] = std::max (1.0, 1 + s * (get (e, "down", 4) - 1)); fade = true; }
     else if (f == "saturation") { mul ("drive", 8.0, 0.0, 40.0); fade = true; }
     else if (f == "exciter") mul ("amount", 0.3, 0.0, 2.0);
@@ -425,6 +421,16 @@ inline Stereo applyAmount (const std::string& f, const Stereo& prev, const Param
     }
     else if (f == "stutter") mul ("prob", 0.4, 0.0, 1.0);
     else if (f == "gatedrhythm") { const double d = get (e, "depth", 1.0) * s; e["depth"] = std::min (1.0, d); if (d > 1) e["duty"] = std::max (0.08, get (e, "duty", 0.5) * (1 - 0.35 * std::min (1.0, d - 1))); }
+    return e;
+}
+inline Stereo applyAmount (const std::string& f, const Stereo& prev, const Params& e0, double s)
+{
+    s = std::clamp (s, 0.0, 2.0);
+    if (s < 1e-6) return prev;
+    Params in = e0;
+    // distortion: the drive that squashes this sound as much as the source was squashed
+    if (f == "distortion" && get (in, "top", -1) >= 0) in["drive"] = distortionDriveFor (prev.mid(), get (in, "top", 0), get (in, "kind", 1) > 0.5);
+    bool fade = false; const Params e = mapAmount (f, in, s, fade);
     Stereo y = applyEffect (f, prev, e);
     const double r0 = prev.rms(), r1 = y.rms(), k = r1 > 1e-12 ? r0 / r1 : 1.0, w = fade ? std::min (1.0, s) : 1.0;
     for (size_t i = 0; i < y.size(); ++i) { y.l[i] = prev.l[i] + w * (k * y.l[i] - prev.l[i]); y.r[i] = prev.r[i] + w * (k * y.r[i] - prev.r[i]); }

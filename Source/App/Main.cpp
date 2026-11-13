@@ -11,7 +11,7 @@
 #include <thread>
 
 #include "BinaryData.h"
-#include "Core/Estimate.h"
+#include "Core/Display.h"
 
 namespace app
 {
@@ -184,21 +184,118 @@ private:
     juce::TextButton clear;
 };
 
+// ---------------------------------------------------------------- the picture of the selected effect
+class DisplayPanel : public juce::Component
+{
+public:
+    // now: the effect as the faders have it; found: as it was found (drawn faintly behind when the faders have moved)
+    void set (dr::Plot now, dr::Plot found, juce::String hintText = {}) { plot = std::move (now); ghost = std::move (found); hint = std::move (hintText); repaint(); }
+    void paint (juce::Graphics& g) override
+    {
+        auto r = getLocalBounds().toFloat().reduced (1);
+        g.setColour (theme::lane); g.fillRoundedRectangle (r, 6); g.setColour (theme::outline); g.drawRoundedRectangle (r, 6, 1.0f);
+        if (plot.title.empty())
+        {
+            g.setColour (theme::textDim); g.setFont (juce::FontOptions (13.0f));
+            g.drawFittedText (hint.isEmpty() ? juce::String ("Click an effect or move one of its faders to see what was found.") : hint, getLocalBounds().reduced (24), juce::Justification::centred, 4);
+            return;
+        }
+        auto area = getLocalBounds().reduced (12);
+        g.setColour (theme::text); g.setFont (juce::FontOptions (13.0f, juce::Font::bold));
+        g.drawText (juce::String (plot.title), area.removeFromTop (20), juce::Justification::centredLeft);
+        auto cap = area.removeFromBottom (48);
+        g.setColour (theme::textDim); g.setFont (juce::FontOptions (12.0f));
+        g.drawFittedText (juce::String (plot.caption), cap.withTrimmedTop (6), juce::Justification::topLeft, 3);
+        if (plot.empty()) return;
+        auto pr = area.withTrimmedLeft (38).withTrimmedBottom (20).withTrimmedTop (16).withTrimmedRight (6).toFloat();
+        auto X = [&] (double v) { const double u = plot.xLog ? std::log (juce::jmax (v, 1e-9) / plot.x0) / std::log (plot.x1 / plot.x0) : (v - plot.x0) / (plot.x1 - plot.x0); return pr.getX() + (float) u * pr.getWidth(); };
+        auto Y = [&] (double v) { return pr.getBottom() - (float) ((v - plot.y0) / (plot.y1 - plot.y0)) * pr.getHeight(); };
+        auto label = [] (double v, bool hz)
+        {
+            if (hz && std::abs (v) >= 1000) return juce::String (v / 1000.0, std::fmod (v, 1000.0) == 0.0 ? 0 : 1) + "k";
+            juce::String t (v, std::abs (v) < 10 ? 2 : (std::abs (v) < 100 ? 1 : 0));
+            if (t.containsChar ('.')) { while (t.endsWithChar ('0')) t = t.dropLastCharacters (1); if (t.endsWithChar ('.')) t = t.dropLastCharacters (1); }
+            return t;
+        };
+        // grid and axis labels
+        g.setFont (juce::FontOptions (10.5f));
+        for (double t : plot.xTicks)
+        {
+            const float x = X (t); if (x < pr.getX() - 1 || x > pr.getRight() + 1) continue;
+            g.setColour (theme::outline); g.drawVerticalLine ((int) x, pr.getY(), pr.getBottom());
+            g.setColour (theme::textDim); g.drawText (label (t, plot.xLog), (int) x - 30, (int) pr.getBottom() + 2, 60, 14, juce::Justification::centred);
+        }
+        for (double t : plot.yTicks)
+        {
+            const float y = Y (t); if (y < pr.getY() - 1 || y > pr.getBottom() + 1) continue;
+            g.setColour (theme::outline); g.drawHorizontalLine ((int) y, pr.getX(), pr.getRight());
+            g.setColour (theme::textDim); g.drawText (label (t, false), (int) pr.getX() - 40, (int) y - 7, 36, 14, juce::Justification::centredRight);
+        }
+        g.setColour (theme::textDim);
+        g.drawText (juce::String (plot.xLabel), (int) pr.getX(), (int) pr.getBottom() + 2, (int) pr.getWidth(), 14, juce::Justification::centredRight);
+        g.drawText (juce::String (plot.yLabel), (int) pr.getX() - 40, (int) pr.getY() - 17, 60, 12, juce::Justification::centredLeft);
+        g.setColour (theme::outline); g.drawRect (pr, 1.0f);
+        juce::Graphics::ScopedSaveState save (g); g.reduceClipRegion (pr.toNearestInt());
+        auto colourOf = [] (int c) { return c == 0 ? theme::teal : c == 1 ? theme::orange : theme::textDim; };
+        auto draw = [&] (const dr::Plot& P, float alpha)
+        {
+            for (auto& b : P.bars)
+            {
+                const float x = X (b.x), ya = Y (b.y0), yb = Y (b.y1); g.setColour (colourOf (b.colour).withAlpha (alpha));
+                if (b.w > 0 && ! plot.xLog) { const float xa = X (b.x - b.w / 2), xb = X (b.x + b.w / 2); g.fillRect (juce::Rectangle<float> (xa, juce::jmin (ya, yb), juce::jmax (2.0f, xb - xa), std::abs (ya - yb))); }
+                else { g.fillRect (juce::Rectangle<float> (x - 1.5f, juce::jmin (ya, yb), 3.0f, std::abs (ya - yb))); g.fillEllipse (x - 3.5f, yb - 3.5f, 7.0f, 7.0f); }
+            }
+            for (auto& c : P.curves)
+            {
+                if (c.pts.size() < 2) continue;
+                juce::Path path; bool first = true;
+                for (auto& [px, py] : c.pts) { const float x = X (px), y = juce::jlimit (pr.getY() - 50.0f, pr.getBottom() + 50.0f, Y (py)); if (first) path.startNewSubPath (x, y); else path.lineTo (x, y); first = false; }
+                const auto col = colourOf (c.colour);
+                if (c.fill && alpha > 0.9f)
+                {
+                    juce::Path f = path; f.lineTo (X (c.pts.back().first), pr.getBottom() + 50.0f); f.lineTo (X (c.pts.front().first), pr.getBottom() + 50.0f); f.closeSubPath();
+                    g.setColour (col.withAlpha (0.14f)); g.fillPath (f);
+                }
+                g.setColour (col.withAlpha (alpha * (c.dim ? 0.5f : 1.0f))); g.strokePath (path, juce::PathStrokeType (c.dim ? 1.0f : 1.7f));
+            }
+        };
+        if (! ghost.empty()) draw (ghost, 0.28f);
+        draw (plot, 1.0f);
+    }
+private:
+    dr::Plot plot, ghost; juce::String hint;
+};
+
 // ---------------------------------------------------------------- the faders
 class FaderPanel : public juce::Component
 {
 public:
     std::function<void()> onChange;
+    std::function<void()> onFocus;          // another effect was selected (clicked, or one of its faders touched)
     std::map<std::string, double> values;
+    std::string focus;                      // the effect whose picture is shown
+    void setFocus (const std::string& n) { if (focus == n) return; focus = n; repaint(); if (onFocus) onFocus(); }
+    void mouseDown (const juce::MouseEvent& e) override { for (auto& g : groups) if (g.bounds.contains (e.getPosition())) { setFocus (g.name); return; } }
+    void paint (juce::Graphics& g) override
+    {
+        for (auto& grp : groups)
+            if (grp.name == focus)
+            {
+                g.setColour (theme::panel); g.fillRoundedRectangle (grp.bounds.toFloat(), 5.0f);
+                g.setColour (accent.withAlpha (0.55f)); g.drawRoundedRectangle (grp.bounds.toFloat().reduced (0.5f), 5.0f, 1.0f);
+            }
+    }
     void build (const std::vector<dr::FoundFx>& found, bool twoSounds, bool keepValues = false)
     {
-        const auto old = values;
+        const auto old = values; accent = twoSounds ? theme::orange : theme::teal;
         groups.clear(); rows.clear(); heads.clear(); values.clear();
         for (auto& F : found)
         {
             auto h = std::make_unique<juce::Label>(); h->setText (juce::String (F.title) + "   " + juce::String (juce::roundToInt (F.prob * 100)) + "% sure", juce::dontSendNotification);
             h->setFont (juce::FontOptions (13.0f, juce::Font::bold)); h->setColour (juce::Label::textColourId, theme::text); addAndMakeVisible (*h);
-            Group grp; grp.head = h.get(); heads.push_back (std::move (h));
+            h->setInterceptsMouseClicks (false, false);
+            Group grp; grp.head = h.get(); grp.name = F.name; heads.push_back (std::move (h));
+            const std::string fxName = F.name;
             for (auto& k : F.knobs)
             {
                 auto row = std::make_unique<Row>();
@@ -218,7 +315,9 @@ public:
                 s.updateText();
                 const std::string id = k.id; values[id] = 1.0;
                 if (keepValues) { auto it = old.find (id); if (it != old.end()) { values[id] = it->second; s.setValue (it->second, juce::dontSendNotification); } }
-                s.onValueChange = [this, id, &s] { values[id] = s.getValue(); if (onChange) onChange(); };
+                s.onValueChange = [this, id, fxName, &s] { values[id] = s.getValue(); setFocus (fxName); if (onChange) onChange(); };
+                s.onDragStart = [this, fxName] { setFocus (fxName); };
+                row->label.setInterceptsMouseClicks (false, false);
                 addAndMakeVisible (row->label); addAndMakeVisible (s);
                 grp.rows.push_back (row.get()); rows.push_back (std::move (row));
             }
@@ -226,26 +325,33 @@ public:
         }
         if (found.empty()) groups.clear();
         layout();
+        // keep the selection if that effect is still shown, otherwise select the first one
+        bool have = false; for (auto& g : groups) have = have || g.name == focus;
+        if (! have) focus = groups.empty() ? std::string() : groups.front().name;
+        repaint(); if (onFocus) onFocus();
     }
     void resetAll() { for (auto& r : rows) r->slider.setValue (1.0, juce::sendNotificationSync); }
     int count() const { return (int) rows.size(); }
     void layout()
     {
         // groups flow in columns
-        const int colW = 330, gap = 18, rowH = 24, headH = 26; const int cols = juce::jmax (1, (getParentWidth() - 10) / (colW + gap));
+        const int colW = 322, gap = 22, rowH = 24, headH = 26; const int cols = juce::jmax (1, (getParentWidth() - 14) / (colW + gap));
         std::vector<int> colY ((size_t) cols, 4);
         for (auto& g : groups)
         {
-            const size_t c = (size_t) (std::min_element (colY.begin(), colY.end()) - colY.begin()); const int x = (int) c * (colW + gap); int y = colY[c];
+            const size_t c = (size_t) (std::min_element (colY.begin(), colY.end()) - colY.begin()); const int x = 8 + (int) c * (colW + gap); int y = colY[c];
+            const int top = y;
             g.head->setBounds (x, y, colW, headH); y += headH;
             for (auto* r : g.rows) { r->label.setBounds (x, y, 92, rowH); r->slider.setBounds (x + 92, y, colW - 92, rowH); y += rowH; }
+            g.bounds = { x - 8, top - 2, colW + 14, y - top + 6 };
             colY[c] = y + 14;
         }
         setSize (juce::jmax (getParentWidth(), 10), *std::max_element (colY.begin(), colY.end()) + 10);
     }
 private:
     struct Row { juce::Label label; juce::Slider slider; };
-    struct Group { juce::Label* head = nullptr; std::vector<Row*> rows; };
+    struct Group { juce::Label* head = nullptr; std::vector<Row*> rows; std::string name; juce::Rectangle<int> bounds; };
+    juce::Colour accent { theme::teal };
     std::vector<std::unique_ptr<Row>> rows; std::vector<std::unique_ptr<juce::Label>> heads; std::vector<Group> groups;
 };
 
@@ -286,7 +392,9 @@ public:
         }
         sure.onValueChange = [this] { sureQueued = true; sureDelay = 6; };
         addAndMakeVisible (view); view.setViewedComponent (&faders, false); view.setScrollBarsShown (true, false);
-        faders.onChange = [this] { renderSoon(); };
+        addAndMakeVisible (display);
+        faders.onChange = [this] { renderSoon(); updateDisplay(); };
+        faders.onFocus = [this] { updateDisplay(); };
         dev.initialiseWithDefaultDevices (0, 2);
         { auto setup = dev.getAudioDeviceSetup(); setup.sampleRate = 48000; dev.setAudioDeviceSetup (setup, true); }
         resampler = std::make_unique<juce::ResamplingAudioSource> (&player, false, 2);
@@ -324,6 +432,10 @@ public:
         r.removeFromTop (8);
         auto sr = r.removeFromTop (26); sureLabel.setBounds (sr.removeFromLeft (92)); sure.setBounds (sr.removeFromLeft (360));
         r.removeFromTop (8);
+        // the picture of the selected effect sits to the right of the faders
+        const int dw = juce::jlimit (300, 430, (int) (r.getWidth() * 0.38));
+        display.setBounds (r.removeFromRight (dw).removeFromTop (juce::jmin (r.getHeight(), 330)));
+        r.removeFromRight (10);
         view.setBounds (r); faders.setSize (r.getWidth() - 12, faders.getHeight()); faders.layout();
     }
     void paint (juce::Graphics& g) override
@@ -342,7 +454,7 @@ private:
     LookAndFeel lnf; juce::TooltipWindow tips { this, 500 };
     DropZone zoneA, zoneB;
     juce::TextButton swapBtn, playBtn, abBtn, exportBtn, resetBtn;
-    juce::Label modeLabel, sureLabel; juce::Slider sure; juce::Viewport view; FaderPanel faders;
+    juce::Label modeLabel, sureLabel; juce::Slider sure; juce::Viewport view; FaderPanel faders; DisplayPanel display;
     juce::AudioDeviceManager dev; juce::AudioSourcePlayer srcPlayer; Player player; std::unique_ptr<juce::ResamplingAudioSource> resampler;
     struct DevListener : juce::ChangeListener { std::function<void()> fn; void changeListenerCallback (juce::ChangeBroadcaster*) override { if (fn) fn(); } } devListener;
     std::shared_ptr<dr::Models> models, models27;
@@ -447,6 +559,14 @@ private:
         startWorker ([I, src, missing, out] { *out = dr::estimate (*I, *src, 0.0, &missing); },
                      [this, out, show] { busy = false; for (auto& F : *out) cache[F.name] = F; show(); updateUi(); });
     }
+    // The picture for the selected effect: as the faders have it now, with the found state faintly behind.
+    void updateDisplay()
+    {
+        const dr::FoundFx* F = nullptr; for (auto& x : found) if (x.name == faders.focus) F = &x;
+        if (F == nullptr) { display.set ({}, {}, inspected && found.empty() ? juce::String ("Nothing found to show.") : juce::String()); return; }
+        const double s = dr::amountOf (*F, faders.values); const bool moved = dr::settingsMoved (*F, faders.values) || std::abs (s - 1.0) > 1e-9;
+        display.set (dr::makePlot (*F, dr::scaled (*F, faders.values), s), moved ? dr::makePlot (*F, F->est, 1.0) : dr::Plot());
+    }
     void modeChanged()     // one sound <-> two sounds: the faders mean something else, so they start from the middle
     {
         if (inspected) { faders.build (found, sound[1] != nullptr); resized(); }
@@ -521,6 +641,40 @@ private:
         zoneA.setPlayhead (two ? 0.0 : t); zoneB.setPlayhead (two ? t : 0.0);
     }
 };
+
+// test hook: plots=<folder> on the command line writes a picture of every effect's display, as found and with the faders moved
+inline void dumpPlots (const juce::File& dir)
+{
+    dir.createDirectory();
+    const std::map<std::string, dr::Params> typical = {
+        { "flanger", { { "rate", 0.3 }, { "dmin", 0.5e-3 }, { "dmax", 5e-3 }, { "depth", 0.7 }, { "fb", 0.2 } } },
+        { "chorus", { { "rate", 0.8 }, { "base", 15e-3 }, { "width", 4e-3 }, { "mix", 0.5 }, { "voices", 2 } } },
+        { "phaser", { { "rate", 0.4 }, { "fmin", 200 }, { "fmax", 3000 }, { "fb", 0.3 }, { "mix", 0.5 }, { "stages", 6 } } },
+        { "filtersweep", { { "rate", 0.25 }, { "fmin", 300 }, { "fmax", 5000 }, { "q", 4 } } },
+        { "width", { { "amount", 0.6 } } }, { "haas", { { "lag", 720 } } },
+        { "delay", { { "ms", 320 }, { "fb", 0.45 }, { "mix", 0.4 }, { "pingpong", 1 } } },
+        { "reverb", { { "rt60", 1.8 }, { "mix", 0.35 } } },
+        { "distortion", { { "drive", 8 }, { "kind", 1 }, { "top", -1 }, { "drive_scale", 1 } } },
+        { "bitcrush", { { "bits", 6 }, { "down", 4 } } },
+        { "tremolo", { { "rate", 4 }, { "amp_db", 6 }, { "phase", 0.1 } } }, { "autopan", { { "rate", 0.7 }, { "amp_db", 9 }, { "phase", 0 } } },
+        { "saturation", { { "drive", 12 }, { "kind", 1 }, { "tone", 0.5 } } }, { "exciter", { { "amount", 0.4 }, { "freq", 3000 } } },
+        { "ringmod", { { "carrier", 220 }, { "mix", 0.8 } } }, { "filter", { { "cutoff", 1500 }, { "resonance", 2.5 }, { "type", 2 }, { "slope", 1 } } },
+        { "stutter", { { "slice_ms", 120 }, { "repeats", 4 }, { "prob", 0.4 } } }, { "gatedrhythm", { { "rate", 8 }, { "duty", 0.5 }, { "depth", 0.9 } } } };
+    for (auto& [name, est] : typical)
+    {
+        dr::FoundFx F; F.name = name; F.title = dr::titleFor (name); F.est = est; F.knobs = dr::knobsFor (name);
+        for (int moved = 0; moved < 2; ++moved)
+        {
+            DisplayPanel p; p.setSize (420, 330);
+            std::map<std::string, double> v; for (auto& k : F.knobs) v[k.id] = 1.0;
+            if (moved) { int i = 0; for (auto& k : F.knobs) v[k.id] = (i++ == 0 ? 1.6 : 1.45); }
+            p.set (dr::makePlot (F, dr::scaled (F, v), dr::amountOf (F, v)), moved ? dr::makePlot (F, F.est, 1.0) : dr::Plot());
+            juce::Image img = p.createComponentSnapshot (p.getLocalBounds(), true, 2.0f);
+            juce::File out = dir.getChildFile (juce::String (name) + (moved ? "-moved" : "") + ".png"); out.deleteFile();
+            juce::FileOutputStream os (out); juce::PNGImageFormat png; if (os.openedOk()) png.writeImageToStream (img, os);
+        }
+    }
+}
 } // namespace app
 
 class DefectRefectApp : public juce::JUCEApplication
@@ -534,6 +688,8 @@ public:
         window = std::make_unique<Window> (getApplicationName() + "  v" + getApplicationVersion());
         auto args = juce::StringArray::fromTokens (cmd, true); args.trim(); for (auto& a : args) a = a.unquoted();
         auto cwd = juce::File::getCurrentWorkingDirectory();
+        for (int i = args.size(); --i >= 0;)
+            if (args[i].startsWith ("plots=")) { app::dumpPlots (cwd.getChildFile (args[i].fromFirstOccurrenceOf ("=", false, false))); quit(); return; }
         for (int i = args.size(); --i >= 0;)
             if (args[i].startsWith ("sure="))
             {
