@@ -438,7 +438,9 @@ inline std::vector<Knob> knobsFor (const std::string& f)
     else if (f == "stutter") { k.push_back (K ("slice_ms", "Slice", "Length of each repeated slice.", 0, 10, 1000)); k.push_back (K ("repeats", "Repeats", "How many times a slice repeats.", 1, 1, 16)); k.push_back (K ("prob", "Chance", "How often it stutters.", 0, 0, 1)); }
     else if (f == "gatedrhythm") { k.push_back (K ("rate", "Speed", "Steps per second.", 0, 0.2, 40)); k.push_back (K ("duty", "Open", "How long each step stays open.", 0, 0.05, 1)); k.push_back (K ("depth", "Depth", "How far it cuts down.", 0, 0, 1)); }
     else if (f == "tremolo" || f == "autopan") { k.push_back (K ("rate", "Speed", "Wobble speed.", 0, 0.02, 20)); k.push_back (K ("amp_db", "Depth", "How deep the movement goes.", 0, 0, 40)); }
-    for (auto& x : k) x.id = f + "." + (x.key.empty() ? std::string ("amount") : x.key);
+    // Every fader needs its own id: a setting that is itself called "amount" (STEREO WIDTH's Width, EXCITER's Intensity)
+    // must not share the id of the group's Amount fader, or the two faders move one value.
+    for (auto& x : k) x.id = f + "." + (x.key.empty() ? std::string ("amount") : x.key == "amount" ? std::string ("depth") : x.key);
     return k;
 }
 
@@ -476,14 +478,16 @@ inline RoomEvidence roomEvidence (const room::Found& f)
 }
 // How sure it is that there is a room on the sound, 0 .. 1: what the Sureness slider compares. Fitted on the
 // scoreboard's 240 sounds with reverb against 368 without (the same sounds dry, and with tone effects only;
-// Research/room/train/sure_stats.py and sure_fit2.py), as a probability for a sound that is somewhat more likely to
-// carry reverb than not (62 in 100). Most of the answer is whether the engine finds a room at all (it does on 96 %
-// of the sounds with reverb and on 34 % of those without); among the found ones, more cells that are clearly room
-// and more bands with all-room moments make it surer. At the slider's 65 % the reverb then shows on 86 % of the
-// sounds that have one, on 15 % of the dry ones and on 9 % of those with a tone effect only (cross-validated); the
-// "dry" ones it shows on are mostly recorded loops and recordings, which may carry a room of their own.
+// Research/room/train/sure_stats.py and sure_fit2.py with PRIOR=0.62), as a probability for a sound that is somewhat
+// more likely to carry reverb than not (62 in 100). Most of the answer is whether the engine finds a room at all (it
+// does on 96 % of the sounds with reverb and on 34 % of those without); among the found ones, more cells that are
+// clearly room and more bands with all-room moments make it surer. At the slider's 65 % the reverb then shows on
+// 86 % of the sounds that have one, on 17 % of the dry ones and on 12 % of those with a tone effect only
+// (cross-validated); the "dry" ones it shows on are mostly recorded loops and recordings, which may carry a room of
+// their own. The numbers belong to the model in Resources (0.4.1: first look unet_w, second look unet_wp2) and are
+// fitted again with every new model.
 // roomNone: what is left when the engine finds no room (then about 9 in 10 sounds have none).
-constexpr double roomSure0 = 2.666, roomSureDeep = 1.379, roomSureBands = 2.005, roomNone = 0.09;
+constexpr double roomSure0 = 2.100, roomSureDeep = 1.215, roomSureBands = 2.264, roomNone = 0.09;
 inline double roomSureness (const room::Found& f)
 {
     if (! f.found) return roomNone;
@@ -549,14 +553,13 @@ inline RoomIr exportIr (const room::Found& f, double length = 1.0, double bright
 // The room engine's verdict goes into the inspection, and the detector's own guess about reverb goes out: on 76
 // scoreboard sounds the detector showed the reverb on 67 % of those that have one, on 7 % of the dry ones and on
 // 25 % of those with a tone effect only, and where the two disagree it is no help either way.
-// The exception: the engine tells room from sound largely by what left and right do not share, so on a mono file or
-// a very narrow one it misses a room more often (on mono versions of the scoreboard's sounds about 1 in 5). With no
-// room found and less than roomBlind of the sound unshared, it has no say: false comes back, the detector's guess
-// stays and the reverb is handled the old way.
-constexpr double roomBlind = -20.0;
+// That holds for narrow and mono recordings too since the model of 0.4.1, which was also trained on them: on ten
+// scoreboard sounds narrowed step by step down to mono it still finds the room on 9 and shows it (rule above 65 %) on
+// 8, where the first model showed it on about 4 in 10 (Research/room/train/narrow_test.py). The first model's
+// exception (no room found on a nearly mono file: the detector's guess stays) is gone with it; the function still
+// answers whether the engine's verdict was taken, which is now always.
 inline bool mergeRoom (Inspection& I, const room::Found& f)
 {
-    if (! f.found && roomEvidence (f).own < roomBlind) return false;
     I.prob["reverb"] = roomSureness (f); return true;
 }
 

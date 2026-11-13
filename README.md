@@ -10,20 +10,20 @@ Standalone app. Drop a sound: the effects found on it become faders, grouped by 
 - Every effect has an On/Off switch. Off = left alone: with one sound it stays as found, with two sounds it is not
   put on the second. For comparing with and without, and for an effect that is shown but not there.
 
-**Reverb (new engine in 0.4.0):** a small model looks at the sound twice and says, band by band and moment by
-moment, what is room and what is the sound itself. From that the app reads the room (decay time and level per
-band, width) and the REVERB group works on it:
+**Reverb (new engine in 0.4.0, second model in 0.4.1):** a small model looks at the sound twice and says, band by
+band and moment by moment, what is room and what is the sound itself. From that the app reads the room (decay time
+and level per band, width) and the REVERB group works on it:
 - one sound: Amount takes the reverb out (half way left = the engine's own answer, far left = bolder) or adds
   more of it; Length, Brightness and Width reshape the sound's own reverb;
 - two sounds: the found room, rebuilt from its numbers, goes onto the second sound;
 - the display shows how the room dies away (lows, mids, highs); **Export IR** saves it as an impulse response.
 
 Whether the REVERB group shows at all follows how sure the engine is that there is a room (the Sureness slider;
-the rule is in `Estimate.h`, `roomSureness`). Known limits of this first model: it tells room from sound
-largely by what left and right do not share. With a wide stereo sound under the reverb it takes less out and errs
-more often than with a mono or narrow one. And on a recording that is narrow or mono as a whole, room included,
-it finds the room less often (when it finds none there, the old reverb handling stays) and takes out only about
-a third as much.
+the rule is in `Estimate.h`, `roomSureness`). The first model told room from sound largely by what left and right
+do not share. The model in 0.4.1 was also trained on recordings that are narrow or mono as a whole and on wide
+sounds under the reverb: on narrow and mono recordings it now finds the room about as often as on stereo ones and
+takes out about twice as much as before. Known limits: with a wide stereo sound under the reverb it still takes
+less out and errs more often than with a mono or narrow one, and a light reverb is the hardest case.
 
 **Tone (new engine in 0.4.1):**
 - **Tone Match** (two sounds, the Tone Match button): the second sound takes the long-term tone of the first.
@@ -55,7 +55,8 @@ filter, stutter, gated rhythm (from a larger 27-effect detector, named only abov
 - `Resources/models.bin` (12 effects) and `models27.bin` (27 effects, `DR_MODEL27=1`) the trained models, written by `Tools/export_models.py`.
 - `Resources/room.bin` and `room2.bin` the reverb engine's model (first and second look), written by `Tools/export_room_model.py`.
 - `Tests/render.cpp` the app's processing without the UI: `drrender Resources first.wav [second.wav|-] out.wav [id=value ...]`
-  (out `-` only prints what was found; `ir=file.wav` writes what Export IR writes; `match=1` switches Tone Match on).
+  (out `-` only prints what was found; `ir=file.wav` writes what Export IR writes; `match=1` switches Tone Match on;
+  `-- [second.wav|-] out.wav [id=value ...]` adds another render of the same first sound, which is analysed once).
 - `Tests/room.cpp` the reverb engine alone: `drroom room.bin in.wav ...` (see the top of the file).
 - `Tests/tone.cpp` the tone engine alone: `drtone a.wav b.wav prefix [detail]`; `Tools/tone_parity.py` compares it with the prototype.
 - `Research/room/` the Python side of the reverb engine as it was run: the scoreboard, the reference engine the

@@ -23,6 +23,10 @@ for s in range(R):
     for tr, te in StratifiedKFold(8, shuffle=True, random_state=s).split(X, y):
         pc[te] += LogisticRegression(C=C, max_iter=2000).fit(X[tr], y[tr], sample_weight=w[tr]).predict_proba(X[te])[:, 1] / R
 sure = np.zeros(len(rows)); sure[fi] = pc
+PRIOR = float(os.environ.get('PRIOR', '0.5'))        # the app's assumption: this share of the sounds dropped on it carry reverb
+if PRIOR != 0.5:
+    sh = np.log(PRIOR / (1 - PRIOR)); sure[fi] = 1 / (1 + np.exp(-(np.log(pc / (1 - pc)) + sh)))
+    print('  with %.0f in 100 sounds carrying reverb: the rule\'s first number becomes %.3f, and no room found leaves %.2f' % (100 * PRIOR, m.intercept_[0] + sh, PRIOR * (1 - fw) / (PRIOR * (1 - fw) + (1 - PRIOR) * (1 - fd))))
 ll = -np.sum(w * (y * np.log(pc) + (1 - y) * np.log(1 - pc))) / w.sum(); p0 = fw / (fw + fd); ll0 = -np.sum(w * (y * np.log(p0) + (1 - y) * np.log(1 - p0))) / w.sum()
 print('  ranking among the found ones: log loss %.3f (found alone: %.3f)' % (ll, ll0))
 print('  honesty (cross-validated; "really" = share with reverb at even odds):')

@@ -13,6 +13,7 @@ def run(x):
     for line in o:
         if line.startswith('room: found='): r.update({'room_' + k: float(v) for k, v in (t.split('=') for t in line[5:].split())})
         elif line.startswith('room:'): r['blind'] = 1
+        elif line.startswith('tone:'): r['reflections'] = int(line.split('reflections=')[1].split()[0])
         elif '=' in line: r['prob'] = {k: float(v) for k, v in (t.split('=') for t in line.split())}
     return r
 rows = []; t0 = time.time()
