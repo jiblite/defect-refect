@@ -32,9 +32,9 @@ jobs:
           path: dist/
 
   macos:
-    # Mac builds only when asked (they use a lot of Actions minutes). Set to true for that run.
-    if: false
-    runs-on: macos-14
+    # Mac builds only when asked (they use a lot of Actions minutes): start the workflow by hand (Run workflow).
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v5
       - name: Configure
