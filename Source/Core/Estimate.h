@@ -6,8 +6,10 @@
 #include "Effects.h"
 #include "Hand.h"
 #include "Inspector.h"
+#include "RoomEngine.h"
 #include <functional>
 #include <future>
+#include <memory>
 #include <set>
 
 namespace dr
@@ -391,6 +393,7 @@ struct Knob
 {
     std::string id, label, tip, key;   // key: the setting this fader scales ("" = the effect's Amount)
     double neutral = 0, lo = 0, hi = 1e9;
+    bool ownTip = false;               // the tip says what left and right do (otherwise: left = none, right = double)
 };
 struct FoundFx
 {
@@ -398,6 +401,7 @@ struct FoundFx
     Params est;                        // settings as read from the source
     std::vector<Knob> knobs;
     double lfoRate = 0;                // for removal of moving filters
+    std::shared_ptr<const room::Found> room;   // a reverb the room engine found: its faders work that engine (see roomFx)
 };
 
 inline std::string titleFor (const std::string& f)
@@ -433,6 +437,124 @@ inline std::vector<Knob> knobsFor (const std::string& f)
     return k;
 }
 
+// ---------------------------------------------------------------- the reverb the room engine found (RoomEngine.h)
+// What the room engine's answer says about whether there is a room on the sound at all.
+struct RoomEvidence
+{
+    double share = -99;     // the part of the sound the engine takes for room against the part it takes for sound, dB (cells within 50 dB of the loudest)
+    double deep = 0;        // share of those cells that are clearly room (answer under -12 dB)
+    int bands = 0;          // bands with moments that were all room
+    double moments = 0;     // such moments, all bands together
+    double decay = 0, strength = 0;     // mid bands: decay time (s), room against direct sound (dB)
+    double own = -99;       // the part of the sound that left and right do not share, dB under the whole (a mono file: -40)
+};
+inline RoomEvidence roomEvidence (const room::Found& f)
+{
+    RoomEvidence e; const size_t n = f.gains.size(); if (n == 0 || f.picture.LE.size() != n) return e;
+    const double top = f.picture.top(); double asRoom = 0, asSound = 0, unshared = 0; size_t live = 0, clear = 0; const bool wide = f.picture.U256.size() == n;
+    for (size_t i = 0; i < n; ++i)
+    {
+        if (! (f.picture.LE[i] > top - 50.0)) continue;
+        const double E = std::pow (10.0, (f.picture.LE[i] - top) / 10.0), G = std::pow (10.0, (double) f.gains[i] / 10.0);
+        asRoom += E * (1.0 - G); asSound += E * G; ++live; clear += (double) f.gains[i] < -12.0 ? 1u : 0u;
+        if (wide) unshared += E * std::pow (10.0, std::clamp ((double) f.picture.U256[i], -40.0, 0.0) / 10.0);
+    }
+    e.share = 10.0 * std::log10 (std::max (asRoom, 1e-30) / std::max (asSound, 1e-30)); e.deep = live > 0 ? (double) clear / (double) live : 0.0;
+    if (wide && asRoom + asSound > 0) e.own = 10.0 * std::log10 (std::max (unshared, 1e-30) / (asRoom + asSound));
+    if (f.found)
+    {
+        const room::Bands B; Vec t, k;
+        for (size_t b = 0; b < (size_t) room::NB; ++b) { e.bands += f.ev[b] > 0; e.moments += f.ev[b]; if (room::midBand (B.fc[b])) { t.push_back (f.t60[b]); k.push_back (f.kdb[b]); } }
+        e.decay = room::middle (t); e.strength = room::middle (k);
+    }
+    return e;
+}
+// How sure it is that there is a room on the sound, 0 .. 1: what the Sureness slider compares. Fitted on the
+// scoreboard's 240 sounds with reverb against 368 without (the same sounds dry, and with tone effects only;
+// Research/room/train/sure_stats.py and sure_fit2.py), as a probability for a sound that is somewhat more likely to
+// carry reverb than not (62 in 100). Most of the answer is whether the engine finds a room at all (it does on 96 %
+// of the sounds with reverb and on 34 % of those without); among the found ones, more cells that are clearly room
+// and more bands with all-room moments make it surer. At the slider's 65 % the reverb then shows on 86 % of the
+// sounds that have one, on 15 % of the dry ones and on 9 % of those with a tone effect only (cross-validated); the
+// "dry" ones it shows on are mostly recorded loops and recordings, which may carry a room of their own.
+// roomNone: what is left when the engine finds no room (then about 9 in 10 sounds have none).
+constexpr double roomSure0 = 2.666, roomSureDeep = 1.379, roomSureBands = 2.005, roomNone = 0.09;
+inline double roomSureness (const room::Found& f)
+{
+    if (! f.found) return roomNone;
+    const RoomEvidence e = roomEvidence (f);
+    return 1.0 / (1.0 + std::exp (-(roomSure0 + roomSureDeep * std::log10 (e.deep + 0.003) + roomSureBands * (double) e.bands / (double) room::NB)));
+}
+// The REVERB group of a found room: Amount, Length, Brightness and Width, each 0 .. 2 with 1 = as found (the
+// settings are the fader values themselves, so scaled() hands them through).
+inline FoundFx roomFx (std::shared_ptr<const room::Found> found, double prob)
+{
+    FoundFx F; F.name = "reverb"; F.title = "REVERB"; F.prob = prob; F.room = std::move (found);
+    F.est = { { "length", 1.0 }, { "bright", 1.0 }, { "width", 1.0 } };
+    auto K = [] (const char* key, const char* label, const char* tip)
+    {
+        Knob k; k.key = key; k.id = "reverb." + (k.key.empty() ? std::string ("amount") : k.key); k.label = label; k.tip = tip; k.neutral = 0; k.lo = 0; k.hi = 2; k.ownTip = ! k.key.empty();
+        return k;
+    };
+    F.knobs = { K ("", "Amount", ""),
+                K ("length", "Length", "How long the room rings. Middle = as found. Left = shorter, right = up to twice as long."),
+                K ("bright", "Brightness", "The tone of the room. Middle = as found. Left = darker (the highs die away sooner), right = brighter."),
+                K ("width", "Width", "How wide the room is. Middle = as found. Left = narrower, down to mono. Right = wider.") };
+    return F;
+}
+// The Amount fader of a found room on the sound itself (s 0 .. 2, 1 = untouched). From the middle to half way left
+// the engine's own answer comes in, and half way left it is in full. How deep the cut should go depends on the
+// sound (a wet one wants more, a nearly dry one less), so from there to far left the answer is made bolder, up to
+// depth roomDeep: the cells the engine is sure about stay where they are and the doubtful ones move most. The ear
+// picks. Right of the middle: more reverb. (The prototype's engine.fader.)
+constexpr double roomHalf = 0.5, roomDeep = 1.5;
+// What that fader does to the room's level, for the display (dB): how far the room comes down where it is on its own
+// is the typical value over the scoreboard's reverb cases, 4.5 dB with the engine's own answer and 10.6 dB at far
+// left (it differs from sound to sound; under the sound itself less can be taken). Right of the middle: plain level.
+constexpr double roomDownOwn = 4.5, roomDownDeep = 10.6;
+inline double roomAmountDb (double s)
+{
+    if (s >= 1.0) return 20.0 * std::log10 (s);
+    return s >= roomHalf ? -roomDownOwn * (1.0 - s) / (1.0 - roomHalf) : -(roomDownOwn + (roomDownDeep - roomDownOwn) * (roomHalf - s) / roomHalf);
+}
+inline Stereo roomFader (const Stereo& y, const room::Found& f, double s, double length, double bright, double width, const room::Stop& stop = {})
+{
+    if (s >= 1.0) return room::oneSound (y, f, s, length, bright, width, stop);
+    if (s >= roomHalf) return room::oneSound (y, f, (s - roomHalf) / (1.0 - roomHalf), length, bright, width, stop);
+    room::Found d; d.picture.frames = f.picture.frames; d.picture.LE = f.picture.LE; d.gains = f.gains; d.found = f.found; d.kdb = f.kdb; d.t60 = f.t60; d.ev = f.ev; d.width = f.width;
+    const double b = roomDeep * (roomHalf - s) / roomHalf;
+    for (float& g : d.gains) { const double p = std::clamp (-(double) g / 30.0, 1e-6, 1.0 - 1e-6); g = (float) (-30.0 / (1.0 + std::exp (-(std::log (p / (1.0 - p)) + b)))); }
+    return room::oneSound (y, d, 0.0, length, bright, width, stop);
+}
+// What Export IR writes: the found room alone (no direct sound; the tail starts 10.7 ms after where the direct sound
+// would be), shaped by the Length, Brightness and Width faders, brought to unity level (a sound run through it
+// comes out about as loud as it went in), which is what convolution reverbs expect of a file without the direct
+// sound. levelDb is the wet level against the dry signal (dB) at which a convolution reverb with this file gives
+// the room as the app puts it on a second sound with Amount in the middle.
+struct RoomIr { Stereo h; double levelDb = 0; };
+inline RoomIr exportIr (const room::Found& f, double length = 1.0, double bright = 1.0, double width = 1.0)
+{
+    RoomIr out; out.h = room::roomIr (f, length, bright, width); const size_t n = out.h.size(); if (n == 0) return out;
+    double e = 0; for (size_t i = 0; i < n; ++i) e += 0.5 * (out.h.l[i] * out.h.l[i] + out.h.r[i] * out.h.r[i]);
+    if (! (e > 0)) return out;
+    out.levelDb = 10.0 * std::log10 (e) + room::leanDb (f); double g = 1.0 / std::sqrt (e); const double pk = out.h.peak() * g; if (pk > 0.999) g *= 0.999 / pk;
+    for (size_t i = 0; i < n; ++i) { out.h.l[i] *= g; out.h.r[i] *= g; }
+    return out;
+}
+// The room engine's verdict goes into the inspection, and the detector's own guess about reverb goes out: on 76
+// scoreboard sounds the detector showed the reverb on 67 % of those that have one, on 7 % of the dry ones and on
+// 25 % of those with a tone effect only, and where the two disagree it is no help either way.
+// The exception: the engine tells room from sound largely by what left and right do not share, so on a mono file or
+// a very narrow one it misses a room more often (on mono versions of the scoreboard's sounds about 1 in 5). With no
+// room found and less than roomBlind of the sound unshared, it has no say: false comes back, the detector's guess
+// stays and the reverb is handled the old way.
+constexpr double roomBlind = -20.0;
+inline bool mergeRoom (Inspection& I, const room::Found& f)
+{
+    if (! f.found && roomEvidence (f).own < roomBlind) return false;
+    I.prob["reverb"] = roomSureness (f); return true;
+}
+
 // Settings of each found effect (estimate.estimate, without the slower sweep fit for now).
 inline bool isNewFx (const std::string& f) { return f == "saturation" || f == "exciter" || f == "ringmod" || f == "filter" || f == "stutter" || f == "gatedrhythm"; }
 // The 0.2.0 additions come from the larger 27-effect detector; they need a higher score to be named
@@ -455,7 +577,9 @@ inline void pruneFound (std::vector<FoundFx>& out)
     out.erase (std::remove_if (out.begin(), out.end(), [r] (const FoundFx& F) { return F.name == "tremolo" && std::abs (get (F.est, "rate", 0) / std::max (r, 1e-6) - 1) < 0.2; }), out.end());
 }
 // only: estimate exactly these effects (whatever their score); otherwise all above `cut`.
-inline std::vector<FoundFx> estimate (const Inspection& I, const Stereo& y, double cut = 0.65, const std::set<std::string>* only = nullptr)
+// room: what the room engine found on the sound; with a room found, the reverb is that room (roomFx).
+inline std::vector<FoundFx> estimate (const Inspection& I, const Stereo& y, double cut = 0.65, const std::set<std::string>* only = nullptr,
+                                      const std::shared_ptr<const room::Found>& room = {})
 {
     std::vector<FoundFx> out;
     (void) est::pinkProbe ((size_t) (6 * SR));      // built once before the fits run in parallel
@@ -466,6 +590,7 @@ inline std::vector<FoundFx> estimate (const Inspection& I, const Stereo& y, doub
     {
         auto pit = I.prob.find (f); if (pit == I.prob.end()) continue;
         if (only ? ! only->count (f) : pit->second <= cutFor (f, cut)) continue;
+        if (f == "reverb" && room != nullptr && room->found) { out.push_back (roomFx (room, pit->second)); continue; }
         FoundFx F; F.name = f; F.title = titleFor (f); F.prob = pit->second; F.knobs = knobsFor (f); Params& e = F.est;
         if (f == "delay")
         {
@@ -572,6 +697,13 @@ inline Stereo applyTo (const Stereo& target, const std::vector<FoundFx>& found, 
     for (auto& F : found)
     {
         if (cancelled && cancelled()) break;
+        if (F.room != nullptr)      // the found room, rebuilt from its numbers, on this sound
+        {
+            const Params p = scaled (F, faders);
+            Stereo r = room::onto (y, *F.room, amountOf (F, faders), get (p, "length", 1.0), get (p, "bright", 1.0), get (p, "width", 1.0), cancelled);
+            if (r.size() == y.size()) y = std::move (r);
+            continue;
+        }
         y = applyAmount (F.name, y, scaled (F, faders), amountOf (F, faders));
     }
     limit (y);
@@ -580,6 +712,7 @@ inline Stereo applyTo (const Stereo& target, const std::vector<FoundFx>& found, 
 
 // One sound: take the found effects out (left), leave as is (middle) or double (right).
 inline bool canRemove (const std::string& f) { return f != "reverb" && f != "distortion" && f != "bitcrush" && ! isNewFx (f); }
+inline bool canRemove (const FoundFx& F) { return F.room != nullptr || canRemove (F.name); }      // the room engine takes its reverb out
 // The found effect turned down to s (0 = out as far as this effect allows, 1 = untouched).
 inline Stereo takeOut (const FoundFx& F, const Stereo& in, double s)
 {
@@ -611,7 +744,17 @@ inline Stereo reshape (const Stereo& src, const std::vector<FoundFx>& found, con
         if (cancelled && cancelled()) break;
         const FoundFx& F = *it; const double s = amountOf (F, faders); const bool moved = settingsMoved (F, faders);
         if (! moved && std::abs (s - 1.0) < 1e-9) continue;
-        if (canRemove (F.name))
+        if (F.room != nullptr)
+        {
+            // the sound's own reverb turned down or up and reshaped; the room engine's answer belongs to this very sound (same length)
+            const Params p = scaled (F, faders);
+            if (F.room->picture.frames == room::frames (y.size()))
+            {
+                Stereo r = roomFader (y, *F.room, s, get (p, "length", 1.0), get (p, "bright", 1.0), get (p, "width", 1.0), cancelled);
+                if (r.size() == y.size()) y = std::move (r);
+            }
+        }
+        else if (canRemove (F.name))
         {
             // settings changed: take the found effect out, then put it back with the new settings at strength s
             if (moved) y = applyAmount (F.name, takeOut (F, y, 0.0), scaled (F, faders), s);

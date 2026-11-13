@@ -3,6 +3,7 @@
 // frequency curve, a reverb's decay, a delay's echoes...), drawn from the settings the faders
 // currently give. Plain data; the app only draws it.
 
+#include <array>
 #include <cstdio>
 
 #include "Estimate.h"
@@ -52,10 +53,67 @@ template <typename F> Curve freqCurve (F mag, int colour = 0, bool dim = false)
 }
 } // namespace disp
 
-// s: the effect's Amount fader (0..2); p: its settings with the settings faders applied.
-inline Plot makePlot (const FoundFx& F, const Params& scaledP, double s)
+// The found room (room engine): the direct sound as a bar at 0 dB and how the room dies away behind it, one line
+// each for the lows (under 450 Hz), the mids and the highs (over 7 kHz). A line starts at the level the room has
+// right after the direct sound (the energy of one 10.7 ms step against the direct sound's) and falls by 60 dB per
+// decay time. s: the Amount fader; onSecond: the room goes onto a second sound (otherwise it is the sound's own).
+inline Plot roomPlot (const FoundFx& F, const Params& p, double s, bool onSecond)
 {
     using namespace disp;
+    Plot P; P.title = F.title; const room::Found& f = *F.room; const room::Bands B;
+    // what the Amount fader does to the room's level: on a second sound it is a plain level (with the lean of a
+    // rebuilt room); on the sound itself the left half turns the room down as far as the engine typically gets it
+    // down (roomAmountDb), the right half up by up to 6 dB
+    const double amountDb = onSecond ? 20 * std::log10 (std::max (s, 1e-6)) + room::leanDb (f) : roomAmountDb (std::max (s, 0.0));
+    struct Zone { double t = 0, start = 0, all = 0; bool any = false; };
+    auto zones = [&] (const room::Shaped& sh, double moreDb)
+    {
+        std::array<Zone, 3> z;
+        for (int i = 0; i < 3; ++i)
+        {
+            Vec t, k, a;
+            for (size_t b = 0; b < (size_t) room::NB; ++b)
+            {
+                if ((B.fc[b] < 450.0 ? 0 : B.fc[b] <= 7000.0 ? 1 : 2) != i) continue;
+                t.push_back (sh.t60[b]); a.push_back (sh.kdb[b]); k.push_back (sh.kdb[b] + 10 * std::log10 (1.0 - std::pow (10.0, -6.0 * room::DT / sh.t60[b])));
+            }
+            if (! t.empty()) { z[(size_t) i].t = room::middle (t); z[(size_t) i].start = room::middle (k) + moreDb; z[(size_t) i].all = room::middle (a) + moreDb; z[(size_t) i].any = true; }
+        }
+        return z;
+    };
+    const room::Shaped now = room::shaped (f, get (p, "length", 1.0), get (p, "bright", 1.0), get (p, "width", 1.0));
+    const auto z = zones (now, amountDb), z0 = zones (room::shaped (f), onSecond ? room::leanDb (f) : 0.0);
+    P.y0 = -72; P.y1 = 6; P.xLabel = "s"; P.yLabel = "dB"; P.yTicks = { -60, -40, -20, 0 };
+    // the time axis holds the room as found and as the faders have it, down to the bottom of the picture
+    double end = 0.25; for (const auto* zz : { &z, &z0 }) for (const auto& q : *zz) if (q.any) end = std::max (end, room::DT + q.t * std::clamp (q.start - P.y0, 6.0, 78.0) / 60.0);
+    P.x1 = end * 1.06; P.x0 = -0.04 * P.x1; P.xTicks = ticks (0, P.x1);
+    P.bars.push_back ({ 0, P.y0, 0, P.x1 * 0.012, 2 });
+    const bool off = onSecond && s < 1e-3;
+    if (! off)
+        for (int i : { 0, 2, 1 })       // lows, highs, and the mids on top
+        {
+            const Zone& q = z[(size_t) i]; if (! q.any) continue;
+            Curve c; c.colour = i == 1 ? 0 : i == 0 ? 2 : 1; c.fill = i == 1; const double fall = q.start - P.y0 + 12.0;
+            if (i == 1) c.pts.push_back ({ room::DT, P.y0 - 12.0 });
+            c.pts.push_back ({ room::DT, q.start }); c.pts.push_back ({ room::DT + q.t * fall / 60.0, q.start - fall }); P.curves.push_back (c);
+        }
+    Vec w (now.width.begin(), now.width.end()); const Zone& m = z[1];
+    if (off) P.caption = "Amount at zero: the room is not put on the second sound.";
+    else
+    {
+        P.caption = "Decay " + num (m.t, 2) + " s (lows " + num (z[0].t, 2) + " s, highs " + num (z[2].t, 2) + " s). Room " + num (std::abs (m.all), 1) + " dB " + (m.all < 0 ? "under" : "over")
+                    + " the direct sound" + (! onSecond && s < 1.0 - 1e-9 ? ", taken down by about " + num (-amountDb, 1) + " dB (typical; less under the sound itself)" : std::string())
+                    + ", width " + num (room::middle (w) * 100, 0) + "%. Teal = mids, grey = lows, orange = highs.";
+    }
+    return P;
+}
+
+// s: the effect's Amount fader (0..2); p: its settings with the settings faders applied. onSecond: the effect
+// goes onto a second sound (only the room's picture depends on it).
+inline Plot makePlot (const FoundFx& F, const Params& scaledP, double s, bool onSecond = false)
+{
+    using namespace disp;
+    if (F.room != nullptr) return roomPlot (F, scaledP, s, onSecond);
     const std::string& f = F.name; Plot P; P.title = F.title;
     bool fade = false; const Params e = mapAmount (f, scaledP, std::max (s, 0.0), fade); const double w = fade ? std::min (1.0, s) : 1.0;
     auto g = [&] (const char* k, double d) { return get (e, k, d); };

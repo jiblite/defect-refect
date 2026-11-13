@@ -307,9 +307,10 @@ public:
                 const bool amount = k.key.empty();
                 juce::String tip = k.tip;
                 if (amount) tip = twoSounds ? "How much of this effect goes onto the second sound. Middle = as found on the first sound. Left = not applied. Right = double."
-                                            : (dr::canRemove (F.name) ? "Middle = as found. Left = take it out (best effort). Right = double."
+                                            : F.room != nullptr ? "Middle = as found. Left = take the reverb out: half way left is the app's own best answer, further left digs deeper and can start to take some of the sound with it. Go by ear. Right = more reverb, up to double."
+                                            : (dr::canRemove (F) ? "Middle = as found. Left = take it out (best effort). Right = double."
                                                                       : "Middle = as found. Right = double. Taking this one out is not possible yet, so the left half leaves it as found.");
-                else tip += " Middle = as found. Left = none. Right = double. Double-click for the middle.";
+                else tip += k.ownTip ? " Double-click for the middle." : " Middle = as found. Left = none. Right = double. Double-click for the middle.";
                 s.setTooltip (tip); row->label.setTooltip (tip);
                 s.textFromValueFunction = [] (double v) { return std::abs (v - 1.0) < 0.005 ? juce::String ("as found") : juce::String (juce::roundToInt (v * 100)) + "%"; };
                 s.updateText();
@@ -369,7 +370,7 @@ public:
         zoneA.onBrowse = [this] { browse (0); }; zoneB.onBrowse = [this] { browse (1); };
         zoneA.onClear = [this] { clearSlot (0); }; zoneB.onClear = [this] { clearSlot (1); };
         zoneA.onSeek = zoneB.onSeek = [this] (double t) { player.seek (t); };
-        for (auto* b : { &swapBtn, &playBtn, &abBtn, &exportBtn, &resetBtn }) addAndMakeVisible (*b);
+        for (auto* b : { &swapBtn, &playBtn, &abBtn, &exportBtn, &irBtn, &resetBtn }) addAndMakeVisible (*b);
         swapBtn.setButtonText ("Swap"); swapBtn.setTooltip ("Swap the two sounds. The new first sound is inspected.");
         swapBtn.onClick = [this] { swapSlots(); };
         playBtn.setButtonText ("Play"); playBtn.setTooltip ("Play or stop the result (space bar). Loops.");
@@ -378,6 +379,9 @@ public:
         abBtn.onClick = [this] { abBtn.setButtonText (abBtn.getToggleState() ? "Original" : "Result"); updatePlayerBuffer(); };
         exportBtn.setButtonText ("Export"); exportBtn.setTooltip ("Save the result as a 24-bit 48 kHz WAV.");
         exportBtn.onClick = [this] { exportResult(); };
+        irBtn.setButtonText ("Export IR"); irBtn.setTooltip ("Save the found room as an impulse response (24-bit 48 kHz stereo WAV), shaped by the Length, Brightness and Width faders as they are now. "
+                                                             "Load it into any convolution reverb to put this room on other sounds. It holds the room alone, without the direct sound, at unity level; the line next to Play then says which wet level against dry gives the room as it was found.");
+        irBtn.onClick = [this] { exportIr(); };
         resetBtn.setButtonText ("Reset Faders"); resetBtn.setTooltip ("All faders back to the middle (as found).");
         resetBtn.onClick = [this] { faders.resetAll(); };
         addAndMakeVisible (modeLabel); modeLabel.setFont (juce::FontOptions (13.0f)); modeLabel.setColour (juce::Label::textColourId, theme::textDim);
@@ -406,7 +410,19 @@ public:
         // models load in the background (the 12-effect detector and the 27-effect one for the six added in 0.2.0)
         busy = true; modeLabel.setText ("Loading the detector...", juce::dontSendNotification);
         startWorker ([this] { auto m = std::make_shared<dr::Models>(); m->load (BinaryData::models_bin, (size_t) BinaryData::models_binSize);
-                             auto m27 = std::make_shared<dr::Models>(); m27->load (BinaryData::models27_bin, (size_t) BinaryData::models27_binSize); models27 = m27; models = m; },
+                             auto m27 = std::make_shared<dr::Models>(); m27->load (BinaryData::models27_bin, (size_t) BinaryData::models27_binSize);
+                             auto rn = std::make_shared<dr::room::Net>(), rn2 = std::make_shared<dr::room::Net>();
+                             try
+                             {
+                                 rn->load (BinaryData::room_bin, (size_t) BinaryData::room_binSize);
+                                #if DR_ROOM_SECOND
+                                 rn2->load (BinaryData::room2_bin, (size_t) BinaryData::room2_binSize);
+                                #endif
+                             }
+                             catch (const std::exception&) { rn.reset(); rn2.reset(); }
+                             if (rn != nullptr && (! rn->ready() || rn->planes != 4)) { rn.reset(); rn2.reset(); }      // not a first-look model: the old reverb handling stays
+                             if (rn2 != nullptr && (! rn2->ready() || rn2->planes != 7)) rn2.reset();                    // no usable second look: one look
+                             roomNet = rn; roomNet2 = rn2; models27 = m27; models = m; },
                      [this] { busy = false; updateUi(); if (pending[0].exists()) load (0, pending[0]); if (pending[1].exists()) load (1, pending[1]); });
         startTimerHz (20);
     }
@@ -427,7 +443,8 @@ public:
         r.removeFromTop (10);
         auto bar = r.removeFromTop (32);
         playBtn.setBounds (bar.removeFromLeft (80)); bar.removeFromLeft (8); abBtn.setBounds (bar.removeFromLeft (90)); bar.removeFromLeft (8);
-        exportBtn.setBounds (bar.removeFromRight (90)); bar.removeFromRight (8); resetBtn.setBounds (bar.removeFromRight (110)); bar.removeFromRight (8);
+        exportBtn.setBounds (bar.removeFromRight (90)); bar.removeFromRight (8); irBtn.setBounds (bar.removeFromRight (90)); bar.removeFromRight (8);
+        resetBtn.setBounds (bar.removeFromRight (110)); bar.removeFromRight (8);
         modeLabel.setBounds (bar.reduced (6, 0));
         r.removeFromTop (8);
         auto sr = r.removeFromTop (26); sureLabel.setBounds (sr.removeFromLeft (92)); sure.setBounds (sr.removeFromLeft (360));
@@ -453,11 +470,13 @@ private:
     // ---- state
     LookAndFeel lnf; juce::TooltipWindow tips { this, 500 };
     DropZone zoneA, zoneB;
-    juce::TextButton swapBtn, playBtn, abBtn, exportBtn, resetBtn;
+    juce::TextButton swapBtn, playBtn, abBtn, exportBtn, irBtn, resetBtn;
     juce::Label modeLabel, sureLabel; juce::Slider sure; juce::Viewport view; FaderPanel faders; DisplayPanel display;
     juce::AudioDeviceManager dev; juce::AudioSourcePlayer srcPlayer; Player player; std::unique_ptr<juce::ResamplingAudioSource> resampler;
     struct DevListener : juce::ChangeListener { std::function<void()> fn; void changeListenerCallback (juce::ChangeBroadcaster*) override { if (fn) fn(); } } devListener;
     std::shared_ptr<dr::Models> models, models27;
+    std::shared_ptr<const dr::room::Net> roomNet, roomNet2;     // the room engine's model and the one for its second look (none: the reverb is handled the old way)
+    std::shared_ptr<const dr::room::Found> roomFound;           // what the room engine found on the first sound
     std::shared_ptr<const dr::Stereo> sound[2], result;
     juce::String names[2]; juce::File pending[2], lastDir;
     std::vector<dr::FoundFx> found; bool inspected = false;
@@ -503,7 +522,7 @@ private:
     void clearSlot (int slot)
     {
         sound[slot].reset(); names[slot] = {}; (slot == 0 ? zoneA : zoneB).setSound ({}, nullptr);
-        if (slot == 0) { ++generation; busy = false; found.clear(); inspected = false; faders.build ({}, false); result.reset(); updatePlayerBuffer(); updateUi(); }
+        if (slot == 0) { ++generation; busy = false; found.clear(); inspected = false; roomFound.reset(); faders.build ({}, false); result.reset(); updatePlayerBuffer(); updateUi(); }
         else modeChanged();
     }
     void swapSlots()
@@ -514,23 +533,32 @@ private:
     }
     void inspect()
     {
-        ++generation; busy = true; inspected = false; found.clear(); cache.clear(); inspection.reset(); faders.build ({}, false); updateUi();
+        ++generation; busy = true; inspected = false; found.clear(); cache.clear(); inspection.reset(); roomFound.reset(); faders.build ({}, false); updateUi();
         zoneA.setStatus ("inspecting..."); modeLabel.setText ("Looking for effects on the first sound...", juce::dontSendNotification);
-        auto src = sound[0]; auto M = models; auto M27 = models27; auto out = std::make_shared<std::vector<dr::FoundFx>>();
-        auto insp = std::make_shared<dr::Inspection>(); const double c = cut();
+        auto src = sound[0]; auto M = models; auto M27 = models27; auto RN = roomNet; auto RN2 = roomNet2; auto out = std::make_shared<std::vector<dr::FoundFx>>();
+        auto insp = std::make_shared<dr::Inspection>(); auto roomOut = std::make_shared<std::shared_ptr<const dr::room::Found>>(); const double c = cut();
         const int gen = generation.load();
-        startWorker ([src, M, M27, out, insp, c, gen, this]
+        startWorker ([src, M, M27, RN, RN2, out, insp, roomOut, c, gen, this]
                      {
                          auto alive = [this, gen] (float) { return generation.load() == gen; };
                          auto I = dr::inspect (*M, *src, alive);
                          if (generation.load() != gen) return;
                          dr::mergeNew (I, dr::inspect (*M27, *src, alive));
                          if (generation.load() != gen) return;
-                         *out = dr::estimate (I, *src, c); *insp = I;
+                         if (RN != nullptr && RN->ready())       // the room engine: is there a room on the sound, and which
+                         {
+                             const dr::room::Net* second = RN2 != nullptr && RN2->ready() ? RN2.get() : nullptr;
+                             std::shared_ptr<dr::room::Found> f;
+                             try { f = std::make_shared<dr::room::Found> (dr::room::find (*src, *RN, second, [this, gen] { return generation.load() != gen; })); }
+                             catch (const std::exception&) { f.reset(); }        // the room engine failed: the detector's verdict and the old reverb handling stay
+                             if (generation.load() != gen) return;
+                             if (f != nullptr && ! f->stopped && dr::mergeRoom (I, *f)) *roomOut = f;
+                         }
+                         *out = dr::estimate (I, *src, c, nullptr, *roomOut); *insp = I;
                      },
-                     [this, out, insp]
+                     [this, out, insp, roomOut]
                      {
-                         busy = false; found = *out; inspected = true; inspection = insp;
+                         busy = false; found = *out; inspected = true; inspection = insp; roomFound = *roomOut;
                          for (auto& F : found) cache[F.name] = F;
                          zoneA.setStatus (juce::String ((int) found.size()) + (found.size() == 1 ? " effect found" : " effects found"));
                          emptyText = "No effects found on this sound (from the 18 it knows so far).";
@@ -555,8 +583,8 @@ private:
         };
         if (missing.empty()) { show(); return; }
         busy = true; ++generation; modeLabel.setText ("Reading the settings of the newly shown effects...", juce::dontSendNotification);
-        auto I = inspection; auto src = sound[0]; auto out = std::make_shared<std::vector<dr::FoundFx>>();
-        startWorker ([I, src, missing, out] { *out = dr::estimate (*I, *src, 0.0, &missing); },
+        auto I = inspection; auto src = sound[0]; auto rf = roomFound; auto out = std::make_shared<std::vector<dr::FoundFx>>();
+        startWorker ([I, src, missing, out, rf] { *out = dr::estimate (*I, *src, 0.0, &missing, rf); },
                      [this, out, show] { busy = false; for (auto& F : *out) cache[F.name] = F; show(); updateUi(); });
     }
     // The picture for the selected effect: as the faders have it now, with the found state faintly behind.
@@ -564,8 +592,8 @@ private:
     {
         const dr::FoundFx* F = nullptr; for (auto& x : found) if (x.name == faders.focus) F = &x;
         if (F == nullptr) { display.set ({}, {}, inspected && found.empty() ? juce::String ("Nothing found to show.") : juce::String()); return; }
-        const double s = dr::amountOf (*F, faders.values); const bool moved = dr::settingsMoved (*F, faders.values) || std::abs (s - 1.0) > 1e-9;
-        display.set (dr::makePlot (*F, dr::scaled (*F, faders.values), s), moved ? dr::makePlot (*F, F->est, 1.0) : dr::Plot());
+        const double s = dr::amountOf (*F, faders.values); const bool moved = dr::settingsMoved (*F, faders.values) || std::abs (s - 1.0) > 1e-9, two = sound[1] != nullptr;
+        display.set (dr::makePlot (*F, dr::scaled (*F, faders.values), s, two), moved ? dr::makePlot (*F, F->est, 1.0, two) : dr::Plot());
     }
     void modeChanged()     // one sound <-> two sounds: the faders mean something else, so they start from the middle
     {
@@ -616,9 +644,36 @@ private:
             else modeLabel.setText ("Could not write " + f.getFullPathName(), juce::dontSendNotification);
         });
     }
+    // The found room as an impulse response (dr::exportIr), shaped by the Length, Brightness and Width faders as they are now.
+    void exportIr()
+    {
+        const dr::FoundFx* F = nullptr; for (auto& x : found) if (x.room != nullptr) F = &x;
+        if (F == nullptr) return;
+        const dr::Params p = dr::scaled (*F, faders.values); auto rf = F->room;
+        const double length = dr::get (p, "length", 1.0), bright = dr::get (p, "bright", 1.0), width = dr::get (p, "width", 1.0);
+        const juce::String base = juce::File::createLegalFileName (names[0].upToLastOccurrenceOf (".", false, false) + " room.wav");
+        chooser = std::make_unique<juce::FileChooser> ("Export the room as an impulse response", lastDir.getChildFile (base), "*.wav");
+        chooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::warnAboutOverwriting, [this, rf, length, bright, width] (const juce::FileChooser& c)
+        {
+            auto f = c.getResult(); if (f == juce::File()) return; f = f.withFileExtension ("wav");
+            dr::RoomIr ir; try { ir = dr::exportIr (*rf, length, bright, width); } catch (const std::exception& e) { modeLabel.setText ("Could not make the impulse response: " + juce::String (e.what()), juce::dontSendNotification); return; }
+            const dr::Stereo& h = ir.h; if (h.size() == 0) return;
+            juce::AudioBuffer<float> b (2, (int) h.size());
+            for (int i = 0; i < b.getNumSamples(); ++i) { b.setSample (0, i, (float) h.l[(size_t) i]); b.setSample (1, i, (float) h.r[(size_t) i]); }
+            f.deleteFile(); juce::WavAudioFormat wav;
+            std::unique_ptr<juce::AudioFormatWriter> w (wav.createWriterFor (new juce::FileOutputStream (f), dr::SR, 2, 24, {}, 0));
+            if (w)
+            {
+                w->writeFromAudioSampleBuffer (b, 0, b.getNumSamples());
+                modeLabel.setText ("Saved " + f.getFileName() + ": the room alone at unity level. For the room as found: wet " + juce::String (std::abs (ir.levelDb), 1) + " dB " + (ir.levelDb < 0 ? "under" : "over") + " dry.", juce::dontSendNotification);
+            }
+            else modeLabel.setText ("Could not write " + f.getFullPathName(), juce::dontSendNotification);
+        });
+    }
     void updateUi()
     {
-        const bool two = sound[1] != nullptr;
+        const bool two = sound[1] != nullptr; bool room = false; for (auto& F : found) room = room || F.room != nullptr;
+        irBtn.setEnabled (room);
         swapBtn.setEnabled (sound[0] || sound[1]); exportBtn.setEnabled (result != nullptr); resetBtn.setEnabled (faders.count() > 0);
         playBtn.setEnabled (sound[0] || sound[1]);
         if (! busy)
@@ -673,6 +728,20 @@ inline void dumpPlots (const juce::File& dir)
             juce::File out = dir.getChildFile (juce::String (name) + (moved ? "-moved" : "") + ".png"); out.deleteFile();
             juce::FileOutputStream os (out); juce::PNGImageFormat png; if (os.openedOk()) png.writeImageToStream (img, os);
         }
+    }
+    // the room engine's reverb: a typical room, as found, with the faders moved, and going onto a second sound
+    auto rf = std::make_shared<dr::room::Found>(); rf->found = true; const dr::room::Bands B;
+    for (size_t b = 0; b < (size_t) dr::room::NB; ++b) { const double oct = std::log2 (B.fc[b] / 1000.0); rf->t60[b] = 1.6 * std::pow (2.0, -0.25 * oct); rf->kdb[b] = -5.0 - oct; rf->ev[b] = 20; rf->width[b] = 0.85; }
+    const dr::FoundFx F = dr::roomFx (rf, 0.9);
+    for (int kind = 0; kind < 3; ++kind)
+    {
+        DisplayPanel p; p.setSize (420, 330);
+        std::map<std::string, double> v; for (auto& k : F.knobs) v[k.id] = 1.0;
+        if (kind == 1) { v["reverb.amount"] = 0.5; v["reverb.length"] = 0.5; v["reverb.bright"] = 1.5; }
+        p.set (dr::makePlot (F, dr::scaled (F, v), dr::amountOf (F, v), kind == 2), kind == 1 ? dr::makePlot (F, F.est, 1.0, false) : dr::Plot());
+        juce::Image img = p.createComponentSnapshot (p.getLocalBounds(), true, 2.0f);
+        juce::File out = dir.getChildFile (kind == 0 ? "room.png" : kind == 1 ? "room-moved.png" : "room-second.png"); out.deleteFile();
+        juce::FileOutputStream os (out); juce::PNGImageFormat png; if (os.openedOk()) png.writeImageToStream (img, os);
     }
 }
 } // namespace app

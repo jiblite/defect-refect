@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(DefectRefect VERSION 0.3.1 LANGUAGES C CXX)
+project(DefectRefect VERSION 0.4.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -16,8 +16,14 @@ FetchContent_Declare(JUCE
   GIT_SHALLOW TRUE)
 FetchContent_MakeAvailable(JUCE)
 
-# The trained models, built into the exe.
-juce_add_binary_data(dr_models SOURCES Resources/models.bin Resources/models27.bin)
+# The trained models, built into the exe. The reverb engine's model for a second look (room2.bin) is optional.
+set(DR_MODEL_FILES Resources/models.bin Resources/models27.bin Resources/room.bin)
+set(DR_ROOM_SECOND 0)
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/Resources/room2.bin")
+  list(APPEND DR_MODEL_FILES Resources/room2.bin)
+  set(DR_ROOM_SECOND 1)
+endif()
+juce_add_binary_data(dr_models SOURCES ${DR_MODEL_FILES})
 
 juce_add_gui_app(DefectRefect
   PRODUCT_NAME "Defect Refect"
@@ -29,6 +35,7 @@ target_include_directories(DefectRefect PRIVATE Source)
 target_compile_definitions(DefectRefect PRIVATE
   JUCE_WEB_BROWSER=0
   JUCE_USE_CURL=0
+  DR_ROOM_SECOND=${DR_ROOM_SECOND}
   JUCE_APPLICATION_NAME_STRING="$<TARGET_PROPERTY:DefectRefect,JUCE_PRODUCT_NAME>"
   JUCE_APPLICATION_VERSION_STRING="$<TARGET_PROPERTY:DefectRefect,JUCE_VERSION>")
 if(MSVC)
@@ -50,3 +57,6 @@ target_link_libraries(DefectRefect PRIVATE
 add_executable(drrender Tests/render.cpp)
 find_package(Threads REQUIRED)
 target_link_libraries(drrender PRIVATE Threads::Threads)
+
+# The room engine without the UI (no JUCE): Tests/room.cpp
+add_executable(drroom Tests/room.cpp)
