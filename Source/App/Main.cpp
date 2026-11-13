@@ -421,6 +421,7 @@ public:
         exportBtn.onClick = [this] { exportResult(); };
         irBtn.setButtonText ("Export IR"); irBtn.setTooltip ("Save the selected effect as an impulse response (24-bit 48 kHz stereo WAV) for any convolution plug-in. "
                                                              "REVERB: the found room, shaped by the Length, Brightness and Width faders as they are now. It holds the room alone, without the direct sound, at unity level; the line next to Play then says which wet level against dry gives the room as it was found. "
+                                                             "DELAY: the found echoes alone, as the Time, Feedback and Brightness faders have them, with Amount in the middle; wet and dry at the same level give the echoes as found. "
                                                              "COMB FILTER and TONE MATCH: the curve as the Delay or Detail fader has it, with Amount in the middle.");
         matchBtn.setButtonText ("Tone Match"); matchBtn.setClickingTogglesState (true); matchBtn.setColour (juce::TextButton::buttonOnColourId, theme::orange.withAlpha (0.45f));
         matchBtn.setTooltip ("Two sounds: give the second sound the tone of the first (its long-term spectrum). Adds the group TONE MATCH with Amount and Detail. "
@@ -733,10 +734,10 @@ private:
         });
     }
     // The group Export IR saves: the selected one when it can be saved as an impulse response (the found room, the
-    // comb filter, Tone Match once its curve is worked out), otherwise the found room when there is one.
+    // found echoes, the comb filter, Tone Match once its curve is worked out), otherwise the found room when there is one.
     const dr::FoundFx* irGroup() const
     {
-        auto can = [this] (const dr::FoundFx& F) { return F.room != nullptr || F.name == "comb" || (F.name == "tonematch" && matchShown.name == "tonematch" && ! matchShown.curveL.empty()); };
+        auto can = [this] (const dr::FoundFx& F) { return F.room != nullptr || F.echo != nullptr || F.name == "comb" || (F.name == "tonematch" && matchShown.name == "tonematch" && ! matchShown.curveL.empty()); };
         for (auto& x : groups) if (x.name == faders.focus && can (x)) return &x;
         for (auto& x : groups) if (x.room != nullptr) return &x;
         return nullptr;
@@ -768,10 +769,36 @@ private:
             else modeLabel.setText ("Could not write " + f.getFullPathName(), juce::dontSendNotification);
         });
     }
+    // The found echoes as an impulse response (dr::echoIr): the echoes alone, as the Time, Feedback and Brightness
+    // faders have them, with Amount in the middle.
+    void exportEchoIr (const dr::FoundFx& F)
+    {
+        const dr::Params p = dr::scaled (F, faders.values); auto ef = F.echo;
+        const juce::String base = juce::File::createLegalFileName (names[0].upToLastOccurrenceOf (".", false, false) + " echoes.wav");
+        chooser = std::make_unique<juce::FileChooser> ("Export the echoes as an impulse response", lastDir.getChildFile (base), "*.wav");
+        chooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::warnAboutOverwriting, [this, ef, p] (const juce::FileChooser& c)
+        {
+            auto f = c.getResult(); if (f == juce::File()) return; f = f.withFileExtension ("wav");
+            dr::EchoIr ir; try { ir = dr::echoIr (*ef, p); } catch (const std::exception& e) { modeLabel.setText ("Could not make the impulse response: " + juce::String (e.what()), juce::dontSendNotification); return; }
+            const dr::Stereo& h = ir.h; if (h.size() == 0) return;
+            juce::AudioBuffer<float> b (2, (int) h.size());
+            for (int i = 0; i < b.getNumSamples(); ++i) { b.setSample (0, i, (float) h.l[(size_t) i]); b.setSample (1, i, (float) h.r[(size_t) i]); }
+            f.deleteFile(); juce::WavAudioFormat wav;
+            std::unique_ptr<juce::AudioFormatWriter> w (wav.createWriterFor (new juce::FileOutputStream (f), dr::SR, 2, 24, {}, 0));
+            if (w)
+            {
+                w->writeFromAudioSampleBuffer (b, 0, b.getNumSamples());
+                modeLabel.setText ("Saved " + f.getFileName() + ": the echoes alone. For the echoes as found: wet and dry at the same level."
+                                   + (ir.downDb > 0.05 ? " Turned down by " + juce::String (ir.downDb, 1) + " dB to fit the file: add that back to the wet level." : juce::String()), juce::dontSendNotification);
+            }
+            else modeLabel.setText ("Could not write " + f.getFullPathName(), juce::dontSendNotification);
+        });
+    }
     // The found room as an impulse response (dr::exportIr), shaped by the Length, Brightness and Width faders as they are now.
     void exportIr()
     {
         const dr::FoundFx* F = irGroup(); if (F == nullptr) return;
+        if (F->echo != nullptr) { exportEchoIr (*F); return; }
         if (F->room == nullptr) { exportToneIr (*F); return; }
         const dr::Params p = dr::scaled (*F, faders.values); auto rf = F->room;
         const double length = dr::get (p, "length", 1.0), bright = dr::get (p, "bright", 1.0), width = dr::get (p, "width", 1.0);

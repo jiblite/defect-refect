@@ -1,7 +1,8 @@
 // render ResourcesDir src.wav [target.wav|-] out.wav [fader=value ...]  : the app's processing without the UI
 //   More renders of the same first sound in one go (it is analysed once): add  -- [target.wav|-] out.wav [fader=value ...]  as often as needed.
 //   out.wav = "-": only what was found is printed (every effect's score, the room engine's verdict), nothing is rendered
-//   sure=NN: the Sureness slider (default 65); ir=file.wav: also writes the found room as Export IR does
+//   sure=NN: the Sureness slider (default 65); ir=file.wav: also writes the found room as Export IR does;
+//   echoir=file.wav: also writes the found echoes as Export IR does for the DELAY group
 //   The room engine is used when ResourcesDir holds room.bin (as in the app), with a second look when it also holds room2.bin.
 //   The tone engine and the echo engine always run (the DELAY group's faders: delay.amount, delay.time, delay.feedback, delay.bright).
 //   match=1: two sounds with Tone Match switched on (its faders: tonematch.amount, tonematch.detail)
@@ -25,7 +26,7 @@ int main (int argc, char** argv)
     auto loadM = [] (const std::string& p) { std::ifstream f (p, std::ios::binary); std::vector<char> b ((std::istreambuf_iterator<char> (f)), {}); dr::Models m; m.load (b.data(), b.size()); return m; };
     const std::string dir = argv[1]; const dr::Models M = loadM (dir + "/models.bin"), M27 = loadM (dir + "/models27.bin");
     dr::Stereo src; double sr; dr::readWav (argv[2], src, sr);
-    struct Block { std::string tgt, out, ir; std::map<std::string, double> fad; bool match = false; };
+    struct Block { std::string tgt, out, ir, echoIr; std::map<std::string, double> fad; bool match = false; };
     std::vector<Block> blocks; double cut = 0.65;
     for (int i = 3; i + 1 < argc;)
     {
@@ -33,7 +34,7 @@ int main (int argc, char** argv)
         for (; i < argc && std::string (argv[i]) != "--"; ++i)
         {
             std::string a = argv[i]; auto e = a.find ('=');
-            if (a.rfind ("sure=", 0) == 0) cut = std::stod (a.substr (5)) / 100.0; else if (a.rfind ("ir=", 0) == 0) b.ir = a.substr (3); else if (a.rfind ("match=", 0) == 0) b.match = a.substr (6) != "0";
+            if (a.rfind ("sure=", 0) == 0) cut = std::stod (a.substr (5)) / 100.0; else if (a.rfind ("ir=", 0) == 0) b.ir = a.substr (3); else if (a.rfind ("echoir=", 0) == 0) b.echoIr = a.substr (7); else if (a.rfind ("match=", 0) == 0) b.match = a.substr (6) != "0";
             else b.fad[a.substr (0, e)] = std::stod (a.substr (e + 1));
         }
         blocks.push_back (std::move (b)); if (i < argc) ++i;
@@ -80,6 +81,12 @@ int main (int argc, char** argv)
             const dr::RoomIr ir = dr::exportIr (*rf, dr::get (fad, "reverb.length", 1.0), dr::get (fad, "reverb.bright", 1.0), dr::get (fad, "reverb.width", 1.0)); const dr::Stereo& h = ir.h;
             std::cout << "impulse response " << (double) h.size() / 48000.0 << " s, rms " << h.rms() << " peak " << h.peak() << ", as found = wet " << ir.levelDb << " dB against dry\n"; writeWav (B.ir, h);
         }
+        if (! B.echoIr.empty())
+            for (auto& F : found) if (F.echo != nullptr)
+            {
+                const dr::EchoIr ir = dr::echoIr (*F.echo, dr::scaled (F, fad)); const dr::Stereo& h = ir.h;
+                std::cout << "echoes as an impulse response " << (double) h.size() / 48000.0 << " s, peak " << h.peak() << ", turned down by " << ir.downDb << " dB\n"; writeWav (B.echoIr, h);
+            }
         auto out = two ? dr::applyTo (tgt, found, fad) : dr::reshape (src, found, fad);
         { size_t hot = 0; for (size_t i = 0; i < out.size(); ++i) hot += std::max (std::abs (out.l[i]), std::abs (out.r[i])) > 1.0;
           const dr::Stereo& in = two ? tgt : src;

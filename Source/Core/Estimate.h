@@ -576,6 +576,28 @@ inline echo::Shape echoShape (const Params& p, double s)
 // a delay on 6 of the scoreboard's 8 delay cases and on about one clean sound in ten).
 inline void mergeEcho (Inspection& I, const echo::Found& f) { I.prob["delay"] = f.any() ? f.sure : echo::sureNone; }
 
+// What Export IR writes for the DELAY group: the echoes alone, without the sound itself (the file starts with the
+// silence before the first echo), left and right, as the Time, Feedback and Brightness faders have them and with
+// Amount in the middle. In a convolution plug-in, wet and dry at the same level then give the echoes as found. A
+// channel without an echo stays silent. A file cannot hold more than full scale, so a response that would go over
+// is turned down; downDb says by how much (add it back after the convolution).
+struct EchoIr { Stereo h; double downDb = 0; };
+inline EchoIr echoIr (const echo::Found& f, const Params& p)
+{
+    EchoIr out; if (! f.any()) return out;
+    echo::Fft F; const echo::Shape sh = echoShape (p, 1.0); Vec h[2];
+    for (int c = 0; c < 2; ++c)
+    {
+        if (! f.ch[c].found) continue;
+        if (c == 1 && f.twin && f.ch[0].found) { h[1] = h[0]; continue; }
+        h[c] = echo::response (F, f.ch[c], sh, false); if (! h[c].empty()) h[c][0] -= 1.0;      // the sound itself out
+    }
+    const size_t n = std::max (h[0].size(), h[1].size()); if (n < 2) return out;
+    h[0].resize (n, 0.0); h[1].resize (n, 0.0); out.h.l = std::move (h[0]); out.h.r = std::move (h[1]);
+    const double pk = out.h.peak(); if (pk > 0.999) { const double g = 0.999 / pk; out.downDb = -20.0 * std::log10 (g); for (auto& v : out.h.l) v *= g; for (auto& v : out.h.r) v *= g; }
+    return out;
+}
+
 // Settings of each found effect (estimate.estimate, without the slower sweep fit for now).
 inline bool isNewFx (const std::string& f) { return f == "saturation" || f == "exciter" || f == "ringmod" || f == "filter" || f == "stutter" || f == "gatedrhythm"; }
 // The 0.2.0 additions come from the larger 27-effect detector; they need a higher score to be named
