@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(DefectRefect VERSION 0.4.0 LANGUAGES C CXX)
+project(DefectRefect VERSION 0.4.1 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -60,3 +60,6 @@ target_link_libraries(drrender PRIVATE Threads::Threads)
 
 # The room engine without the UI (no JUCE): Tests/room.cpp
 add_executable(drroom Tests/room.cpp)
+
+# The tone engine without the UI (no JUCE): Tests/tone.cpp
+add_executable(drtone Tests/tone.cpp)

@@ -2,6 +2,7 @@
 //   out.wav = "-": only what was found is printed (every effect's score, the room engine's verdict), nothing is rendered
 //   sure=NN: the Sureness slider (default 65); ir=file.wav: also writes the found room as Export IR does
 //   The room engine is used when ResourcesDir holds room.bin (as in the app), with a second look when it also holds room2.bin.
+//   match=1: two sounds with Tone Match switched on (its faders: tonematch.amount, tonematch.detail)
 #include <chrono>
 #include <fstream>
 #include <iostream>
@@ -23,11 +24,12 @@ int main (int argc, char** argv)
     const std::string dir = argv[1]; const dr::Models M = loadM (dir + "/models.bin"), M27 = loadM (dir + "/models27.bin");
     dr::Stereo src, tgt; double sr; dr::readWav (argv[2], src, sr);
     const bool two = std::string (argv[3]) != "-"; if (two) dr::readWav (argv[3], tgt, sr);
-    std::map<std::string, double> fad; double cut = 0.65; std::string irPath; const bool only = std::string (argv[4]) == "-";
+    std::map<std::string, double> fad; double cut = 0.65; std::string irPath; const bool only = std::string (argv[4]) == "-"; bool match = false;
     for (int i = 5; i < argc; ++i)
     {
         std::string a = argv[i]; auto e = a.find ('=');
-        if (a.rfind ("sure=", 0) == 0) cut = std::stod (a.substr (5)) / 100.0; else if (a.rfind ("ir=", 0) == 0) irPath = a.substr (3); else fad[a.substr (0, e)] = std::stod (a.substr (e + 1));
+        if (a.rfind ("sure=", 0) == 0) cut = std::stod (a.substr (5)) / 100.0; else if (a.rfind ("ir=", 0) == 0) irPath = a.substr (3); else if (a.rfind ("match=", 0) == 0) match = a.substr (6) != "0";
+        else fad[a.substr (0, e)] = std::stod (a.substr (e + 1));
     }
     auto I = dr::inspect (M, src); dr::mergeNew (I, dr::inspect (M27, src));
     std::shared_ptr<const dr::room::Found> rf;
@@ -45,10 +47,18 @@ int main (int argc, char** argv)
             if (dr::mergeRoom (I, *r)) rf = r; else std::cout << "room: hardly any difference between left and right, the old reverb handling stays\n";
         }
     }
+    const auto tf = std::make_shared<const dr::tone::Found> (dr::tone::analyse (src)); dr::mergeTone (I, *tf);
+    std::cout << "tone: reflections=" << tf->echoes.size(); for (auto& e : tf->echoes) std::cout << " delay_ms=" << e.delay / 48.0 << " gain=" << e.gain; std::cout << "\n";
     auto t1 = clk::now();
     if (only) { for (auto& [f, p] : I.prob) std::cout << f << "=" << p << " "; std::cout << "\n"; return 0; }
-    auto found = dr::estimate (I, src, cut, nullptr, rf); auto t2 = clk::now();
-    for (auto& F : found) { std::cout << F.name << " p=" << F.prob << (F.room ? " (room engine)" : ""); for (auto& [k, v] : F.est) std::cout << " " << k << "=" << v; std::cout << "\n"; }
+    auto found = dr::estimate (I, src, cut, nullptr, rf, tf);
+    if (two && match && ! tf->spec.silent)
+    {
+        long lag = 0; const double c = dr::tone::pairCoherence (src, tgt, &lag); found.push_back (dr::matchFx (tf, c > dr::tone::sameCoherence));
+        std::cout << "tone match: coherence=" << c << (c > dr::tone::sameCoherence ? " (two versions of one recording)" : " (two different sounds)") << " shift=" << lag << "\n";
+    }
+    auto t2 = clk::now();
+    for (auto& F : found) { std::cout << F.name << " p=" << F.prob << (F.room ? " (room engine)" : F.tone ? " (tone engine)" : ""); for (auto& [k, v] : F.est) std::cout << " " << k << "=" << v; std::cout << "\n"; }
     if (! irPath.empty() && rf && rf->found)
     {
         const dr::RoomIr ir = dr::exportIr (*rf, dr::get (fad, "reverb.length", 1.0), dr::get (fad, "reverb.bright", 1.0), dr::get (fad, "reverb.width", 1.0)); const dr::Stereo& h = ir.h;

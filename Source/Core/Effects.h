@@ -300,7 +300,7 @@ inline Vec gatedRhythm (const Vec& x, const Params& p, int)
 inline const std::vector<std::string>& chainOrder()
 {
     static const std::vector<std::string> o { "distortion", "bitcrush", "saturation", "filter", "exciter", "filtersweep", "phaser", "flanger", "chorus", "ringmod",
-                                              "tremolo", "gatedrhythm", "stutter", "width", "haas", "delay", "reverb", "autopan" };
+                                              "tremolo", "gatedrhythm", "stutter", "width", "haas", "comb", "delay", "reverb", "autopan" };
     return o;
 }
 inline bool isLfoFx (const std::string& f) { return f == "flanger" || f == "chorus" || f == "phaser" || f == "filtersweep"; }

@@ -7,6 +7,7 @@
 #include "Hand.h"
 #include "Inspector.h"
 #include "RoomEngine.h"
+#include "Tone.h"
 #include <functional>
 #include <future>
 #include <memory>
@@ -402,6 +403,9 @@ struct FoundFx
     std::vector<Knob> knobs;
     double lfoRate = 0;                // for removal of moving filters
     std::shared_ptr<const room::Found> room;   // a reverb the room engine found: its faders work that engine (see roomFx)
+    std::shared_ptr<const tone::Found> tone;   // a group of the tone engine (COMB FILTER, TONE MATCH): what it found on the first sound
+    Vec curveL, curveR;                        // TONE MATCH, for the picture and Export IR: the curves of the last render (left, right; Amount in the middle)
+    Vec foundL, foundR;                        // the same with Detail in the middle too
 };
 
 inline std::string titleFor (const std::string& f)
@@ -409,7 +413,8 @@ inline std::string titleFor (const std::string& f)
     static const std::map<std::string, std::string> t { { "flanger", "FLANGER" }, { "chorus", "CHORUS" }, { "phaser", "PHASER" }, { "haas", "HAAS WIDTH" },
         { "width", "STEREO WIDTH" }, { "delay", "DELAY" }, { "reverb", "REVERB" }, { "distortion", "DISTORTION" }, { "bitcrush", "BITCRUSH" },
         { "filtersweep", "FILTER SWEEP" }, { "tremolo", "TREMOLO" }, { "autopan", "AUTO PAN" },
-        { "saturation", "SATURATION" }, { "exciter", "EXCITER" }, { "ringmod", "RING MOD" }, { "filter", "FILTER" }, { "stutter", "STUTTER" }, { "gatedrhythm", "GATED RHYTHM" } };
+        { "saturation", "SATURATION" }, { "exciter", "EXCITER" }, { "ringmod", "RING MOD" }, { "filter", "FILTER" }, { "stutter", "STUTTER" }, { "gatedrhythm", "GATED RHYTHM" },
+        { "comb", "COMB FILTER" }, { "tonematch", "TONE MATCH" } };
     auto it = t.find (f); return it == t.end() ? f : it->second;
 }
 
@@ -555,6 +560,83 @@ inline bool mergeRoom (Inspection& I, const room::Found& f)
     I.prob["reverb"] = roomSureness (f); return true;
 }
 
+// ---------------------------------------------------------------- the tone engine's groups (Tone.h)
+// COMB FILTER: short reflections found on the sound (a copy of it a few milliseconds later, which colours the tone
+// with evenly spaced notches). The finder is strict: on the scoreboard it reports all 8 sounds that have one and
+// none of the 184 others, and on 1057 clean clips it reports 2 that are not there; with one sound in twenty
+// carrying a reflection that makes a report right 19 times in 20, which is the sureness shown.
+// Amount: on the sound itself 0 = taken out (the exact inverse filter), 1 = untouched, 2 = once more; on a second
+// sound 0 = none, 1 = as found, 2 = twice. Delay stretches the reflections' times (0.25 .. 2).
+constexpr double combSure = 0.95;
+inline FoundFx combFx (std::shared_ptr<const tone::Found> found)
+{
+    FoundFx F; F.name = "comb"; F.title = titleFor ("comb"); F.prob = combSure; F.tone = std::move (found); F.est = { { "delay", 1.0 } };
+    Knob a; a.id = "comb.amount"; a.label = "Amount"; a.hi = 2;
+    Knob d; d.key = "delay"; d.id = "comb.delay"; d.label = "Delay"; d.neutral = 0; d.lo = 0.25; d.hi = 2; d.ownTip = true;
+    d.tip = "The time of the reflection. Middle = as found. Left = shorter (the notches move up and apart), right = longer, up to twice (they move down and closer).";
+    F.knobs = { a, d }; return F;
+}
+inline void mergeTone (Inspection& I, const tone::Found& f) { if (! f.echoes.empty() && ! f.spec.silent) I.prob["comb"] = combSure; }
+// The gain curve (dB per bin) of the COMB FILTER group. onSecond: the found reflections go onto another sound
+// (s times the curve). Otherwise the sound's own: the found curve comes out and the one the faders give goes in.
+inline Vec combGain (const FoundFx& F, const Params& p, double s, bool onSecond)
+{
+    Vec g ((size_t) tone::NB, 0.0); if (F.tone == nullptr || F.tone->echoes.empty() || F.tone->spec.silent) return g;
+    const double stretch = std::clamp (get (p, "delay", 1.0), 0.25, 2.0);
+    const Vec now = tone::combCurve (F.tone->echoes, F.tone->spec.both, stretch);
+    if (onSecond) { for (size_t k = 0; k < g.size(); ++k) g[k] = s * now[k]; return g; }
+    if (std::abs (stretch - 1.0) < 1e-9) { for (size_t k = 0; k < g.size(); ++k) g[k] = (s - 1.0) * now[k]; return g; }
+    const Vec was = tone::combCurve (F.tone->echoes, F.tone->spec.both, 1.0);
+    for (size_t k = 0; k < g.size(); ++k) g[k] = s * now[k] - was[k];
+    return g;
+}
+// TONE MATCH (two sounds, switched on by its button): the second sound takes the long-term tone of the first. It
+// is not a found effect but a transfer, so it shows no sureness and is off until asked for: on two unrelated
+// sounds it changes the second one a lot (most such pairs reach a cap somewhere).
+// Amount: 0 = none, 1 = matched, 2 = the curve twice. Detail: how fine the curve is; in the middle a Gaussian of
+// 1/12 octave (Detail 0.6), which brings two different sounds' spectra within 1.6 dB (median, scoreboard)
+// without copying the first sound's single partials. When the two sounds are versions of the same recording
+// (`same`) the difference of their spectra is the effect's own curve: then the middle is full detail and left
+// and right each get their own curve (on the scoreboard that takes out 97.6 % of an EQ, filter, resonance or
+// comb against 70.9 % at Detail 0.6).
+constexpr double matchDetail = 0.6;
+inline FoundFx matchFx (std::shared_ptr<const tone::Found> found, bool same)
+{
+    FoundFx F; F.name = "tonematch"; F.title = titleFor ("tonematch"); F.prob = -1.0; F.tone = std::move (found);
+    F.est = { { "detail", same ? 1.0 : matchDetail }, { "same", same ? 1.0 : 0.0 } };
+    Knob a; a.id = "tonematch.amount"; a.label = "Amount"; a.hi = 2;
+    Knob d; d.key = "detail"; d.id = "tonematch.detail"; d.label = "Detail"; d.neutral = 0; d.lo = 0; d.hi = 1; d.ownTip = true;
+    d.tip = same ? "How fine the tone curve is. The two sounds are versions of the same recording, so the middle already takes every detail: the curve is the effect's own. Left = broad strokes only."
+                 : "How fine the tone curve is. Left = broad strokes only (an octave wide), middle = a twelfth of an octave, right = every detail (that also copies the first sound's single notes: right for two versions of the same recording).";
+    F.knobs = { a, d }; return F;
+}
+// The Detail fader (v 0 .. 2) as Detail 0 .. 1: the middle is the group's own value, far left 0, far right 1.
+inline double matchDetailAt (const FoundFx& F, double v)
+{
+    const double base = std::clamp (get (F.est, "detail", matchDetail), 0.0, 1.0);
+    return std::clamp (v <= 1.0 ? base * v : base + (1.0 - base) * (v - 1.0), 0.0, 1.0);
+}
+// The curves (left, right; dB per bin, Amount in the middle) that give a sound with the long-term spectra `sb` the
+// tone of the group's first sound at this Detail. Empty when one of the two is silent.
+inline std::pair<Vec, Vec> matchCurves (const FoundFx& F, const tone::Spectra& sb, double detail)
+{
+    if (F.tone == nullptr || F.tone->spec.silent || sb.silent) return {};
+    if (get (F.est, "same", 0.0) > 0.5) return { tone::matchCurve (F.tone->spec.left, sb.left, detail), tone::matchCurve (F.tone->spec.right, sb.right, detail) };
+    Vec c = tone::matchCurve (F.tone->spec.both, sb.both, detail); return { c, c };
+}
+
+// What Export IR writes for a group of the tone engine: its curve (caps included) as a minimum-phase impulse
+// response, 16384 taps, left and right. A file cannot hold more than full scale, so a response that would go over
+// is turned down; downDb says by how much (add it back after the convolution).
+struct ToneIr { Stereo h; double downDb = 0; };
+inline ToneIr toneIr (const Vec& curveL, const Vec& curveR)
+{
+    ToneIr out; if (curveL.size() != (size_t) tone::NB || curveR.size() != (size_t) tone::NB) return out;
+    out.h.l = tone::toIr (tone::softCap (curveL)); out.h.r = curveL == curveR ? out.h.l : tone::toIr (tone::softCap (curveR));
+    const double pk = out.h.peak(); if (pk > 0.999) { const double g = 0.999 / pk; out.downDb = -20.0 * std::log10 (g); for (auto& v : out.h.l) v *= g; for (auto& v : out.h.r) v *= g; }
+    return out;
+}
+
 // Settings of each found effect (estimate.estimate, without the slower sweep fit for now).
 inline bool isNewFx (const std::string& f) { return f == "saturation" || f == "exciter" || f == "ringmod" || f == "filter" || f == "stutter" || f == "gatedrhythm"; }
 // The 0.2.0 additions come from the larger 27-effect detector; they need a higher score to be named
@@ -578,8 +660,9 @@ inline void pruneFound (std::vector<FoundFx>& out)
 }
 // only: estimate exactly these effects (whatever their score); otherwise all above `cut`.
 // room: what the room engine found on the sound; with a room found, the reverb is that room (roomFx).
+// tone: what the tone engine found on the sound; with reflections found, they are the COMB FILTER group (combFx).
 inline std::vector<FoundFx> estimate (const Inspection& I, const Stereo& y, double cut = 0.65, const std::set<std::string>* only = nullptr,
-                                      const std::shared_ptr<const room::Found>& room = {})
+                                      const std::shared_ptr<const room::Found>& room = {}, const std::shared_ptr<const tone::Found>& tone = {})
 {
     std::vector<FoundFx> out;
     (void) est::pinkProbe ((size_t) (6 * SR));      // built once before the fits run in parallel
@@ -591,6 +674,7 @@ inline std::vector<FoundFx> estimate (const Inspection& I, const Stereo& y, doub
         auto pit = I.prob.find (f); if (pit == I.prob.end()) continue;
         if (only ? ! only->count (f) : pit->second <= cutFor (f, cut)) continue;
         if (f == "reverb" && room != nullptr && room->found) { out.push_back (roomFx (room, pit->second)); continue; }
+        if (f == "comb") { if (tone != nullptr && ! tone->echoes.empty()) out.push_back (combFx (tone)); continue; }
         FoundFx F; F.name = f; F.title = titleFor (f); F.prob = pit->second; F.knobs = knobsFor (f); Params& e = F.est;
         if (f == "delay")
         {
@@ -676,6 +760,7 @@ inline Params scaled (const FoundFx& F, const std::map<std::string, double>& fad
         double nv = k.neutral + v * (base - k.neutral);
         p[k.key] = std::clamp (nv, k.lo, k.hi);
     }
+    if (F.name == "tonematch") { auto it = faders.find ("tonematch.detail"); p["detail"] = matchDetailAt (F, it == faders.end() ? 1.0 : it->second); }
     if (F.name == "flanger" && p["dmin"] >= p["dmax"]) p["dmin"] = p["dmax"] * 0.5;
     if ((F.name == "phaser" || F.name == "filtersweep") && p["fmin"] >= p["fmax"] * 0.9) p["fmin"] = p["fmax"] * 0.9;
     return p;
@@ -691,12 +776,17 @@ inline bool settingsMoved (const FoundFx& F, const std::map<std::string, double>
 }
 
 // Two sounds: put the source's effects on the target. Left = not applied, right = double.
-inline Stereo applyTo (const Stereo& target, const std::vector<FoundFx>& found, const std::map<std::string, double>& faders, const std::function<bool()>& cancelled = {})
+// TONE MATCH comes last, on what the other effects have made of the target: the result then has the first sound's
+// long-term tone whatever went on before. shown: if given, receives that group with the curves it used (for the
+// picture and Export IR).
+inline Stereo applyTo (const Stereo& target, const std::vector<FoundFx>& found, const std::map<std::string, double>& faders, const std::function<bool()>& cancelled = {},
+                       FoundFx* shown = nullptr)
 {
     Stereo y = target;
     for (auto& F : found)
     {
         if (cancelled && cancelled()) break;
+        if (F.name == "tonematch") continue;
         if (F.room != nullptr)      // the found room, rebuilt from its numbers, on this sound
         {
             const Params p = scaled (F, faders);
@@ -704,7 +794,27 @@ inline Stereo applyTo (const Stereo& target, const std::vector<FoundFx>& found, 
             if (r.size() == y.size()) y = std::move (r);
             continue;
         }
+        if (F.name == "comb")       // the found reflections on this sound
+        {
+            const Vec g = combGain (F, scaled (F, faders), amountOf (F, faders), true);
+            Stereo r = tone::gainFilter (y, g, g, cancelled); if (r.size() == y.size()) y = std::move (r);
+            continue;
+        }
         y = applyAmount (F.name, y, scaled (F, faders), amountOf (F, faders));
+    }
+    for (auto& F : found)
+    {
+        if (F.name != "tonematch" || (cancelled && cancelled())) continue;
+        const double s = amountOf (F, faders), detail = get (scaled (F, faders), "detail", matchDetail);
+        const tone::Spectra sy = tone::spectra (y, cancelled); auto [gl, gr] = matchCurves (F, sy, detail); if (gl.empty()) continue;
+        if (shown != nullptr)
+        {
+            *shown = F; shown->curveL = gl; shown->curveR = gr; const double base = matchDetailAt (F, 1.0);
+            if (std::abs (detail - base) < 1e-9) { shown->foundL = gl; shown->foundR = gr; }
+            else { auto [fl, fr] = matchCurves (F, sy, base); shown->foundL = std::move (fl); shown->foundR = std::move (fr); }
+        }
+        for (auto& v : gl) v *= s; for (auto& v : gr) v *= s;
+        Stereo r = tone::gainFilter (y, gl, gr, cancelled); if (r.size() == y.size()) y = std::move (r);
     }
     limit (y);
     return y;
@@ -712,7 +822,7 @@ inline Stereo applyTo (const Stereo& target, const std::vector<FoundFx>& found, 
 
 // One sound: take the found effects out (left), leave as is (middle) or double (right).
 inline bool canRemove (const std::string& f) { return f != "reverb" && f != "distortion" && f != "bitcrush" && ! isNewFx (f); }
-inline bool canRemove (const FoundFx& F) { return F.room != nullptr || canRemove (F.name); }      // the room engine takes its reverb out
+inline bool canRemove (const FoundFx& F) { return F.room != nullptr || F.tone != nullptr || canRemove (F.name); }      // the room engine takes its reverb out, the tone engine its reflections
 // The found effect turned down to s (0 = out as far as this effect allows, 1 = untouched).
 inline Stereo takeOut (const FoundFx& F, const Stereo& in, double s)
 {
@@ -754,6 +864,13 @@ inline Stereo reshape (const Stereo& src, const std::vector<FoundFx>& found, con
                 if (r.size() == y.size()) y = std::move (r);
             }
         }
+        else if (F.name == "comb")
+        {
+            // the found reflections out and those the faders give in, as one filter
+            const Vec g = combGain (F, scaled (F, faders), s, false);
+            Stereo r = tone::gainFilter (y, g, g, cancelled); if (r.size() == y.size()) y = std::move (r);
+        }
+        else if (F.name == "tonematch") {}      // two sounds only
         else if (canRemove (F.name))
         {
             // settings changed: take the found effect out, then put it back with the new settings at strength s

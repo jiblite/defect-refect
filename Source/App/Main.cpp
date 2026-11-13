@@ -205,7 +205,7 @@ public:
         g.drawText (juce::String (plot.title), area.removeFromTop (20), juce::Justification::centredLeft);
         auto cap = area.removeFromBottom (48);
         g.setColour (theme::textDim); g.setFont (juce::FontOptions (12.0f));
-        g.drawFittedText (juce::String (plot.caption), cap.withTrimmedTop (6), juce::Justification::topLeft, 3);
+        g.drawFittedText (juce::String (plot.caption), cap.withTrimmedTop (6), juce::Justification::topLeft, 3, 0.85f);     // wrap before the letters get narrow
         if (plot.empty()) return;
         auto pr = area.withTrimmedLeft (38).withTrimmedBottom (20).withTrimmedTop (16).withTrimmedRight (6).toFloat();
         auto X = [&] (double v) { const double u = plot.xLog ? std::log (juce::jmax (v, 1e-9) / plot.x0) / std::log (plot.x1 / plot.x0) : (v - plot.x0) / (plot.x1 - plot.x0); return pr.getX() + (float) u * pr.getWidth(); };
@@ -273,7 +273,23 @@ public:
     std::function<void()> onChange;
     std::function<void()> onFocus;          // another effect was selected (clicked, or one of its faders touched)
     std::map<std::string, double> values;
+    std::set<std::string> off;              // effects switched off with their On/Off button: left alone whatever their faders say
     std::string focus;                      // the effect whose picture is shown
+    // The fader values as the result is made from them: an effect that is switched off does nothing. One sound: its
+    // faders count as in the middle (it stays as found). Two sounds: its Amount counts as far left (not put on).
+    std::map<std::string, double> effective() const
+    {
+        auto v = values;
+        for (auto& g : groups) if (off.count (g.name)) { if (two) v[g.name + ".amount"] = 0.0; else for (auto& id : g.ids) v[id] = 1.0; }
+        return v;
+    }
+    bool isOff (const std::string& n) const { return off.count (n) > 0; }
+    void setOff (const std::string& n, bool o)
+    {
+        if (o == isOff (n)) return;
+        if (o) off.insert (n); else off.erase (n);
+        dress(); if (onChange) onChange();
+    }
     void setFocus (const std::string& n) { if (focus == n) return; focus = n; repaint(); if (onFocus) onFocus(); }
     void mouseDown (const juce::MouseEvent& e) override { for (auto& g : groups) if (g.bounds.contains (e.getPosition())) { setFocus (g.name); return; } }
     void paint (juce::Graphics& g) override
@@ -287,15 +303,21 @@ public:
     }
     void build (const std::vector<dr::FoundFx>& found, bool twoSounds, bool keepValues = false)
     {
-        const auto old = values; accent = twoSounds ? theme::orange : theme::teal;
-        groups.clear(); rows.clear(); heads.clear(); values.clear();
+        const auto old = values; accent = twoSounds ? theme::orange : theme::teal; two = twoSounds;
+        groups.clear(); rows.clear(); heads.clear(); switches.clear(); values.clear();
         for (auto& F : found)
         {
-            auto h = std::make_unique<juce::Label>(); h->setText (juce::String (F.title) + "   " + juce::String (juce::roundToInt (F.prob * 100)) + "% sure", juce::dontSendNotification);
+            auto h = std::make_unique<juce::Label>();     // a group that is not a found effect (TONE MATCH) shows no sureness
+            h->setText (F.prob < 0 ? juce::String (F.title) : juce::String (F.title) + "   " + juce::String (juce::roundToInt (F.prob * 100)) + "% sure", juce::dontSendNotification);
             h->setFont (juce::FontOptions (13.0f, juce::Font::bold)); h->setColour (juce::Label::textColourId, theme::text); addAndMakeVisible (*h);
             h->setInterceptsMouseClicks (false, false);
             Group grp; grp.head = h.get(); grp.name = F.name; heads.push_back (std::move (h));
             const std::string fxName = F.name;
+            auto sw = std::make_unique<juce::TextButton>(); sw->setClickingTogglesState (true); sw->setToggleState (! isOff (fxName), juce::dontSendNotification);
+            sw->setTooltip ("On: the faders of this effect count. Off: the effect is left alone. With one sound it stays as found, with two sounds it is not put on the second. "
+                            "For comparing with and without, and for an effect the app shows that you do not hear.");
+            sw->onClick = [this, fxName, b = sw.get()] { setFocus (fxName); setOff (fxName, ! b->getToggleState()); };
+            addAndMakeVisible (*sw); grp.sw = sw.get(); switches.push_back (std::move (sw));
             for (auto& k : F.knobs)
             {
                 auto row = std::make_unique<Row>();
@@ -306,18 +328,22 @@ public:
                 s.setColour (juce::Slider::thumbColourId, twoSounds ? theme::orange : theme::teal);
                 const bool amount = k.key.empty();
                 juce::String tip = k.tip;
-                if (amount) tip = twoSounds ? "How much of this effect goes onto the second sound. Middle = as found on the first sound. Left = not applied. Right = double."
+                const bool match = fxName == "tonematch";
+                if (amount) tip = match ? "How far the second sound takes the tone of the first. Left = not at all, middle = matched, right = the curve twice."
+                                : twoSounds ? "How much of this effect goes onto the second sound. Middle = as found on the first sound. Left = not applied. Right = double."
+                                : fxName == "comb" ? "Middle = as found. Left = take the reflection out. Right = once more, up to double."
                                             : F.room != nullptr ? "Middle = as found. Left = take the reverb out: half way left is the app's own best answer, further left digs deeper and can start to take some of the sound with it. Go by ear. Right = more reverb, up to double."
                                             : (dr::canRemove (F) ? "Middle = as found. Left = take it out (best effort). Right = double."
                                                                       : "Middle = as found. Right = double. Taking this one out is not possible yet, so the left half leaves it as found.");
                 else tip += k.ownTip ? " Double-click for the middle." : " Middle = as found. Left = none. Right = double. Double-click for the middle.";
                 s.setTooltip (tip); row->label.setTooltip (tip);
-                s.textFromValueFunction = [] (double v) { return std::abs (v - 1.0) < 0.005 ? juce::String ("as found") : juce::String (juce::roundToInt (v * 100)) + "%"; };
+                const juce::String middle = match ? (amount ? "matched" : "auto") : "as found";
+                s.textFromValueFunction = [middle] (double v) { return std::abs (v - 1.0) < 0.005 ? middle : juce::String (juce::roundToInt (v * 100)) + "%"; };
                 s.updateText();
-                const std::string id = k.id; values[id] = 1.0;
+                const std::string id = k.id; values[id] = 1.0; grp.ids.push_back (id);
                 if (keepValues) { auto it = old.find (id); if (it != old.end()) { values[id] = it->second; s.setValue (it->second, juce::dontSendNotification); } }
                 s.onValueChange = [this, id, fxName, &s] { values[id] = s.getValue(); setFocus (fxName); if (onChange) onChange(); };
-                s.onDragStart = [this, fxName] { setFocus (fxName); };
+                s.onDragStart = [this, fxName] { setFocus (fxName); setOff (fxName, false); };      // moving a fader of an effect that is off switches it on
                 row->label.setInterceptsMouseClicks (false, false);
                 addAndMakeVisible (row->label); addAndMakeVisible (s);
                 grp.rows.push_back (row.get()); rows.push_back (std::move (row));
@@ -325,13 +351,27 @@ public:
             groups.push_back (grp);
         }
         if (found.empty()) groups.clear();
-        layout();
+        layout(); dress();
         // keep the selection if that effect is still shown, otherwise select the first one
         bool have = false; for (auto& g : groups) have = have || g.name == focus;
         if (! have) focus = groups.empty() ? std::string() : groups.front().name;
         repaint(); if (onFocus) onFocus();
     }
-    void resetAll() { for (auto& r : rows) r->slider.setValue (1.0, juce::sendNotificationSync); }
+    void resetAll() { off.clear(); dress(); for (auto& r : rows) r->slider.setValue (1.0, juce::sendNotificationSync); if (onChange) onChange(); }
+    void clearSwitches() { off.clear(); }
+    // how the switched-off effects look: button, title and faders dimmed
+    void dress()
+    {
+        for (auto& g : groups)
+        {
+            const bool on = ! isOff (g.name);
+            g.sw->setToggleState (on, juce::dontSendNotification); g.sw->setButtonText (on ? "On" : "Off");
+            g.sw->setColour (juce::TextButton::buttonOnColourId, accent.withAlpha (0.35f));
+            g.head->setColour (juce::Label::textColourId, on ? theme::text : theme::textDim);
+            for (auto* r : g.rows) { r->slider.setAlpha (on ? 1.0f : 0.35f); r->label.setAlpha (on ? 1.0f : 0.5f); }
+        }
+        repaint();
+    }
     int count() const { return (int) rows.size(); }
     void layout()
     {
@@ -342,7 +382,7 @@ public:
         {
             const size_t c = (size_t) (std::min_element (colY.begin(), colY.end()) - colY.begin()); const int x = 8 + (int) c * (colW + gap); int y = colY[c];
             const int top = y;
-            g.head->setBounds (x, y, colW, headH); y += headH;
+            g.head->setBounds (x, y, colW - 46, headH); g.sw->setBounds (x + colW - 40, y + 4, 38, 18); y += headH;
             for (auto* r : g.rows) { r->label.setBounds (x, y, 92, rowH); r->slider.setBounds (x + 92, y, colW - 92, rowH); y += rowH; }
             g.bounds = { x - 8, top - 2, colW + 14, y - top + 6 };
             colY[c] = y + 14;
@@ -351,9 +391,9 @@ public:
     }
 private:
     struct Row { juce::Label label; juce::Slider slider; };
-    struct Group { juce::Label* head = nullptr; std::vector<Row*> rows; std::string name; juce::Rectangle<int> bounds; };
-    juce::Colour accent { theme::teal };
-    std::vector<std::unique_ptr<Row>> rows; std::vector<std::unique_ptr<juce::Label>> heads; std::vector<Group> groups;
+    struct Group { juce::Label* head = nullptr; juce::TextButton* sw = nullptr; std::vector<Row*> rows; std::vector<std::string> ids; std::string name; juce::Rectangle<int> bounds; };
+    juce::Colour accent { theme::teal }; bool two = false;
+    std::vector<std::unique_ptr<Row>> rows; std::vector<std::unique_ptr<juce::Label>> heads; std::vector<std::unique_ptr<juce::TextButton>> switches; std::vector<Group> groups;
 };
 
 // ---------------------------------------------------------------- main screen
@@ -370,7 +410,7 @@ public:
         zoneA.onBrowse = [this] { browse (0); }; zoneB.onBrowse = [this] { browse (1); };
         zoneA.onClear = [this] { clearSlot (0); }; zoneB.onClear = [this] { clearSlot (1); };
         zoneA.onSeek = zoneB.onSeek = [this] (double t) { player.seek (t); };
-        for (auto* b : { &swapBtn, &playBtn, &abBtn, &exportBtn, &irBtn, &resetBtn }) addAndMakeVisible (*b);
+        for (auto* b : { &swapBtn, &playBtn, &abBtn, &matchBtn, &exportBtn, &irBtn, &resetBtn }) addAndMakeVisible (*b);
         swapBtn.setButtonText ("Swap"); swapBtn.setTooltip ("Swap the two sounds. The new first sound is inspected.");
         swapBtn.onClick = [this] { swapSlots(); };
         playBtn.setButtonText ("Play"); playBtn.setTooltip ("Play or stop the result (space bar). Loops.");
@@ -379,10 +419,15 @@ public:
         abBtn.onClick = [this] { abBtn.setButtonText (abBtn.getToggleState() ? "Original" : "Result"); updatePlayerBuffer(); };
         exportBtn.setButtonText ("Export"); exportBtn.setTooltip ("Save the result as a 24-bit 48 kHz WAV.");
         exportBtn.onClick = [this] { exportResult(); };
-        irBtn.setButtonText ("Export IR"); irBtn.setTooltip ("Save the found room as an impulse response (24-bit 48 kHz stereo WAV), shaped by the Length, Brightness and Width faders as they are now. "
-                                                             "Load it into any convolution reverb to put this room on other sounds. It holds the room alone, without the direct sound, at unity level; the line next to Play then says which wet level against dry gives the room as it was found.");
+        irBtn.setButtonText ("Export IR"); irBtn.setTooltip ("Save the selected effect as an impulse response (24-bit 48 kHz stereo WAV) for any convolution plug-in. "
+                                                             "REVERB: the found room, shaped by the Length, Brightness and Width faders as they are now. It holds the room alone, without the direct sound, at unity level; the line next to Play then says which wet level against dry gives the room as it was found. "
+                                                             "COMB FILTER and TONE MATCH: the curve as the Delay or Detail fader has it, with Amount in the middle.");
+        matchBtn.setButtonText ("Tone Match"); matchBtn.setClickingTogglesState (true); matchBtn.setColour (juce::TextButton::buttonOnColourId, theme::orange.withAlpha (0.45f));
+        matchBtn.setTooltip ("Two sounds: give the second sound the tone of the first (its long-term spectrum). Adds the group TONE MATCH with Amount and Detail. "
+                             "Off, the second sound keeps its own tone. If the two sounds are versions of the same recording, the curve is exactly what lies between them, for example an EQ.");
+        matchBtn.onClick = [this] { matchChanged(); };
         irBtn.onClick = [this] { exportIr(); };
-        resetBtn.setButtonText ("Reset Faders"); resetBtn.setTooltip ("All faders back to the middle (as found).");
+        resetBtn.setButtonText ("Reset Faders"); resetBtn.setTooltip ("All faders back to the middle (as found) and every effect switched on.");
         resetBtn.onClick = [this] { faders.resetAll(); };
         addAndMakeVisible (modeLabel); modeLabel.setFont (juce::FontOptions (13.0f)); modeLabel.setColour (juce::Label::textColourId, theme::textDim);
         addAndMakeVisible (sureLabel); sureLabel.setText ("Sureness", juce::dontSendNotification); sureLabel.setFont (juce::FontOptions (12.0f)); sureLabel.setColour (juce::Label::textColourId, theme::textDim);
@@ -398,7 +443,7 @@ public:
         addAndMakeVisible (view); view.setViewedComponent (&faders, false); view.setScrollBarsShown (true, false);
         addAndMakeVisible (display);
         faders.onChange = [this] { renderSoon(); updateDisplay(); };
-        faders.onFocus = [this] { updateDisplay(); };
+        faders.onFocus = [this] { updateDisplay(); irBtn.setEnabled (irGroup() != nullptr); };
         dev.initialiseWithDefaultDevices (0, 2);
         { auto setup = dev.getAudioDeviceSetup(); setup.sampleRate = 48000; dev.setAudioDeviceSetup (setup, true); }
         resampler = std::make_unique<juce::ResamplingAudioSource> (&player, false, 2);
@@ -442,7 +487,7 @@ public:
         zoneA.setBounds (left); zoneB.setBounds (right); swapBtn.setBounds (top.withSizeKeepingCentre (sw - 12, 30));
         r.removeFromTop (10);
         auto bar = r.removeFromTop (32);
-        playBtn.setBounds (bar.removeFromLeft (80)); bar.removeFromLeft (8); abBtn.setBounds (bar.removeFromLeft (90)); bar.removeFromLeft (8);
+        playBtn.setBounds (bar.removeFromLeft (80)); bar.removeFromLeft (8); abBtn.setBounds (bar.removeFromLeft (90)); bar.removeFromLeft (8); matchBtn.setBounds (bar.removeFromLeft (100)); bar.removeFromLeft (8);
         exportBtn.setBounds (bar.removeFromRight (90)); bar.removeFromRight (8); irBtn.setBounds (bar.removeFromRight (90)); bar.removeFromRight (8);
         resetBtn.setBounds (bar.removeFromRight (110)); bar.removeFromRight (8);
         modeLabel.setBounds (bar.reduced (6, 0));
@@ -470,13 +515,17 @@ private:
     // ---- state
     LookAndFeel lnf; juce::TooltipWindow tips { this, 500 };
     DropZone zoneA, zoneB;
-    juce::TextButton swapBtn, playBtn, abBtn, exportBtn, irBtn, resetBtn;
+    juce::TextButton swapBtn, playBtn, abBtn, matchBtn, exportBtn, irBtn, resetBtn;
     juce::Label modeLabel, sureLabel; juce::Slider sure; juce::Viewport view; FaderPanel faders; DisplayPanel display;
     juce::AudioDeviceManager dev; juce::AudioSourcePlayer srcPlayer; Player player; std::unique_ptr<juce::ResamplingAudioSource> resampler;
     struct DevListener : juce::ChangeListener { std::function<void()> fn; void changeListenerCallback (juce::ChangeBroadcaster*) override { if (fn) fn(); } } devListener;
     std::shared_ptr<dr::Models> models, models27;
     std::shared_ptr<const dr::room::Net> roomNet, roomNet2;     // the room engine's model and the one for its second look (none: the reverb is handled the old way)
     std::shared_ptr<const dr::room::Found> roomFound;           // what the room engine found on the first sound
+    std::shared_ptr<const dr::tone::Found> toneFound;           // what the tone engine found on it: long-term spectra and reflections
+    std::vector<dr::FoundFx> groups;                            // the groups shown: the effects found, and TONE MATCH when it is switched on (two sounds)
+    dr::FoundFx matchShown;                                     // TONE MATCH as the last render used it, with its curves (for the picture and Export IR)
+    std::weak_ptr<const dr::Stereo> pairA, pairB; bool pairSame = false;     // are the two sounds versions of one recording (worked out once per pair; weak: a new sound at an old address is still a new sound)
     std::shared_ptr<const dr::Stereo> sound[2], result;
     juce::String names[2]; juce::File pending[2], lastDir;
     std::vector<dr::FoundFx> found; bool inspected = false;
@@ -522,7 +571,7 @@ private:
     void clearSlot (int slot)
     {
         sound[slot].reset(); names[slot] = {}; (slot == 0 ? zoneA : zoneB).setSound ({}, nullptr);
-        if (slot == 0) { ++generation; busy = false; found.clear(); inspected = false; roomFound.reset(); faders.build ({}, false); result.reset(); updatePlayerBuffer(); updateUi(); }
+        if (slot == 0) { ++generation; busy = false; found.clear(); groups.clear(); inspected = false; roomFound.reset(); toneFound.reset(); matchShown = {}; faders.clearSwitches(); faders.build ({}, false); result.reset(); updatePlayerBuffer(); updateUi(); }
         else modeChanged();
     }
     void swapSlots()
@@ -533,12 +582,13 @@ private:
     }
     void inspect()
     {
-        ++generation; busy = true; inspected = false; found.clear(); cache.clear(); inspection.reset(); roomFound.reset(); faders.build ({}, false); updateUi();
+        ++generation; busy = true; inspected = false; found.clear(); groups.clear(); cache.clear(); inspection.reset(); roomFound.reset(); toneFound.reset(); matchShown = {}; faders.clearSwitches(); faders.build ({}, false); updateUi();
         zoneA.setStatus ("inspecting..."); modeLabel.setText ("Looking for effects on the first sound...", juce::dontSendNotification);
         auto src = sound[0]; auto M = models; auto M27 = models27; auto RN = roomNet; auto RN2 = roomNet2; auto out = std::make_shared<std::vector<dr::FoundFx>>();
         auto insp = std::make_shared<dr::Inspection>(); auto roomOut = std::make_shared<std::shared_ptr<const dr::room::Found>>(); const double c = cut();
+        auto toneOut = std::make_shared<std::shared_ptr<const dr::tone::Found>>();
         const int gen = generation.load();
-        startWorker ([src, M, M27, RN, RN2, out, insp, roomOut, c, gen, this]
+        startWorker ([src, M, M27, RN, RN2, out, insp, roomOut, toneOut, c, gen, this]
                      {
                          auto alive = [this, gen] (float) { return generation.load() == gen; };
                          auto I = dr::inspect (*M, *src, alive);
@@ -554,15 +604,22 @@ private:
                              if (generation.load() != gen) return;
                              if (f != nullptr && ! f->stopped && dr::mergeRoom (I, *f)) *roomOut = f;
                          }
-                         *out = dr::estimate (I, *src, c, nullptr, *roomOut); *insp = I;
+                         {       // the tone engine: the sound's long-term spectra (for Tone Match) and short reflections on it
+                             std::shared_ptr<dr::tone::Found> t;
+                             try { t = std::make_shared<dr::tone::Found> (dr::tone::analyse (*src, [this, gen] { return generation.load() != gen; })); }
+                             catch (const std::exception&) { t.reset(); }
+                             if (generation.load() != gen) return;
+                             if (t != nullptr && ! t->stopped) { dr::mergeTone (I, *t); *toneOut = t; }
+                         }
+                         *out = dr::estimate (I, *src, c, nullptr, *roomOut, *toneOut); *insp = I;
                      },
-                     [this, out, insp, roomOut]
+                     [this, out, insp, roomOut, toneOut]
                      {
-                         busy = false; found = *out; inspected = true; inspection = insp; roomFound = *roomOut;
+                         busy = false; found = *out; inspected = true; inspection = insp; roomFound = *roomOut; toneFound = *toneOut;
                          for (auto& F : found) cache[F.name] = F;
                          zoneA.setStatus (juce::String ((int) found.size()) + (found.size() == 1 ? " effect found" : " effects found"));
-                         emptyText = "No effects found on this sound (from the 18 it knows so far).";
-                         faders.build (found, sound[1] != nullptr); resized(); renderNow(); updateUi();
+                         emptyText = "No effects found on this sound (from the 19 it knows so far).";
+                         regroup(); faders.build (groups, sound[1] != nullptr); resized(); renderNow(); updateUi();
                      });
     }
     // The Sureness slider moved: show the effects above it, reading the settings of any not read yet.
@@ -577,28 +634,51 @@ private:
             dr::pruneFound (f);
             std::vector<std::string> a, b; for (auto& x : f) a.push_back (x.name); for (auto& x : found) b.push_back (x.name);
             if (a == b) return;
-            found = f; faders.build (found, sound[1] != nullptr, true); resized();
+            found = f; regroup(); faders.build (groups, sound[1] != nullptr, true); resized();
             zoneA.setStatus (juce::String ((int) found.size()) + (found.size() == 1 ? " effect shown" : " effects shown"));
             renderNow(); updateUi();
         };
         if (missing.empty()) { show(); return; }
         busy = true; ++generation; modeLabel.setText ("Reading the settings of the newly shown effects...", juce::dontSendNotification);
-        auto I = inspection; auto src = sound[0]; auto rf = roomFound; auto out = std::make_shared<std::vector<dr::FoundFx>>();
-        startWorker ([I, src, missing, out, rf] { *out = dr::estimate (*I, *src, 0.0, &missing, rf); },
+        auto I = inspection; auto src = sound[0]; auto rf = roomFound; auto tf = toneFound; auto out = std::make_shared<std::vector<dr::FoundFx>>();
+        startWorker ([I, src, missing, out, rf, tf] { *out = dr::estimate (*I, *src, 0.0, &missing, rf, tf); },
                      [this, out, show] { busy = false; for (auto& F : *out) cache[F.name] = F; show(); updateUi(); });
     }
     // The picture for the selected effect: as the faders have it now, with the found state faintly behind.
     void updateDisplay()
     {
-        const dr::FoundFx* F = nullptr; for (auto& x : found) if (x.name == faders.focus) F = &x;
-        if (F == nullptr) { display.set ({}, {}, inspected && found.empty() ? juce::String ("Nothing found to show.") : juce::String()); return; }
+        const dr::FoundFx* F = nullptr; for (auto& x : groups) if (x.name == faders.focus) F = &x;
+        if (F == nullptr) { display.set ({}, {}, inspected && groups.empty() ? juce::String ("Nothing found to show.") : juce::String()); return; }
+        dr::FoundFx withCurves;        // TONE MATCH: its curves come from the last render
+        if (F->name == "tonematch" && matchShown.name == "tonematch") { withCurves = *F; withCurves.curveL = matchShown.curveL; withCurves.curveR = matchShown.curveR; withCurves.foundL = matchShown.foundL; withCurves.foundR = matchShown.foundR; F = &withCurves; }
         const double s = dr::amountOf (*F, faders.values); const bool moved = dr::settingsMoved (*F, faders.values) || std::abs (s - 1.0) > 1e-9, two = sound[1] != nullptr;
         display.set (dr::makePlot (*F, dr::scaled (*F, faders.values), s, two), moved ? dr::makePlot (*F, F->est, 1.0, two) : dr::Plot());
     }
     void modeChanged()     // one sound <-> two sounds: the faders mean something else, so they start from the middle
     {
-        if (inspected) { faders.build (found, sound[1] != nullptr); resized(); }
+        matchShown = {};
+        if (inspected) { regroup(); faders.build (groups, sound[1] != nullptr); resized(); }
         result.reset(); updatePlayerBuffer(); renderNow(); updateUi();
+    }
+    // The groups shown: the effects found on the first sound, and with two sounds and Tone Match switched on its group.
+    // Whether the two sounds are versions of one recording decides what that group's Detail starts from.
+    void regroup()
+    {
+        groups = found;
+        if (! (matchBtn.getToggleState() && sound[0] && sound[1] && toneFound && ! toneFound->spec.silent)) return;
+        if (pairA.lock() != sound[0] || pairB.lock() != sound[1])
+        {
+            pairA = sound[0]; pairB = sound[1]; pairSame = false;
+            try { pairSame = dr::tone::pairCoherence (*sound[0], *sound[1]) > dr::tone::sameCoherence; } catch (const std::exception&) {}
+        }
+        groups.push_back (dr::matchFx (toneFound, pairSame));
+    }
+    void matchChanged()     // the Tone Match button
+    {
+        if (! inspected) return;
+        matchShown = {}; regroup(); faders.build (groups, sound[1] != nullptr, true); resized();
+        if (matchBtn.getToggleState()) faders.setFocus ("tonematch");
+        renderNow(); updateUi();
     }
     void renderSoon() { renderQueued = true; renderDelay = 3; }    // ~150 ms after the last move
     void renderNow()
@@ -607,14 +687,14 @@ private:
         if (busy) { renderSoon(); return; }
         const bool two = sound[1] != nullptr; auto src = two ? sound[1] : sound[0]; if (! src) return;
         busy = true; ++generation; const int gen = generation.load();
-        auto fx = found; auto vals = faders.values; auto out = std::make_shared<dr::Stereo>();
+        auto fx = groups; auto vals = faders.effective(); auto out = std::make_shared<dr::Stereo>(); auto shown = std::make_shared<dr::FoundFx>();
         modeLabel.setText ("Working...", juce::dontSendNotification);
-        startWorker ([src, two, fx, vals, out, gen, this]
+        startWorker ([src, two, fx, vals, out, shown, gen, this]
                      {
                          auto cancel = [this, gen] { return generation.load() != gen; };
-                         *out = two ? dr::applyTo (*src, fx, vals, cancel) : dr::reshape (*src, fx, vals, cancel);
+                         *out = two ? dr::applyTo (*src, fx, vals, cancel, shown.get()) : dr::reshape (*src, fx, vals, cancel);
                      },
-                     [this, out] { busy = false; result = out; updatePlayerBuffer(); updateUi(); });
+                     [this, out, shown] { busy = false; result = out; matchShown = *shown; updatePlayerBuffer(); updateDisplay(); updateUi(); });
     }
     void updatePlayerBuffer()
     {
@@ -644,11 +724,47 @@ private:
             else modeLabel.setText ("Could not write " + f.getFullPathName(), juce::dontSendNotification);
         });
     }
+    // The group Export IR saves: the selected one when it can be saved as an impulse response (the found room, the
+    // comb filter, Tone Match once its curve is worked out), otherwise the found room when there is one.
+    const dr::FoundFx* irGroup() const
+    {
+        auto can = [this] (const dr::FoundFx& F) { return F.room != nullptr || F.name == "comb" || (F.name == "tonematch" && matchShown.name == "tonematch" && ! matchShown.curveL.empty()); };
+        for (auto& x : groups) if (x.name == faders.focus && can (x)) return &x;
+        for (auto& x : groups) if (x.room != nullptr) return &x;
+        return nullptr;
+    }
+    // A tone group's curve as an impulse response (dr::toneIr): the comb filter as the Delay fader has it, Tone Match
+    // as the Detail fader has it, each with Amount in the middle.
+    void exportToneIr (const dr::FoundFx& F)
+    {
+        dr::Vec cl, cr; juce::String what;
+        if (F.name == "comb") { cl = cr = dr::combGain (F, dr::scaled (F, faders.values), 1.0, true); what = "comb filter"; }
+        else { cl = matchShown.curveL; cr = matchShown.curveR; what = "tone match"; }
+        const juce::String base = juce::File::createLegalFileName (names[0].upToLastOccurrenceOf (".", false, false) + " " + what + ".wav");
+        chooser = std::make_unique<juce::FileChooser> ("Export the " + what + " as an impulse response", lastDir.getChildFile (base), "*.wav");
+        chooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::warnAboutOverwriting, [this, cl, cr, what] (const juce::FileChooser& c)
+        {
+            auto f = c.getResult(); if (f == juce::File()) return; f = f.withFileExtension ("wav");
+            dr::ToneIr ir; try { ir = dr::toneIr (cl, cr); } catch (const std::exception& e) { modeLabel.setText ("Could not make the impulse response: " + juce::String (e.what()), juce::dontSendNotification); return; }
+            const dr::Stereo& h = ir.h; if (h.size() == 0) return;
+            juce::AudioBuffer<float> b (2, (int) h.size());
+            for (int i = 0; i < b.getNumSamples(); ++i) { b.setSample (0, i, (float) h.l[(size_t) i]); b.setSample (1, i, (float) h.r[(size_t) i]); }
+            f.deleteFile(); juce::WavAudioFormat wav;
+            std::unique_ptr<juce::AudioFormatWriter> w (wav.createWriterFor (new juce::FileOutputStream (f), dr::SR, 2, 24, {}, 0));
+            if (w)
+            {
+                w->writeFromAudioSampleBuffer (b, 0, b.getNumSamples());
+                modeLabel.setText ("Saved " + f.getFileName() + ": the " + what + " as a filter without latency."
+                                   + (ir.downDb > 0.05 ? " Turned down by " + juce::String (ir.downDb, 1) + " dB to fit the file: add that back after the convolution." : juce::String()), juce::dontSendNotification);
+            }
+            else modeLabel.setText ("Could not write " + f.getFullPathName(), juce::dontSendNotification);
+        });
+    }
     // The found room as an impulse response (dr::exportIr), shaped by the Length, Brightness and Width faders as they are now.
     void exportIr()
     {
-        const dr::FoundFx* F = nullptr; for (auto& x : found) if (x.room != nullptr) F = &x;
-        if (F == nullptr) return;
+        const dr::FoundFx* F = irGroup(); if (F == nullptr) return;
+        if (F->room == nullptr) { exportToneIr (*F); return; }
         const dr::Params p = dr::scaled (*F, faders.values); auto rf = F->room;
         const double length = dr::get (p, "length", 1.0), bright = dr::get (p, "bright", 1.0), width = dr::get (p, "width", 1.0);
         const juce::String base = juce::File::createLegalFileName (names[0].upToLastOccurrenceOf (".", false, false) + " room.wav");
@@ -672,8 +788,9 @@ private:
     }
     void updateUi()
     {
-        const bool two = sound[1] != nullptr; bool room = false; for (auto& F : found) room = room || F.room != nullptr;
-        irBtn.setEnabled (room);
+        const bool two = sound[1] != nullptr;
+        irBtn.setEnabled (irGroup() != nullptr);
+        matchBtn.setEnabled (two && inspected && toneFound != nullptr && ! toneFound->spec.silent);
         swapBtn.setEnabled (sound[0] || sound[1]); exportBtn.setEnabled (result != nullptr); resetBtn.setEnabled (faders.count() > 0);
         playBtn.setEnabled (sound[0] || sound[1]);
         if (! busy)
@@ -681,7 +798,7 @@ private:
             juce::String m;
             if (! sound[0]) m = sound[1] ? "Drop a first sound: its effects go onto the second." : "";
             else if (! inspected) m = "";
-            else if (found.empty()) m = "Nothing found to change.";
+            else if (groups.empty()) m = two ? "No effects found on the first sound. Tone Match gives the second sound its tone." : "Nothing found to change.";
             else if (two) m = "Two sounds: the first sound's effects on the second. Left = not applied, middle = as found, right = double.";
             else m = "One sound: left = take the effect out, middle = as found, right = double.";
             modeLabel.setText (m, juce::dontSendNotification);
@@ -727,6 +844,27 @@ inline void dumpPlots (const juce::File& dir)
             juce::Image img = p.createComponentSnapshot (p.getLocalBounds(), true, 2.0f);
             juce::File out = dir.getChildFile (juce::String (name) + (moved ? "-moved" : "") + ".png"); out.deleteFile();
             juce::FileOutputStream os (out); juce::PNGImageFormat png; if (os.openedOk()) png.writeImageToStream (img, os);
+        }
+    }
+    // the tone engine's groups: a reflection after 1.5 ms, and a Tone Match curve
+    {
+        auto tf = std::make_shared<dr::tone::Found>(); tf->spec.silent = false; tf->spec.both.assign ((size_t) dr::tone::NB, 0.0);
+        for (size_t k = 0; k < (size_t) dr::tone::NB; ++k) tf->spec.both[k] = -10.0 * std::log10 (1.0 + (double) k * dr::tone::binHz / 200.0);
+        tf->spec.left = tf->spec.right = tf->spec.both; tf->echoes = { { 73.14, 0.57 } };
+        dr::FoundFx C = dr::combFx (tf), T = dr::matchFx (tf, false);
+        T.curveL.assign ((size_t) dr::tone::NB, 0.0); for (size_t k = 1; k < (size_t) dr::tone::NB; ++k) { const double o = std::log2 ((double) k * dr::tone::binHz / 1000.0); T.curveL[k] = 7.0 * std::exp (-0.5 * (o - 1.6) * (o - 1.6) / 0.3) - 9.0 * std::exp (-0.5 * (o + 2.2) * (o + 2.2) / 0.5) + 1.5 * std::sin (9.0 * o); }
+        T.curveR = T.foundL = T.foundR = T.curveL;
+        int n = 0;
+        for (const dr::FoundFx* F : { &C, &C, &T, &T })
+        {
+            const bool moved = n & 1; DisplayPanel p; p.setSize (420, 330);
+            std::map<std::string, double> v; for (auto& k : F->knobs) v[k.id] = 1.0;
+            if (moved) { v[F->name + ".amount"] = F == &C ? 0.4 : 1.6; if (F == &C) v["comb.delay"] = 1.5; }
+            p.set (dr::makePlot (*F, dr::scaled (*F, v), dr::amountOf (*F, v), F == &T), moved ? dr::makePlot (*F, F->est, 1.0, F == &T) : dr::Plot());
+            juce::Image img = p.createComponentSnapshot (p.getLocalBounds(), true, 2.0f);
+            juce::File out = dir.getChildFile (juce::String (F->name) + (moved ? "-moved" : "") + ".png"); out.deleteFile();
+            juce::FileOutputStream os (out); juce::PNGImageFormat png; if (os.openedOk()) png.writeImageToStream (img, os);
+            ++n;
         }
     }
     // the room engine's reverb: a typical room, as found, with the faders moved, and going onto a second sound

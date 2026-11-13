@@ -108,12 +108,58 @@ inline Plot roomPlot (const FoundFx& F, const Params& p, double s, bool onSecond
     return P;
 }
 
+// The tone engine's groups: the curve the faders give, in dB over frequency, bin by bin (a comb's teeth are evenly
+// spaced in Hz, so on this axis they crowd together towards the top).
+// COMB FILTER: the found reflections' curve at the Amount and Delay the faders give (Amount at zero: a flat line).
+// TONE MATCH: what the second sound gets, from the last render: one curve, or teal = left and orange = right when
+// the two sounds are versions of one recording.
+inline Plot tonePlot (const FoundFx& F, const Params& p, double s, bool onSecond)
+{
+    using namespace disp;
+    Plot P; P.title = F.title; if (F.tone == nullptr) return P;
+    const bool match = F.name == "tonematch"; freqAxes (P, match ? -30 : -24, match ? 18 : 12);
+    auto line = [&] (const Vec& c, double k, int colour, bool cap)
+    {
+        Curve q; q.colour = colour; if (c.size() != (size_t) tone::NB) return;
+        for (int b = 4; b < tone::NB && (double) b * tone::binHz <= 20000.0; ++b) { const double v = k * c[(size_t) b]; q.pts.push_back ({ (double) b * tone::binHz, cap ? tone::softCap (v) : v }); }
+        P.curves.push_back (std::move (q));
+    };
+    auto pct = [] (double v) { return num (v * 100, 0) + "%"; };
+    if (! match)
+    {
+        const double stretch = std::clamp (get (p, "delay", 1.0), 0.25, 2.0); const auto& E = F.tone->echoes; if (E.empty()) return P;
+        line (tone::combCurve (E, F.tone->spec.both, stretch), std::max (s, 0.0), 0, false);
+        std::string c = E.size() == 1 ? "A reflection " : "Reflections ";
+        for (size_t i = 0; i < E.size(); ++i)
+            c += std::string (i ? " and " : "") + num (E[i].delay * stretch / SR * 1e3, 2) + " ms after the sound at " + pct (std::abs (E[i].gain)) + " of its level" + (E[i].gain < 0 ? " (flipped)" : "");
+        c += ": notches every " + hz (SR / std::max (E[0].delay * stretch, 1e-9)) + ".";
+        if (s < 1e-3) c += onSecond ? " Amount at zero: not put on the second sound." : " Amount at zero: taken out.";
+        else if (std::abs (s - 1.0) > 0.005) c += std::string (" Shown at ") + pct (s) + (onSecond ? "." : " of what was found.");
+        P.caption = c; return P;
+    }
+    const double detail = get (p, "detail", matchDetail), base = matchDetailAt (F, 1.0); const bool same = get (F.est, "same", 0.0) > 0.5, asFound = std::abs (detail - base) < 1e-9;
+    const Vec& L = asFound && ! F.foundL.empty() ? F.foundL : F.curveL; const Vec& R = asFound && ! F.foundR.empty() ? F.foundR : F.curveR;
+    if (L.size() != (size_t) tone::NB) { P.caption = "Working out the curve..."; return P; }
+    if (s < 1e-3) { line (L, 0.0, 0, false); P.caption = "Amount at zero: the second sound keeps its own tone."; return P; }
+    if (same && R.size() == L.size() && R != L) line (R, s, 1, true);
+    line (L, s, 0, true);
+    double hi = -1e9, lo = 1e9, fhi = 0, flo = 0;
+    for (int b = 6; b < tone::NB && (double) b * tone::binHz <= 18000.0; ++b) { const double v = tone::softCap (s * L[(size_t) b]); if (v > hi) { hi = v; fhi = b * tone::binHz; } if (v < lo) { lo = v; flo = b * tone::binHz; } }
+    const double oct = tone::detailOctaves (detail);
+    const std::string fine = oct <= 0 ? "every detail" : oct >= 0.75 ? "broad strokes, an octave wide" : "smoothed over 1/" + num (1.0 / oct, 0) + " octave";
+    P.caption = std::string (same ? "Two versions of one recording: what the second still needs, after the other effects, to get the tone of the first, for each side (teal left, orange right)"
+                                  : "What the second sound needs, after the other effects, to take the long-term tone of the first")
+                + ": up to " + (hi >= 0 ? "+" : "") + num (hi, 1) + " dB around " + hz (fhi) + ", down to " + num (lo, 1) + " dB around " + hz (flo) + ". Detail: " + fine + ".";
+    return P;
+}
+
 // s: the effect's Amount fader (0..2); p: its settings with the settings faders applied. onSecond: the effect
 // goes onto a second sound (only the room's picture depends on it).
 inline Plot makePlot (const FoundFx& F, const Params& scaledP, double s, bool onSecond = false)
 {
     using namespace disp;
     if (F.room != nullptr) return roomPlot (F, scaledP, s, onSecond);
+    if (F.tone != nullptr) return tonePlot (F, scaledP, s, onSecond);
     const std::string& f = F.name; Plot P; P.title = F.title;
     bool fade = false; const Params e = mapAmount (f, scaledP, std::max (s, 0.0), fade); const double w = fade ? std::min (1.0, s) : 1.0;
     auto g = [&] (const char* k, double d) { return get (e, k, d); };
