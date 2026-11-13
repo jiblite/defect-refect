@@ -3,6 +3,7 @@
 //   out.wav = "-": only what was found is printed (every effect's score, the room engine's verdict), nothing is rendered
 //   sure=NN: the Sureness slider (default 65); ir=file.wav: also writes the found room as Export IR does
 //   The room engine is used when ResourcesDir holds room.bin (as in the app), with a second look when it also holds room2.bin.
+//   The tone engine and the echo engine always run (the DELAY group's faders: delay.amount, delay.time, delay.feedback, delay.bright).
 //   match=1: two sounds with Tone Match switched on (its faders: tonematch.amount, tonematch.detail)
 #include <chrono>
 #include <fstream>
@@ -57,11 +58,13 @@ int main (int argc, char** argv)
     }
     const auto tf = std::make_shared<const dr::tone::Found> (dr::tone::analyse (src)); dr::mergeTone (I, *tf);
     std::cout << "tone: reflections=" << tf->echoes.size(); for (auto& e : tf->echoes) std::cout << " delay_ms=" << e.delay / 48.0 << " gain=" << e.gain; std::cout << "\n";
+    const auto ef = std::make_shared<const dr::echo::Found> (dr::echo::analyse (src)); dr::mergeEcho (I, *ef);
+    std::cout << "echo: sure=" << ef->sure; for (int c = 0; c < 2; ++c) if (ef->ch[c].found) std::cout << (c ? " right" : " left") << "_ms=" << ef->ch[c].rec.q / 48.0 << " p=" << ef->ch[c].rec.p; std::cout << "\n";
     auto t1 = clk::now();
     if (only) { for (auto& [f, p] : I.prob) std::cout << f << "=" << p << " "; std::cout << "\n"; return 0; }
-    const auto found0 = dr::estimate (I, src, cut, nullptr, rf, tf);
+    const auto found0 = dr::estimate (I, src, cut, nullptr, rf, tf, ef);
     auto t2 = clk::now();
-    for (auto& F : found0) { std::cout << F.name << " p=" << F.prob << (F.room ? " (room engine)" : F.tone ? " (tone engine)" : ""); for (auto& [k, v] : F.est) std::cout << " " << k << "=" << v; std::cout << "\n"; }
+    for (auto& F : found0) { std::cout << F.name << " p=" << F.prob << (F.room ? " (room engine)" : F.tone ? " (tone engine)" : F.echo ? " (echo engine)" : ""); for (auto& [k, v] : F.est) std::cout << " " << k << "=" << v; std::cout << "\n"; }
     for (auto& B : blocks)
     {
         const bool two = B.tgt != "-"; dr::Stereo tgt; if (two) dr::readWav (B.tgt, tgt, sr);

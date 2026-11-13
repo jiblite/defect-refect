@@ -1,8 +1,10 @@
 #pragma once
-// Reading each found effect's settings from the source sound (port of estimate.py, delayfit.py,
-// revest.py), the controls that take an effect back out of the source (uneffect.py, "do its best"),
-// and the fader layout: per effect an Amount fader plus its most useful settings.
+// Reading each found effect's settings from the source sound (port of estimate.py, revest.py), the controls
+// that take an effect back out of the source (uneffect.py, "do its best"), and the fader layout: per effect an
+// Amount fader plus its most useful settings. Reverb, comb filter, tone match and delay are the work of their
+// own engines (RoomEngine.h, Tone.h, Echo.h); their groups are built here.
 
+#include "Echo.h"
 #include "Effects.h"
 #include "Hand.h"
 #include "Inspector.h"
@@ -17,105 +19,6 @@ namespace dr
 {
 namespace est
 {
-// ---------------------------------------------------------------- delay (uneffect.delay_dry + delayfit)
-inline void combInv (Vec& x, long D, double g)                // x = y - g x(t-D)
-{
-    for (long s = D; s < (long) x.size(); ++s) x[(size_t) s] -= g * x[(size_t) (s - D)];
-}
-inline long bestLag (const Vec& x)
-{
-    const Vec c = hand::ceps (x); const long a = (long) (0.06 * SR), b = std::min ((long) (0.75 * SR), (long) c.size());
-    if (b <= a + 20) return -1;
-    Vec seg ((size_t) (b - a)); for (long i = a; i < b; ++i) seg[(size_t) (i - a)] = std::abs (c[(size_t) i]);
-    const double med = median (seg); Vec dv (seg.size()); for (size_t i = 0; i < seg.size(); ++i) dv[i] = std::abs (seg[i] - med);
-    const double mad = median (dv) + 1e-12;
-    std::vector<size_t> idx (seg.size()); std::iota (idx.begin(), idx.end(), 0);
-    std::partial_sort (idx.begin(), idx.begin() + 12, idx.end(), [&] (size_t p, size_t q) { return seg[p] > seg[q]; });
-    for (int r = 0; r < 12; ++r)
-    {
-        const long k = (long) idx[(size_t) r]; const double z = (seg[(size_t) k] - med) / mad;
-        double nb = 0;
-        for (long j = std::max (0L, k - 8); j < std::max (0L, k - 2); ++j) nb = std::max (nb, seg[(size_t) j]);
-        for (long j = k + 3; j < std::min ((long) seg.size(), k + 9); ++j) nb = std::max (nb, seg[(size_t) j]);
-        if (z > 25 && seg[(size_t) k] / (nb + 1e-12) > 6) return k + a;
-    }
-    return -1;
-}
-struct Tap { int ch; double ms, g; };
-inline Stereo delayDry (const Stereo& y, std::vector<Tap>& taps, int rounds = 4)
-{
-    Stereo out = y;
-    for (int c = 0; c < 2; ++c)
-    {
-        Vec& x = c ? out.r : out.l;
-        for (int r = 0; r < rounds; ++r)
-        {
-            const long D = bestLag (x); if (D < 0) break;
-            double bestG = 0, be = 1e300;
-            for (int i = 0; i < 39; ++i)
-            {
-                const double g = -0.95 + 1.9 * i / 38.0; Vec t = x; combInv (t, D, g);
-                double e = 0; for (size_t j = (size_t) D; j < t.size(); ++j) e += t[j] * t[j];
-                if (e < be) { be = e; bestG = g; }
-            }
-            if (std::abs (bestG) < 0.03) break;
-            combInv (x, D, bestG); taps.push_back ({ c, (double) D / SR * 1e3, bestG });
-        }
-    }
-    return out;
-}
-// IIR filter with taps at multiples of d samples (b, a up to 3 coefficients each).
-inline double kEnergy (const double* b, const double* a, const Vec& x, size_t d)
-{
-    Vec y (x.size()); double e = 0;
-    for (size_t i = 0; i < x.size(); ++i)
-    {
-        double v = b[0] * x[i];
-        if (i >= d) v += b[1] * x[i - d] - a[1] * y[i - d];
-        if (i >= 2 * d) v += b[2] * x[i - 2 * d] - a[2] * y[i - 2 * d];
-        y[i] = v; e += v * v;
-    }
-    return e / (double) std::max<size_t> (1, x.size());
-}
-inline Params fitDelay (const Stereo& y, size_t d, double& energy)
-{
-    double best = 1e300; Params P;
-    for (int pp = 0; pp < 2; ++pp)
-        for (int fi = 0; fi <= 18; ++fi)
-            for (int mi = 0; mi <= 16; ++mi)
-            {
-                const double fb = 0.05 * fi, mix = 0.05 + 0.05 * mi; double e = 0;
-                for (int c = 0; c < 2; ++c)
-                {
-                    double B[3], A[3];   // model (B, A); inverse filter = A / B
-                    if (! pp) { B[0] = 1; B[1] = mix - fb; B[2] = 0; A[0] = 1; A[1] = -fb; A[2] = 0; }
-                    else if (c == 1) { B[0] = 1; B[1] = mix; B[2] = -fb * fb; A[0] = 1; A[1] = 0; A[2] = -fb * fb; }
-                    else { B[0] = 1; B[1] = 0; B[2] = mix * fb - fb * fb; A[0] = 1; A[1] = 0; A[2] = -fb * fb; }
-                    e += kEnergy (A, B, c ? y.r : y.l, d);
-                }
-                if (e < best) { best = e; P = { { "ms", (double) d * 1000 / SR }, { "fb", fb }, { "mix", mix }, { "pingpong", (double) pp } }; }
-            }
-    double e0 = 0; for (size_t i = 0; i < y.size(); ++i) e0 += y.l[i] * y.l[i] + y.r[i] * y.r[i];
-    energy = best / (e0 / (double) std::max<size_t> (1, y.size()) / 2 + 1e-20);
-    return P;
-}
-inline bool fitDelayAny (const Stereo& y, const std::vector<Tap>& taps, Params& out)
-{
-    std::set<size_t> cands;
-    for (auto& t : taps) for (double f : { 1.0, 0.5, 1.0 / 3.0 }) { const size_t d = (size_t) std::lround (t.ms * f * SR / 1000); if (d >= (size_t) (0.04 * SR)) cands.insert (d); }
-    if (cands.empty()) return false;
-    // fit on at most 8 s to keep it quick
-    const Stereo s = y.slice (0, std::min (y.size(), (size_t) (8 * SR)));
-    double bestSane = 1e300, bestAny = 1e300; Params pS, pA; bool sane = false;
-    for (size_t d : cands)
-    {
-        double e; const Params p = fitDelay (s, d, e);
-        if (e < bestAny) { bestAny = e; pA = p; }
-        if (p.at ("fb") < 0.85 && p.at ("mix") < 0.8 && e < bestSane) { bestSane = e; pS = p; sane = true; }
-    }
-    out = sane ? pS : pA; return true;
-}
-
 // ---------------------------------------------------------------- reverb time from free decays (revest.py)
 inline double rt60FromDecays (const Stereo& y, int& count)
 {
@@ -404,6 +307,7 @@ struct FoundFx
     double lfoRate = 0;                // for removal of moving filters
     std::shared_ptr<const room::Found> room;   // a reverb the room engine found: its faders work that engine (see roomFx)
     std::shared_ptr<const tone::Found> tone;   // a group of the tone engine (COMB FILTER, TONE MATCH): what it found on the first sound
+    std::shared_ptr<const echo::Found> echo;   // the echoes the echo engine found: its faders work that engine (see echoFx)
     Vec curveL, curveR;                        // TONE MATCH, for the picture and Export IR: the curves of the last render (left, right; Amount in the middle)
     Vec foundL, foundR;                        // the same with Detail in the middle too
 };
@@ -427,7 +331,6 @@ inline std::vector<Knob> knobsFor (const std::string& f)
     else if (f == "phaser") { k.push_back (K ("rate", "Speed", "Sweep speed.", 0, 0.01, 10)); k.push_back (K ("fmin", "Low", "Bottom of the sweep.", 0, 30, 8000)); k.push_back (K ("fmax", "High", "Top of the sweep.", 0, 200, 20000)); k.push_back (K ("fb", "Feedback", "Sharpness of the notches.", 0, 0, 0.95)); k.push_back (K ("mix", "Mix", "Level of the swept part.", 0, 0, 1)); }
     else if (f == "filtersweep") { k.push_back (K ("rate", "Speed", "Sweep speed.", 0, 0.01, 10)); k.push_back (K ("fmin", "Low", "Bottom of the sweep.", 0, 30, 8000)); k.push_back (K ("fmax", "High", "Top of the sweep.", 0, 200, 20000)); k.push_back (K ("q", "Resonance", "Peak at the cutoff.", 0, 0.5, 20)); }
     else if (f == "width") k.push_back (K ("amount", "Width", "Added stereo spread.", 0, 0, 2));
-    else if (f == "delay") { k.push_back (K ("ms", "Time", "Echo time.", 0, 5, 2000)); k.push_back (K ("fb", "Feedback", "How long the echoes go on.", 0, 0, 0.9)); k.push_back (K ("mix", "Mix", "Level of the echoes.", 0, 0, 1.2)); }
     else if (f == "reverb") { k.push_back (K ("rt60", "Length", "Decay time.", 0, 0.1, 10)); k.push_back (K ("mix", "Mix", "Level of the room.", 0, 0, 1)); }
     else if (f == "distortion") k.push_back (K ("drive_scale", "Drive", "How hard it is pushed.", 0, 0.05, 4));
     else if (f == "bitcrush") { k.push_back (K ("bits", "Bit Depth", "Fewer levels to the right.", 16, 1, 16)); k.push_back (K ("down", "Sample Rate", "Coarser steps to the right.", 1, 1, 32)); }
@@ -640,6 +543,39 @@ inline ToneIr toneIr (const Vec& curveL, const Vec& curveR)
     return out;
 }
 
+// ---------------------------------------------------------------- the echo engine's group (Echo.h)
+// DELAY: the echoes the echo engine found on the sound (30 ms to 2.5 s; one echo time per channel, with its
+// repeats). On the scoreboard's 16 sounds with a delay from outside effects it finds 15 (none with a wrong echo
+// time), takes 89 of 100 out (median; mean 83) and puts 95 of 100 onto the case's other sound (mean 87), where the
+// detector and the fitted delay of 0.4.1 found 12 and reached 54 and 50.
+// Amount: on the sound itself 0 = taken out (the exact inverse of the found echo filter), 1 = untouched, 2 = the
+// echoes twice as loud; on a second sound 0 = none, 1 = as found, 2 = twice. Time: the echo time, half to double.
+// Feedback: how long the repeats go on. Brightness: the tone of the echoes. The setting faders hand their values
+// (0 .. 2, 1 = as found) through; echoShape turns them into what the engine takes.
+inline FoundFx echoFx (std::shared_ptr<const echo::Found> found, double prob)
+{
+    FoundFx F; F.name = "delay"; F.title = titleFor ("delay"); F.prob = prob; F.echo = std::move (found);
+    F.est = { { "time", 1.0 }, { "feedback", 1.0 }, { "bright", 1.0 } };
+    auto K = [] (const char* key, const char* label, const char* tip)
+    {
+        Knob k; k.key = key; k.id = "delay." + (k.key.empty() ? std::string ("amount") : k.key); k.label = label; k.tip = tip; k.neutral = 0; k.lo = 0; k.hi = 2; k.ownTip = ! k.key.empty();
+        return k;
+    };
+    F.knobs = { K ("", "Amount", ""),
+                K ("time", "Time", "The echo time. Middle = as found. Left = shorter, down to half. Right = longer, up to twice."),
+                K ("feedback", "Feedback", "How long the echoes go on. Middle = as found. Left = fewer repeats, down to the first one alone. Right = more repeats (an echo without repeats gets some)."),
+                K ("bright", "Brightness", "The tone of the echoes. Middle = as found. Left = darker, right = brighter.") };
+    return F;
+}
+inline echo::Shape echoShape (const Params& p, double s)
+{
+    echo::Shape sh; sh.amount = std::max (s, 0.0); sh.time = std::pow (2.0, std::clamp (get (p, "time", 1.0), 0.0, 2.0) - 1.0);
+    sh.feedback = std::clamp (get (p, "feedback", 1.0), 0.0, 2.0); sh.bright = std::clamp (get (p, "bright", 1.0), 0.0, 2.0); return sh;
+}
+// The echo engine's verdict goes into the inspection and the detector's own guess about delay goes out (it showed
+// a delay on 6 of the scoreboard's 8 delay cases and on about one clean sound in ten).
+inline void mergeEcho (Inspection& I, const echo::Found& f) { I.prob["delay"] = f.any() ? f.sure : echo::sureNone; }
+
 // Settings of each found effect (estimate.estimate, without the slower sweep fit for now).
 inline bool isNewFx (const std::string& f) { return f == "saturation" || f == "exciter" || f == "ringmod" || f == "filter" || f == "stutter" || f == "gatedrhythm"; }
 // The 0.2.0 additions come from the larger 27-effect detector; they need a higher score to be named
@@ -664,8 +600,10 @@ inline void pruneFound (std::vector<FoundFx>& out)
 // only: estimate exactly these effects (whatever their score); otherwise all above `cut`.
 // room: what the room engine found on the sound; with a room found, the reverb is that room (roomFx).
 // tone: what the tone engine found on the sound; with reflections found, they are the COMB FILTER group (combFx).
+// echo: what the echo engine found on the sound; with echoes found, they are the DELAY group (echoFx).
 inline std::vector<FoundFx> estimate (const Inspection& I, const Stereo& y, double cut = 0.65, const std::set<std::string>* only = nullptr,
-                                      const std::shared_ptr<const room::Found>& room = {}, const std::shared_ptr<const tone::Found>& tone = {})
+                                      const std::shared_ptr<const room::Found>& room = {}, const std::shared_ptr<const tone::Found>& tone = {},
+                                      const std::shared_ptr<const echo::Found>& echo = {})
 {
     std::vector<FoundFx> out;
     (void) est::pinkProbe ((size_t) (6 * SR));      // built once before the fits run in parallel
@@ -678,15 +616,9 @@ inline std::vector<FoundFx> estimate (const Inspection& I, const Stereo& y, doub
         if (only ? ! only->count (f) : pit->second <= cutFor (f, cut)) continue;
         if (f == "reverb" && room != nullptr && room->found) { out.push_back (roomFx (room, pit->second)); continue; }
         if (f == "comb") { if (tone != nullptr && ! tone->echoes.empty()) out.push_back (combFx (tone)); continue; }
+        if (f == "delay") { if (echo != nullptr && echo->any()) out.push_back (echoFx (echo, pit->second)); continue; }
         FoundFx F; F.name = f; F.title = titleFor (f); F.prob = pit->second; F.knobs = knobsFor (f); Params& e = F.est;
-        if (f == "delay")
-        {
-            std::vector<est::Tap> taps; est::delayDry (y.slice (0, std::min (y.size(), (size_t) (12 * SR))), taps);
-            std::vector<double> ms; for (auto& t : taps) ms.push_back (t.ms);
-            if (! est::fitDelayAny (y, taps, e))
-                e = { { "ms", S (f, "ms", 300) }, { "fb", std::clamp (S (f, "fb", 0.4), 0.0, 0.85) }, { "mix", std::clamp (S (f, "mix", 0.4), 0.05, 0.8) }, { "pingpong", L (f, "pingpong", "False") == "True" ? 1.0 : 0.0 } };
-        }
-        else if (f == "haas") e["lag"] = (double) hand::gccPhat (y, 30.0).lag;
+        if (f == "haas") e["lag"] = (double) hand::gccPhat (y, 30.0).lag;
         else if (f == "width") e["amount"] = std::clamp (S (f, "amount", 0.5), 0.05, 1.2);
         else if (f == "autopan") { const auto s = est::fitSineGrid (est::panLane (y), 200, 0.1, 4); e = { { "rate", s.rate }, { "amp_db", s.amp }, { "phase", s.phase } }; }
         else if (f == "tremolo") { const double r0 = std::clamp (R (f, 5), 0.3, 20.0); const auto s = est::fitSineGrid (est::tremLane (y), 200, r0 / 1.5, r0 * 1.5); e = { { "rate", s.rate }, { "amp_db", std::min (s.amp, 24.0) }, { "phase", s.phase } }; }
@@ -803,6 +735,12 @@ inline Stereo applyTo (const Stereo& target, const std::vector<FoundFx>& found, 
             Stereo r = tone::gainFilter (y, g, g, cancelled); if (r.size() == y.size()) y = std::move (r);
             continue;
         }
+        if (F.echo != nullptr)      // the found echoes on this sound
+        {
+            const double s = amountOf (F, faders);
+            if (s > 1e-9) { Stereo r = echo::render (y, *F.echo, echoShape (scaled (F, faders), s), false, cancelled); if (r.size() == y.size()) y = std::move (r); }
+            continue;
+        }
         y = applyAmount (F.name, y, scaled (F, faders), amountOf (F, faders));
     }
     for (auto& F : found)
@@ -825,17 +763,12 @@ inline Stereo applyTo (const Stereo& target, const std::vector<FoundFx>& found, 
 
 // One sound: take the found effects out (left), leave as is (middle) or double (right).
 inline bool canRemove (const std::string& f) { return f != "reverb" && f != "distortion" && f != "bitcrush" && ! isNewFx (f); }
-inline bool canRemove (const FoundFx& F) { return F.room != nullptr || F.tone != nullptr || canRemove (F.name); }      // the room engine takes its reverb out, the tone engine its reflections
+inline bool canRemove (const FoundFx& F) { return F.room != nullptr || F.tone != nullptr || F.echo != nullptr || canRemove (F.name); }      // the room engine takes its reverb out, the tone engine its reflections, the echo engine its echoes
 // The found effect turned down to s (0 = out as far as this effect allows, 1 = untouched).
 inline Stereo takeOut (const FoundFx& F, const Stereo& in, double s)
 {
     Stereo y = in; const std::string& f = F.name;
-    if (f == "delay")
-    {
-        std::vector<est::Tap> taps; const Stereo dry = est::delayDry (y, taps);
-        for (size_t i = 0; i < y.size(); ++i) { y.l[i] = dry.l[i] + s * (y.l[i] - dry.l[i]); y.r[i] = dry.r[i] + s * (y.r[i] - dry.r[i]); }
-    }
-    else if (f == "haas")
+    if (f == "haas")
     {
         const long d = std::lround (get (F.est, "lag", 0)); const long D = std::labs (d), sh = std::lround ((double) D * (1 - s));
         if (d < 0) y.r = fx::shift (y.r, sh); else y.l = fx::shift (y.l, sh);
@@ -872,6 +805,11 @@ inline Stereo reshape (const Stereo& src, const std::vector<FoundFx>& found, con
             // the found reflections out and those the faders give in, as one filter
             const Vec g = combGain (F, scaled (F, faders), s, false);
             Stereo r = tone::gainFilter (y, g, g, cancelled); if (r.size() == y.size()) y = std::move (r);
+        }
+        else if (F.echo != nullptr)
+        {
+            // the found echoes out and those the faders give in, as one filter per channel
+            Stereo r = echo::render (y, *F.echo, echoShape (scaled (F, faders), s), true, cancelled); if (r.size() == y.size()) y = std::move (r);
         }
         else if (F.name == "tonematch") {}      // two sounds only
         else if (canRemove (F.name))

@@ -63,3 +63,6 @@ add_executable(drroom Tests/room.cpp)
 
 # The tone engine without the UI (no JUCE): Tests/tone.cpp
 add_executable(drtone Tests/tone.cpp)
+
+# The echo engine without the UI (no JUCE): Tests/echo.cpp
+add_executable(drecho Tests/echo.cpp)

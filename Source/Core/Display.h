@@ -153,6 +153,43 @@ inline Plot tonePlot (const FoundFx& F, const Params& p, double s, bool onSecond
     return P;
 }
 
+// The found echoes (echo engine): the sound itself as a bar at 0 dB and every repeat as a bar at its time after the
+// sound and its level against it, as the faders have them. One row of bars when left and right carry the same
+// echo, else teal = left and orange = right. With Feedback off the middle the repeats' levels follow a plain model
+// (each repeat keeps the same share of the one before); the tone of the echoes is not in the picture.
+inline Plot echoPlot (const FoundFx& F, const Params& p, double s, bool onSecond)
+{
+    using namespace disp;
+    Plot P; P.title = F.title; if (F.echo == nullptr || ! F.echo->any()) return P;
+    const echo::Found& f = *F.echo; const echo::Shape sh = echoShape (p, s); echo::Shape full = sh; full.amount = std::max (1.0, sh.amount);
+    const bool both = f.ch[0].found && f.ch[1].found;
+    const bool same = both && f.ch[0].rec.q == f.ch[1].rec.q && f.ch[0].level.size() == f.ch[1].level.size() && ! f.ch[0].level.empty() && std::abs (f.ch[0].level[0] - f.ch[1].level[0]) < 0.5;
+    double step = 1e9, last = 0; for (int c = 0; c < 2; ++c) if (f.ch[c].found) { step = std::min (step, (double) f.ch[c].rec.q * sh.time / SR * 1e3); for (auto& r : echo::repeats (f.ch[c], full)) if (r.db > -54.0) last = std::max (last, r.ms); }
+    P.x0 = -0.35 * step; P.x1 = std::max (last + 0.6 * step, 4.6 * step); P.y0 = -60; P.y1 = 3; P.xLabel = "ms"; P.yLabel = "dB"; P.xTicks = ticks (0, P.x1); P.yTicks = { -48, -36, -24, -12, 0 };
+    const double w = std::min (0.14 * step, 0.012 * (P.x1 - P.x0) * (same || ! both ? 1.6 : 1.0));
+    P.bars.push_back ({ 0, P.y0, 0, w, 2 });
+    for (int c = 0; c < 2; ++c)
+    {
+        if (! f.ch[c].found || (same && c == 1)) continue;
+        const double shift = same || ! both ? 0.0 : (c == 0 ? -0.55 : 0.55) * w;
+        for (auto& r : echo::repeats (f.ch[c], sh)) if (r.db > P.y0 && r.ms + shift < P.x1) P.bars.push_back ({ r.ms + shift, P.y0, std::min (r.db, P.y1), w, same || ! both ? 0 : c });
+    }
+    const int lead = f.ch[0].found ? 0 : 1; const echo::Channel& L = f.ch[lead];
+    auto ms = [&] (int c) { return num ((double) f.ch[c].rec.q * sh.time / SR * 1e3, 0) + " ms"; };
+    std::string c = same || ! both ? "Echo every " + ms (lead) + (both ? "" : lead == 0 ? " on the left side only" : " on the right side only")
+                                   : f.ch[0].rec.q == f.ch[1].rec.q ? "Echo every " + ms (0) + " (teal left, orange right)" : "Echoes every " + ms (0) + " on the left (teal) and every " + ms (1) + " on the right (orange)";
+    if (! L.level.empty())
+    {
+        const double phi = echo::shareAt (L, sh.feedback);
+        if (sh.amount > 1e-3) c += ", the first one " + num (-(L.level[0] + 20 * std::log10 (sh.amount)), 1) + " dB under the sound";
+        c += phi > 0.03 ? ", each repeat about " + num (-20 * std::log10 (phi), 1) + " dB under the one before" : std::string (", no further repeats");
+    }
+    if (std::abs (sh.bright - 1.0) > 0.005) c += sh.bright < 1.0 ? ", echoes darker" : ", echoes brighter";
+    c += ".";
+    if (sh.amount < 1e-3) c += onSecond ? " Amount at zero: not put on the second sound." : " Amount at zero: taken out.";
+    P.caption = c; return P;
+}
+
 // s: the effect's Amount fader (0..2); p: its settings with the settings faders applied. onSecond: the effect
 // goes onto a second sound (only the room's picture depends on it).
 inline Plot makePlot (const FoundFx& F, const Params& scaledP, double s, bool onSecond = false)
@@ -160,6 +197,7 @@ inline Plot makePlot (const FoundFx& F, const Params& scaledP, double s, bool on
     using namespace disp;
     if (F.room != nullptr) return roomPlot (F, scaledP, s, onSecond);
     if (F.tone != nullptr) return tonePlot (F, scaledP, s, onSecond);
+    if (F.echo != nullptr) return echoPlot (F, scaledP, s, onSecond);
     const std::string& f = F.name; Plot P; P.title = F.title;
     bool fade = false; const Params e = mapAmount (f, scaledP, std::max (s, 0.0), fade); const double w = fade ? std::min (1.0, s) : 1.0;
     auto g = [&] (const char* k, double d) { return get (e, k, d); };
@@ -218,14 +256,6 @@ inline Plot makePlot (const FoundFx& F, const Params& scaledP, double s, bool on
             P.curves.push_back (c);
         }
         P.caption = num (v, 0) + (v == 1 ? " copy" : " copies") + " around " + num (base * 1e3) + " ms, drifting +-" + num (wd * 1e3) + " ms, mix " + num (g ("mix", 0.5), 2);
-    }
-    else if (f == "delay")
-    {
-        const double ms = g ("ms", 300), fb = g ("fb", 0.4), mix = g ("mix", 0.4); const bool pp = g ("pingpong", 0) > 0.5;
-        P.x0 = -0.3 * ms; P.x1 = 7.6 * ms; P.y0 = -48; P.y1 = 3; P.xLabel = "ms"; P.yLabel = "dB"; P.xTicks = { ms, 2 * ms, 4 * ms, 6 * ms }; P.yTicks = { -36, -24, -12, 0 };
-        P.bars.push_back ({ 0, -48, 0, ms * 0.12, 2 }); double a = mix;
-        for (int k = 1; k < 8 && a > 1e-3; ++k) { P.bars.push_back ({ k * ms, -48, std::max (-48.0, db (a)), ms * 0.12, pp ? (k % 2 ? 1 : 0) : 0 }); a *= fb; }
-        P.caption = "Echo every " + num (ms, 0) + " ms, feedback " + num (fb, 2) + ", level " + num (db (mix)) + " dB" + (pp ? ", ping-pong (teal left, orange right)" : "");
     }
     else if (f == "reverb")
     {

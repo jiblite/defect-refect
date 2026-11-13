@@ -523,6 +523,7 @@ private:
     std::shared_ptr<const dr::room::Net> roomNet, roomNet2;     // the room engine's model and the one for its second look (none: the reverb is handled the old way)
     std::shared_ptr<const dr::room::Found> roomFound;           // what the room engine found on the first sound
     std::shared_ptr<const dr::tone::Found> toneFound;           // what the tone engine found on it: long-term spectra and reflections
+    std::shared_ptr<const dr::echo::Found> echoFound;           // what the echo engine found on it
     std::vector<dr::FoundFx> groups;                            // the groups shown: the effects found, and TONE MATCH when it is switched on (two sounds)
     dr::FoundFx matchShown;                                     // TONE MATCH as the last render used it, with its curves (for the picture and Export IR)
     std::weak_ptr<const dr::Stereo> pairA, pairB; bool pairSame = false;     // are the two sounds versions of one recording (worked out once per pair; weak: a new sound at an old address is still a new sound)
@@ -571,7 +572,7 @@ private:
     void clearSlot (int slot)
     {
         sound[slot].reset(); names[slot] = {}; (slot == 0 ? zoneA : zoneB).setSound ({}, nullptr);
-        if (slot == 0) { ++generation; busy = false; found.clear(); groups.clear(); inspected = false; roomFound.reset(); toneFound.reset(); matchShown = {}; faders.clearSwitches(); faders.build ({}, false); result.reset(); updatePlayerBuffer(); updateUi(); }
+        if (slot == 0) { ++generation; busy = false; found.clear(); groups.clear(); inspected = false; roomFound.reset(); toneFound.reset(); echoFound.reset(); matchShown = {}; faders.clearSwitches(); faders.build ({}, false); result.reset(); updatePlayerBuffer(); updateUi(); }
         else modeChanged();
     }
     void swapSlots()
@@ -582,13 +583,13 @@ private:
     }
     void inspect()
     {
-        ++generation; busy = true; inspected = false; found.clear(); groups.clear(); cache.clear(); inspection.reset(); roomFound.reset(); toneFound.reset(); matchShown = {}; faders.clearSwitches(); faders.build ({}, false); updateUi();
+        ++generation; busy = true; inspected = false; found.clear(); groups.clear(); cache.clear(); inspection.reset(); roomFound.reset(); toneFound.reset(); echoFound.reset(); matchShown = {}; faders.clearSwitches(); faders.build ({}, false); updateUi();
         zoneA.setStatus ("inspecting..."); modeLabel.setText ("Looking for effects on the first sound...", juce::dontSendNotification);
         auto src = sound[0]; auto M = models; auto M27 = models27; auto RN = roomNet; auto RN2 = roomNet2; auto out = std::make_shared<std::vector<dr::FoundFx>>();
         auto insp = std::make_shared<dr::Inspection>(); auto roomOut = std::make_shared<std::shared_ptr<const dr::room::Found>>(); const double c = cut();
-        auto toneOut = std::make_shared<std::shared_ptr<const dr::tone::Found>>();
+        auto toneOut = std::make_shared<std::shared_ptr<const dr::tone::Found>>(); auto echoOut = std::make_shared<std::shared_ptr<const dr::echo::Found>>();
         const int gen = generation.load();
-        startWorker ([src, M, M27, RN, RN2, out, insp, roomOut, toneOut, c, gen, this]
+        startWorker ([src, M, M27, RN, RN2, out, insp, roomOut, toneOut, echoOut, c, gen, this]
                      {
                          auto alive = [this, gen] (float) { return generation.load() == gen; };
                          auto I = dr::inspect (*M, *src, alive);
@@ -611,11 +612,18 @@ private:
                              if (generation.load() != gen) return;
                              if (t != nullptr && ! t->stopped) { dr::mergeTone (I, *t); *toneOut = t; }
                          }
-                         *out = dr::estimate (I, *src, c, nullptr, *roomOut, *toneOut); *insp = I;
+                         {       // the echo engine: echoes on the sound (its verdict replaces the detector's about delay)
+                             std::shared_ptr<dr::echo::Found> e;
+                             try { e = std::make_shared<dr::echo::Found> (dr::echo::analyse (*src, [this, gen] { return generation.load() != gen; })); }
+                             catch (const std::exception&) { e.reset(); }
+                             if (generation.load() != gen) return;
+                             if (e != nullptr) { dr::mergeEcho (I, *e); *echoOut = e; } else I.prob["delay"] = dr::echo::sureNone;
+                         }
+                         *out = dr::estimate (I, *src, c, nullptr, *roomOut, *toneOut, *echoOut); *insp = I;
                      },
-                     [this, out, insp, roomOut, toneOut]
+                     [this, out, insp, roomOut, toneOut, echoOut]
                      {
-                         busy = false; found = *out; inspected = true; inspection = insp; roomFound = *roomOut; toneFound = *toneOut;
+                         busy = false; found = *out; inspected = true; inspection = insp; roomFound = *roomOut; toneFound = *toneOut; echoFound = *echoOut;
                          for (auto& F : found) cache[F.name] = F;
                          zoneA.setStatus (juce::String ((int) found.size()) + (found.size() == 1 ? " effect found" : " effects found"));
                          emptyText = "No effects found on this sound (from the 19 it knows so far).";
@@ -640,8 +648,8 @@ private:
         };
         if (missing.empty()) { show(); return; }
         busy = true; ++generation; modeLabel.setText ("Reading the settings of the newly shown effects...", juce::dontSendNotification);
-        auto I = inspection; auto src = sound[0]; auto rf = roomFound; auto tf = toneFound; auto out = std::make_shared<std::vector<dr::FoundFx>>();
-        startWorker ([I, src, missing, out, rf, tf] { *out = dr::estimate (*I, *src, 0.0, &missing, rf, tf); },
+        auto I = inspection; auto src = sound[0]; auto rf = roomFound; auto tf = toneFound; auto ef = echoFound; auto out = std::make_shared<std::vector<dr::FoundFx>>();
+        startWorker ([I, src, missing, out, rf, tf, ef] { *out = dr::estimate (*I, *src, 0.0, &missing, rf, tf, ef); },
                      [this, out, show] { busy = false; for (auto& F : *out) cache[F.name] = F; show(); updateUi(); });
     }
     // The picture for the selected effect: as the faders have it now, with the found state faintly behind.
@@ -824,7 +832,6 @@ inline void dumpPlots (const juce::File& dir)
         { "phaser", { { "rate", 0.4 }, { "fmin", 200 }, { "fmax", 3000 }, { "fb", 0.3 }, { "mix", 0.5 }, { "stages", 6 } } },
         { "filtersweep", { { "rate", 0.25 }, { "fmin", 300 }, { "fmax", 5000 }, { "q", 4 } } },
         { "width", { { "amount", 0.6 } } }, { "haas", { { "lag", 720 } } },
-        { "delay", { { "ms", 320 }, { "fb", 0.45 }, { "mix", 0.4 }, { "pingpong", 1 } } },
         { "reverb", { { "rt60", 1.8 }, { "mix", 0.35 } } },
         { "distortion", { { "drive", 8 }, { "kind", 1 }, { "top", -1 }, { "drive_scale", 1 } } },
         { "bitcrush", { { "bits", 6 }, { "down", 4 } } },
@@ -865,6 +872,22 @@ inline void dumpPlots (const juce::File& dir)
             juce::File out = dir.getChildFile (juce::String (F->name) + (moved ? "-moved" : "") + ".png"); out.deleteFile();
             juce::FileOutputStream os (out); juce::PNGImageFormat png; if (os.openedOk()) png.writeImageToStream (img, os);
             ++n;
+        }
+    }
+    // the echo engine's group: an echo every 320 ms on the left and every 240 ms on the right, with repeats
+    {
+        auto ef = std::make_shared<dr::echo::Found>();
+        for (int c = 0; c < 2; ++c) { auto& ch = ef->ch[c]; ch.found = true; ch.rec.q = c ? 11520 : 15360; ch.phi = 0.45; for (int k = 0; k < 8; ++k) ch.level.push_back (-8.0 - 6.9 * k); }
+        const dr::FoundFx E = dr::echoFx (ef, 0.95);
+        for (int moved = 0; moved < 2; ++moved)
+        {
+            DisplayPanel p; p.setSize (420, 330);
+            std::map<std::string, double> v; for (auto& k : E.knobs) v[k.id] = 1.0;
+            if (moved) { v["delay.amount"] = 1.5; v["delay.time"] = 1.3; v["delay.feedback"] = 1.5; }
+            p.set (dr::makePlot (E, dr::scaled (E, v), dr::amountOf (E, v)), moved ? dr::makePlot (E, E.est, 1.0) : dr::Plot());
+            juce::Image img = p.createComponentSnapshot (p.getLocalBounds(), true, 2.0f);
+            juce::File out = dir.getChildFile (juce::String ("delay") + (moved ? "-moved" : "") + ".png"); out.deleteFile();
+            juce::FileOutputStream os (out); juce::PNGImageFormat png; if (os.openedOk()) png.writeImageToStream (img, os);
         }
     }
     // the room engine's reverb: a typical room, as found, with the faders moved, and going onto a second sound
