@@ -572,49 +572,64 @@ inline Stereo applyTo (const Stereo& target, const std::vector<FoundFx>& found, 
     for (auto& F : found)
     {
         if (cancelled && cancelled()) break;
-        y = applyStep (F.name, y, scaled (F, faders), amountOf (F, faders));
+        y = applyAmount (F.name, y, scaled (F, faders), amountOf (F, faders));
     }
+    limit (y);
     return y;
 }
 
 // One sound: take the found effects out (left), leave as is (middle) or double (right).
-// Settings faders move the effect's settings by adding the difference they make.
 inline bool canRemove (const std::string& f) { return f != "reverb" && f != "distortion" && f != "bitcrush" && ! isNewFx (f); }
+// The found effect turned down to s (0 = out as far as this effect allows, 1 = untouched).
+inline Stereo takeOut (const FoundFx& F, const Stereo& in, double s)
+{
+    Stereo y = in; const std::string& f = F.name;
+    if (f == "delay")
+    {
+        std::vector<est::Tap> taps; const Stereo dry = est::delayDry (y, taps);
+        for (size_t i = 0; i < y.size(); ++i) { y.l[i] = dry.l[i] + s * (y.l[i] - dry.l[i]); y.r[i] = dry.r[i] + s * (y.r[i] - dry.r[i]); }
+    }
+    else if (f == "haas")
+    {
+        const long d = std::lround (get (F.est, "lag", 0)); const long D = std::labs (d), sh = std::lround ((double) D * (1 - s));
+        if (d < 0) y.r = fx::shift (y.r, sh); else y.l = fx::shift (y.l, sh);
+    }
+    else if (f == "width") y = est::widthControl (y, s);
+    else if (f == "autopan" || f == "tremolo")
+    {
+        Params inv = F.est; inv["amp_db"] = -(1 - s) * get (F.est, "amp_db", 0);
+        y = applyEffect (f, y, inv);
+    }
+    else if (isLfoFx (f)) y = est::motionControl (y, s, F.lfoRate);
+    return y;
+}
 inline Stereo reshape (const Stereo& src, const std::vector<FoundFx>& found, const std::map<std::string, double>& faders, const std::function<bool()>& cancelled = {})
 {
     Stereo y = src;
     for (auto it = found.rbegin(); it != found.rend(); ++it)      // undo in reverse chain order
     {
         if (cancelled && cancelled()) break;
-        const FoundFx& F = *it; const double s = amountOf (F, faders); const Stereo before = y;
-        if (settingsMoved (F, faders))
+        const FoundFx& F = *it; const double s = amountOf (F, faders); const bool moved = settingsMoved (F, faders);
+        if (! moved && std::abs (s - 1.0) < 1e-9) continue;
+        if (canRemove (F.name))
         {
-            const Stereo a = applyStep (F.name, before, F.est, 1.0), b = applyStep (F.name, before, scaled (F, faders), 1.0);
-            for (size_t i = 0; i < y.size(); ++i) { y.l[i] += b.l[i] - a.l[i]; y.r[i] += b.r[i] - a.r[i]; }
+            // settings changed: take the found effect out, then put it back with the new settings at strength s
+            if (moved) y = applyAmount (F.name, takeOut (F, y, 0.0), scaled (F, faders), s);
+            else if (s < 1.0) y = takeOut (F, y, s);
+            else y = applyAmount (F.name, y, F.est, s - 1.0);
         }
-        if (std::abs (s - 1.0) < 1e-9) continue;
-        if (s > 1.0) { y = applyStep (F.name, y, scaled (F, faders), s - 1.0); continue; }
-        // s < 1: take it out as far as this effect allows
-        const std::string& f = F.name;
-        if (f == "delay")
+        else
         {
-            std::vector<est::Tap> taps; const Stereo dry = est::delayDry (y, taps);
-            for (size_t i = 0; i < y.size(); ++i) { y.l[i] = dry.l[i] + s * (y.l[i] - dry.l[i]); y.r[i] = dry.r[i] + s * (y.r[i] - dry.r[i]); }
+            // cannot be taken out yet: more of it (right half), and settings changes as "the difference they make"
+            if (moved)
+            {
+                const Stereo a = applyAmount (F.name, y, F.est, 1.0), b = applyAmount (F.name, y, scaled (F, faders), 1.0);
+                for (size_t i = 0; i < y.size(); ++i) { y.l[i] += 0.5 * (b.l[i] - a.l[i]); y.r[i] += 0.5 * (b.r[i] - a.r[i]); }
+            }
+            if (s > 1.0) y = applyAmount (F.name, y, scaled (F, faders), s - 1.0);
         }
-        else if (f == "haas")
-        {
-            const long d = std::lround (get (F.est, "lag", 0)); const long D = std::labs (d), sh = std::lround ((double) D * (1 - s));
-            if (d < 0) y.r = fx::shift (y.r, sh); else y.l = fx::shift (y.l, sh);
-        }
-        else if (f == "width") y = est::widthControl (y, s);
-        else if (f == "autopan" || f == "tremolo")
-        {
-            Params inv = F.est; inv["amp_db"] = -(1 - s) * get (F.est, "amp_db", 0);
-            y = applyEffect (f, y, inv);
-        }
-        else if (isLfoFx (f)) y = est::motionControl (y, s, F.lfoRate);
-        // reverb, distortion, bitcrush: not removable yet (left half leaves them as found)
     }
+    limit (y);
     return y;
 }
 

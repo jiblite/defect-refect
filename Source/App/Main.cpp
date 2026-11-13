@@ -472,8 +472,8 @@ private:
     {
         const bool orig = abBtn.getToggleState(); const int slot = sound[1] ? 1 : 0;
         auto s = (orig || ! result) ? sound[slot] : result;
-        double pk = 1.0; if (s) pk = juce::jmax (1.0, s->peak());
-        player.gain = 0.99 / pk; player.set (s);
+        // results come out of the limiter under full scale; an original louder than full scale is turned down
+        player.gain = (s && s->peak() > 1.0) ? 0.99 / s->peak() : 1.0; player.set (s);
     }
     void togglePlay()
     {

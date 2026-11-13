@@ -26,6 +26,9 @@ int main (int argc, char** argv)
     auto found = dr::estimate (I, src); auto t2 = clk::now();
     for (auto& F : found) { std::cout << F.name << " p=" << F.prob; for (auto& [k, v] : F.est) std::cout << " " << k << "=" << v; std::cout << "\n"; }
     auto out = two ? dr::applyTo (tgt, found, fad) : dr::reshape (src, found, fad); auto t3 = clk::now();
+    { double e = 0; size_t hot = 0; for (size_t i = 0; i < out.size(); ++i) { e += out.l[i] * out.l[i] + out.r[i] * out.r[i]; hot += std::max (std::abs (out.l[i]), std::abs (out.r[i])) > 1.0; }
+      const dr::Stereo& in = two ? tgt : src;
+      std::cout << "level in rms " << in.rms() << " peak " << in.peak() << " | out rms " << out.rms() << " peak " << out.peak() << " over-full-scale samples " << hot << "\n"; }
     writeWav (argv[4], out);
     auto ms = [] (auto a, auto b) { return (int) std::chrono::duration_cast<std::chrono::milliseconds> (b - a).count(); };
     std::cout << "inspect " << ms (t0, t1) << " ms, estimate " << ms (t1, t2) << " ms, render " << ms (t2, t3) << " ms\n";

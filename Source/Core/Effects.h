@@ -380,4 +380,78 @@ inline Stereo applyStep (const std::string& f, const Stereo& prev, const Params&
     return y;
 }
 
+// ---------------------------------------------------------------- V2 strength control
+// The effect at strength s (0 = none, 1 = as found, 2 = double) by turning the effect's own controls
+// (mix, depth, drive, time...) instead of pushing the sound past the found result, which is what made
+// faders beyond +-20 % clip and hiss. Effects without a mix control are also cross-faded below 1.
+inline Stereo applyAmount (const std::string& f, const Stereo& prev, const Params& e0, double s)
+{
+    s = std::clamp (s, 0.0, 2.0);
+    if (s < 1e-6) return prev;
+    Params e = e0; const double up = std::max (0.0, s - 1.0); bool fade = false;
+    auto mul = [&] (const char* k, double d, double lo, double hi) { e[k] = std::clamp (get (e, k, d) * s, lo, hi); };
+    if (f == "flanger") { const double d = get (e, "depth", 0.7) * s; e["depth"] = std::min (d, 0.95); if (d > 0.95) e["fb"] = std::min (0.6, get (e, "fb", 0.0) + 0.5 * (d - 0.95)); }
+    else if (f == "chorus") mul ("mix", 0.5, 0.0, 1.5);
+    else if (f == "phaser")
+    {
+        const double m = get (e, "mix", 0.5);          // notches are deepest at mix 0.5
+        if (s <= 1) { if (m <= 0.5) e["mix"] = m * s; else fade = true; }
+        else { e["mix"] = m + (0.5 - m) * std::min (1.0, up); e["fb"] = std::min (0.85, get (e, "fb", 0.3) + 0.35 * up); }
+    }
+    else if (f == "filtersweep") { fade = true; if (up > 0) { e["q"] = std::min (16.0, get (e, "q", 4.0) * (1 + up)); e["fmin"] = std::max (40.0, get (e, "fmin", 300.0) / (1 + 0.6 * up)); } }
+    else if (f == "tremolo" || f == "autopan") mul ("amp_db", 0.0, 0.0, 30.0);
+    else if (f == "width") mul ("amount", 0.5, 0.0, 2.0);
+    else if (f == "haas") e["lag"] = get (e, "lag", 0) * s;
+    else if (f == "delay") { mul ("mix", 0.4, 0.0, 1.2); if (up > 0) e["fb"] = std::min (0.88, get (e, "fb", 0.4) + 0.15 * up); }
+    else if (f == "reverb") { mul ("mix", 0.35, 0.0, 0.92); if (up > 0) e["rt60"] = get (e, "rt60", 1.8) * (1 + 0.3 * up); }
+    else if (f == "distortion")
+    {
+        const double d0 = get (e, "top", -1) >= 0 ? distortionDriveFor (prev.mid(), get (e, "top", 0), get (e, "kind", 1) > 0.5) : get (e, "drive", 8);
+        e["drive"] = std::clamp (std::pow (std::max (1.0, d0), s) * get (e, "drive_scale", 1.0), 0.5, 200.0); e["top"] = -1; fade = true;
+    }
+    else if (f == "bitcrush") { e["bits"] = std::max (2.0, 16 - s * (16 - get (e, "bits", 6))); e["down"] = std::max (1.0, 1 + s * (get (e, "down", 4) - 1)); fade = true; }
+    else if (f == "saturation") { mul ("drive", 8.0, 0.0, 40.0); fade = true; }
+    else if (f == "exciter") mul ("amount", 0.3, 0.0, 2.0);
+    else if (f == "ringmod") mul ("mix", 0.8, 0.0, 1.0);
+    else if (f == "filter")
+    {
+        fade = true;
+        if (up > 0)
+        {
+            const int t = (int) std::lround (get (e, "type", 2)); const double c = get (e, "cutoff", 1500.0);
+            if (t == 2) e["cutoff"] = std::max (40.0, c / (1 + up)); else if (t == 1) e["cutoff"] = std::min (16000.0, c * (1 + up));
+            e["resonance"] = std::min (12.0, get (e, "resonance", 0.707) * (1 + 0.6 * up));
+        }
+    }
+    else if (f == "stutter") mul ("prob", 0.4, 0.0, 1.0);
+    else if (f == "gatedrhythm") { const double d = get (e, "depth", 1.0) * s; e["depth"] = std::min (1.0, d); if (d > 1) e["duty"] = std::max (0.08, get (e, "duty", 0.5) * (1 - 0.35 * std::min (1.0, d - 1))); }
+    Stereo y = applyEffect (f, prev, e);
+    const double r0 = prev.rms(), r1 = y.rms(), k = r1 > 1e-12 ? r0 / r1 : 1.0, w = fade ? std::min (1.0, s) : 1.0;
+    for (size_t i = 0; i < y.size(); ++i) { y.l[i] = prev.l[i] + w * (k * y.l[i] - prev.l[i]); y.r[i] = prev.r[i] + w * (k * y.r[i] - prev.r[i]); }
+    return y;
+}
+
+// Look-ahead peak limiter (5 ms ahead, 80 ms release, both channels together): loud results are held under
+// the ceiling without clipping, and the level no longer jumps from one render to the next.
+inline void limit (Stereo& y, double ceiling = 0.98)
+{
+    const long n = (long) y.size(), L = 240; if (n == 0 || y.peak() <= ceiling) return;
+    Vec g ((size_t) n); for (long i = 0; i < n; ++i) { const double p = std::max (std::abs (y.l[(size_t) i]), std::abs (y.r[(size_t) i])); g[(size_t) i] = p > ceiling ? ceiling / p : 1.0; }
+    Vec m ((size_t) n); std::vector<long> dq; size_t head = 0;      // minimum over [i, i + L]
+    for (long i = n - 1; i >= 0; --i)
+    {
+        while (dq.size() > head && g[(size_t) dq.back()] >= g[(size_t) i]) dq.pop_back();
+        dq.push_back (i); while (dq[head] > i + L) ++head;
+        m[(size_t) i] = g[(size_t) dq[head]];
+    }
+    const double c = std::exp (-1.0 / (0.08 * SR)); double r = 1.0;
+    for (long i = 0; i < n; ++i) { r = m[(size_t) i] < r ? m[(size_t) i] : c * r + (1 - c) * m[(size_t) i]; m[(size_t) i] = r; }
+    double acc = 0; for (long i = 0; i < n; ++i)
+    {
+        acc += m[(size_t) i]; if (i >= L) acc -= m[(size_t) (i - L)];
+        const double a = acc / (double) std::min (i + 1, L);
+        y.l[(size_t) i] *= a; y.r[(size_t) i] *= a;
+    }
+}
+
 } // namespace dr
