@@ -196,7 +196,10 @@ Numbers of the final code at the default Sureness (100 = the dry sound again, 0 
   on a whole sound from 71 to 74 and 81 to 82. Of the 34 gates that are shown, 22 are taken out better by a
   point or more (the largest gains are 26, 17 and 12) and one worse (by 1.4). Of the tremolos one moved (67 to
   72). Pans are not touched.
-- Time: TODO-TIME
+- Time (four cores, an idle machine, `timing.py`): for every second of a long sound the level engine takes 0.06 s
+  (0.03 to 0.07 on eight clean sounds of 20 to 62 s) and the app with all its engines 0.8 s (0.5 to 0.9), so a
+  sound of a minute is looked through in 44 to 48 s, of which the level engine uses 4. A sound of 6 s takes the
+  level engine 0.2 s (0.15 to 0.26) and the app 3 to 5.5 s.
 
 The second draw (`SEED=1`: other sounds, other settings; no wandering speeds or slow pans in it):
 
@@ -277,5 +280,5 @@ and the final code on the same sounds (`fast.py`: scores over the whole sound; t
 - `ev.py`: outside effects on 6 s sounds. `others.py`: what the engine says on sounds with other effects.
 - `long.py`, `mk_case.py`, `win.py`, `one.py`: long sounds through `drlevel`. `lsum.py`, `tables.py`: the numbers
   above from the result files. `sub.py`: a part of the cases again; `fast.py`, `fsum.py`: several builds of
-  `drlevel` on the same cases (whole-sound scores only); `merge.py`: rerun rows laid over a run before;
-  `timing.py`: what the analysis costs on an idle machine.
+  `drlevel` on the same cases (whole-sound scores only); `merge.py`: rerun rows laid over a run before; `cmp.py`:
+  two result files of the same set, case by case; `timing.py`: what the analysis costs on an idle machine.

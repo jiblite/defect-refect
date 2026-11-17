@@ -139,14 +139,16 @@ Numbers at the default Sureness, 24 long sounds a set (33 to 62 s, six through e
 - What the test costs on sounds flanged from end to end, where it should leave nothing out: the same six sounds
   are found with and without it; two lose 1 to 2 of 100 (86 to 85 and 32 to 30 taken out), one gains 5 (13 to
   18), three are the same.
-- Analysis of a long clean sound takes TODO-TIME for every second of sound (four cores, both channels at once).
+- Analysis of a long clean sound takes 0.14 s for every second of sound (0.12 to 0.16 on eight sounds of 20 to
+  62 s; four cores, an idle machine, both channels at once).
 
 ## Known limits
 - Light flangers (copy under about 0.35 of the sound) on busy sounds are found on some sounds and not on others.
 - Thru-zero flangers and flangers whose delay stays under 1.3 ms are not found.
 - One copy per channel; a flanger with a wandering (not periodic) movement is taken out as tracked, and goes onto
   another sound as tracked, without a curve to continue it.
-- Analysis takes 4.5 to 6.5 s for a 6 s sound that has a line to follow up, 1.4 to 2.8 s for one that has none.
+- Analysis takes 1.2 to 1.9 s for a 6 s sound that has a line to follow up, 0.75 to 1.1 s for one that has none
+  (four cores, an idle machine; the eight flanged sounds of the scoreboard and four clean ones).
 
 ## Files
 - `sweep.py`: the prototype. `lab.py`: helpers for loading cases and plotting (not part of the engine).
