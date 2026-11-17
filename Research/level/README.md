@@ -196,8 +196,57 @@ Numbers of the final code at the default Sureness (100 = the dry sound again, 0 
   on a whole sound from 71 to 74 and 81 to 82. Of the 34 gates that are shown, 22 are taken out better by a
   point or more (the largest gains are 26, 17 and 12) and one worse (by 1.4). Of the tremolos one moved (67 to
   72). Pans are not touched.
-TODO-S1
 - Time: TODO-TIME
+
+The second draw (`SEED=1`: other sounds, other settings; no wandering speeds or slow pans in it):
+
+| set                          | sounds | shown | taken out: median, where shown | onto a second sound | worse than nothing |
+|------------------------------|--------|-------|--------------------------------|---------------------|--------------------|
+| clean                        | 48     | 0     |                                |                     |                    |
+| whole sound: tremolo         | 32     | 20    | 86, 90                         | 89, 94              | 0                  |
+| whole sound: auto pan        | 32     | 32    | 95, 95                         | 97, 97              | 0                  |
+| whole sound: gate            | 24     | 24    | 71, 71                         | 80, 80              | 0                  |
+| one half: tremolo            | 16     | 13    | 89, 90                         | 92, 93              | 0                  |
+| one half: auto pan           | 16     | 14    | 90, 90                         | 93, 94              | 0                  |
+| one half: gate               | 12     | 12    | 72, 72                         | 83, 83              | 0                  |
+
+- Clean: three of the 48 are offered at the lowest Sureness. Of the tremolos on a whole sound that are not shown,
+  four are offered at a lower Sureness.
+- Stretch by stretch, 6 s stretches under 50: 4 % (tremolo), 1 % (auto pan), 28 % (gate).
+- One half: the half without the effect comes back unchanged in 36 of the 39 sounds that are shown; in the other
+  three the difference to the input is at -70, -44 and -32 dB.
+- For gates this draw is not a fair test any more. As first run it had the gates on one half at 61 taken out and
+  72 onto a second sound, one of them far worse than nothing (-40 and -53: a hard gate's clicks stood in the
+  shape and were lifted), the half without the effect changed in five sounds instead of three (in one the gate's
+  end was found late and the clean half was lifted, -2 dB), and the gates on a whole sound at 66 and 79. The three faults behind that
+  are the ones in the method above (the clicks, the open level, the clock), and they were mended on this draw: of
+  its 36 gates 27 are taken out better by a point or more (the largest gains are 57, 46, 24 and 16), two worse (by
+  2.0 and 1.2). Three tremolos moved (71 to 82, 58 to 64, 92 to 90). The pan rows are as first run.
+
+The third draw (`SEED=2`) was made after that, tremolo and gate cases only, with the code before the three fixes
+and the final code on the same sounds (`fast.py`: scores over the whole sound; the code before in brackets):
+
+| set                       | sounds | shown   | taken out: median, where shown | onto a second sound | worse than nothing     |
+|---------------------------|--------|---------|--------------------------------|---------------------|------------------------|
+| whole sound: tremolo      | 32     | 25 (25) | 86, 90 (86, 90)                | 90, 93 (90, 93)     | 1 (1)                  |
+| whole sound: gate         | 24     | 23 (23) | 54, 54 (45, 46)                | 73, 73 (71, 72)     | 1 onto (1, and 1 onto) |
+| one half: tremolo         | 16     | 9 (9)   | 75, 90 (75, 85)                | 79, 94 (79, 94)     | 0 (0)                  |
+| one half: gate            | 12     | 11 (11) | 68, 73 (52, 53)                | 87, 88 (76, 77)     | 0 (2)                  |
+| wandering speed: tremolo  | 8      | 8 (8)   | 24, 24 (24, 24)                | 1, 1 (1, 1)         | 1, and 4 onto (same)   |
+
+- Of the 34 gates that are shown, 30 are taken out better by a point or more with the final code (the largest
+  gains are 62, 49, 45 and 38) and none worse by a point. One of the four faults mended in the last round was
+  found here: with the gate's steps seen finely in one piece only, leaving the coarse pieces out of the clock had
+  switched off the rules that depend on a steady clock. One gate had lost 4 points by that against the code
+  before; with the rules back it gains 1, a second gate goes from 72 to 75, and a gate that is only offered at a
+  lower Sureness from 6 to 63.
+- This draw is harder for gates on a whole sound than the first two (54 against 74 and 71), and it has what they
+  did not show: one gated sound of 20 s is shown as a slow AUTO PAN instead of a gate (the clips it is made of
+  differ in balance; taking that "pan" out makes it a little worse, -5); a gate with a pattern goes onto the
+  second sound at -31 (see the limits); one tremolo that is just over the default Sureness is taken out at -12;
+  and four of the eight tremolos with a wandering speed go onto a second sound worse than nothing (-1 to -8).
+- One half: the half without the effect comes back unchanged in 7 of 9 sounds with a tremolo and 8 of 11 with a
+  gate; the others are at -73 and -62 dB, and at -67, -25 and -20 dB.
 
 ## Known limits
 - A tremolo of a few dB on a busy sound, and any sawtooth that falls, is not found at the default Sureness.

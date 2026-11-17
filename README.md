@@ -104,15 +104,25 @@ Long sounds (20 to 62 s, test clips laid end to end; `Research/level/long.py`), 
   five the border sits a little off and it is at -73 to -35 dB);
 - slow pans, 3 to 23 s a cycle: shown on 21 of 24 and taken out at 94; the other three pass about once in their
   sound and are offered at a lower Sureness (see the limits);
-- 48 clean long sounds: nothing shown.
-TODO-S1
+- 48 clean long sounds: nothing shown;
+- a second draw of such sounds gives the same picture: shown on 76 of 88 and 39 of 44, taken out at 86, 95 and
+  71 and at 84 on one half, none worse than it went in, the half without the effect unchanged in 36 of the 39,
+  nothing shown on 48 clean ones. That draw brought out three faults with gates (a hard gate's clicks, its open
+  level, its place in time on long sounds), which were mended on it: as first run its gates on one half came out
+  at 61 and one far worse than it went in;
+- a third draw, made after that for tremolos and gates: gates come out at 54 on a whole sound and at 68 on one
+  half (the code before the fixes: 45 and 52, two worse than they went in, now none), tremolos at 86 and 75 as
+  before. What went wrong there: one tremolo comes out worse than it went in (-12), one gated sound is shown as
+  a slow AUTO PAN instead of a gate, and a gate with a pattern goes onto a second sound badly (-31).
 
 Known limits: a tremolo of a few dB on a busy sound and a sawtooth that falls (a level that jumps up and sinks
 back is what struck notes do) are not shown at the default Sureness; a movement from side to side that the sound
 shows only once is offered at a lower Sureness, because something that passes by does the same; one movement per
 sound; nothing faster than 16.7 times a second; a gate that closes fully is left closed (what is under it is as
-likely noise); a tremolo whose speed wanders is taken out less well (67 where shown) and goes onto a second
-sound poorly. Method, numbers and limits: `Research/level/README.md`.
+likely noise); a gate with a pattern (some steps of the bar stay open) is followed step by step only where a
+stretch of the sound shows the gate by itself, and its pattern is not carried on onto a second sound; a tremolo
+whose speed wanders is taken out less well (67 and 24 where shown, on two draws) and goes onto a second sound
+poorly. Method, numbers and limits: `Research/level/README.md`.
 
 **Flanger (new engine in 0.4.3):** a flanger is the sound plus a copy of itself whose delay moves. The copy
 leaves a line in the picture of the sound's short-time cepstrum, at its delay, as high as its gain. The engine
