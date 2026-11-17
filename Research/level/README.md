@@ -172,17 +172,17 @@ Numbers of the final code at the default Sureness (100 = the dry sound again, 0 
 | clean                        | 48     | 0     |                                |                     |                    |
 | whole sound: tremolo         | 32     | 27    | 88, 89                         | 92, 93              | 1 (-4)             |
 | whole sound: auto pan        | 32     | 31    | 94, 94                         | 97, 97              | 0                  |
-| whole sound: gate            | 24     | 23    | 71, 71                         | 81, 82              | 0                  |
+| whole sound: gate            | 24     | 23    | 74, 74                         | 82, 82              | 0                  |
 | one half: tremolo            | 16     | 9     | 78, 83                         | 82, 90              | 0                  |
 | one half: auto pan           | 16     | 16    | 92, 92                         | 93, 93              | 0                  |
-| one half: gate               | 12     | 11    | 67, 69                         | 75, 76              | 0                  |
+| one half: gate               | 12     | 11    | 73, 76                         | 84, 84              | 0                  |
 | wandering speed: tremolo     | 8      | 5     | 37, 67                         | 4, 19               | 1 (onto)           |
 | wandering speed: auto pan    | 8      | 8     | 89, 89                         | 84, 84              | 0                  |
 | slow pans (3 to 23 s)        | 24     | 21    | 94, 94                         | 94, 95              | 0                  |
 
 - Clean: two of the 48 are offered at the lowest Sureness (a "pan" of 3 dB once in 23 to 29 s).
 - Whole sound, stretch by stretch: of the 6 s stretches of the sounds that are shown, 9 % (tremolo), 2 % (auto
-  pan) and 19 % (gate) come out under 50.
+  pan) and 18 % (gate) come out under 50.
 - One half: the half without the effect comes back unchanged in 31 of the 36 sounds that are shown (the difference
   to the input is at -172 to -200 dB); in five the border sits a little off and it is at -73 to -35 dB.
 - Slow pans: the three that are not shown pass 1.2, 1.2 and 0.9 times in their sound and are offered at a
@@ -191,6 +191,11 @@ Numbers of the final code at the default Sureness (100 = the dry sound again, 0 
   rule of step 3, the least share) brought back a fast pan the long look had lost (0 to 92) and lifted six more
   pans (by 1 to 20); the gate choice lifted three gates (by 4 to 8); the pan seen once took the three slow pans
   above from shown to offered; every other case is the same.
+- What the last round did (a gate's clicks, its open level, the clock: found on the second draw below), against
+  the run before it: gates on one half went from 67 to 73 taken out and from 75 to 84 onto a second sound, gates
+  on a whole sound from 71 to 74 and 81 to 82. Of the 34 gates that are shown, 22 are taken out better by a
+  point or more (the largest gains are 26, 17 and 12) and one worse (by 1.4). Of the tremolos one moved (67 to
+  72). Pans are not touched.
 TODO-S1
 - Time: TODO-TIME
 

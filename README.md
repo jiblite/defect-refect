@@ -97,9 +97,9 @@ and put onto the case's other sound at 98 (64 and 71); TREMOLO on 5 of 8, 85 and
 none of the three groups is shown.
 
 Long sounds (20 to 62 s, test clips laid end to end; `Research/level/long.py`), at the default Sureness:
-- the effect on the whole sound: shown on 81 of 88, taken out at 88 (tremolo), 94 (auto pan) and 71 (gate) in the
+- the effect on the whole sound: shown on 81 of 88, taken out at 88 (tremolo), 94 (auto pan) and 74 (gate) in the
   median; one sound comes out a little worse than it went in (a tremolo, -4);
-- the effect on one half: shown on 36 of 44 and taken out at 77, none worse than it went in, and the half without
+- the effect on one half: shown on 36 of 44 and taken out at 80, none worse than it went in, and the half without
   the effect comes back unchanged in 31 of the 36 (the difference to the input is under -170 dB; in the other
   five the border sits a little off and it is at -73 to -35 dB);
 - slow pans, 3 to 23 s a cycle: shown on 21 of 24 and taken out at 94; the other three pass about once in their
