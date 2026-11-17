@@ -76,3 +76,7 @@ add_executable(drlevel Tests/level.cpp)
 # The moving-filter engine (flanger) without the UI (no JUCE): Tests/sweep.cpp
 add_executable(drsweep Tests/sweep.cpp)
 target_link_libraries(drsweep PRIVATE Threads::Threads)       # left and right are measured at the same time
+
+# The moving-tone engine (phaser, filter sweep) without the UI (no JUCE): Tests/moving.cpp
+add_executable(drmoving Tests/moving.cpp)
+target_link_libraries(drmoving PRIVATE Threads::Threads)      # left and right are read at the same time
