@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(DefectRefect VERSION 0.4.2 LANGUAGES C CXX)
+project(DefectRefect VERSION 0.4.3 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -69,3 +69,10 @@ add_executable(drecho Tests/echo.cpp)
 
 # The verification step without the UI (no JUCE): Tests/verify.cpp
 add_executable(drverify Tests/verify.cpp)
+
+# The level-movement engine without the UI (no JUCE): Tests/level.cpp
+add_executable(drlevel Tests/level.cpp)
+
+# The moving-filter engine (flanger) without the UI (no JUCE): Tests/sweep.cpp
+add_executable(drsweep Tests/sweep.cpp)
+target_link_libraries(drsweep PRIVATE Threads::Threads)       # left and right are measured at the same time

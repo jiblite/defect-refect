@@ -3,6 +3,7 @@
 // frequency curve, a reverb's decay, a delay's echoes...), drawn from the settings the faders
 // currently give. Plain data; the app only draws it.
 
+#include <algorithm>
 #include <array>
 #include <cstdio>
 
@@ -23,6 +24,7 @@ struct Plot
 
 namespace disp
 {
+inline std::string timeText (double sec) { const int t = (int) std::floor (sec + 0.5); return std::to_string (t / 60) + ":" + (t % 60 < 10 ? "0" : "") + std::to_string (t % 60); }     // a time in a sound as M:SS
 inline std::string num (double v, int dec = 1) { char b[64]; std::snprintf (b, sizeof b, "%.*f", dec, v); return b; }
 inline std::string hz (double f) { return f >= 1000 ? num (f / 1000, f >= 10000 ? 0 : 1) + " kHz" : num (f, 0) + " Hz"; }
 inline std::complex<double> biq (const fx::Biquad& q, double f)
@@ -190,6 +192,89 @@ inline Plot echoPlot (const FoundFx& F, const Params& p, double s, bool onSecond
     P.caption = c; return P;
 }
 
+// The found level movement (level engine): the gain in dB over two cycles as the faders have it, its top at 0 dB;
+// teal = left and orange = right when the sides move against each other. A pan seen less than twice is drawn as the
+// course that was measured over the sound.
+inline Plot levelPlot (const FoundFx& F, const Params& p, double s, bool onSecond)
+{
+    using namespace disp;
+    Plot P; P.title = F.title; if (F.level == nullptr || ! F.level->found || F.level->best() == nullptr) return P;
+    const level::Movement& M = *F.level; const level::Found& f = *M.best(); const double speed = levelSpeed (p), amount = std::max (s, 0.0);
+    const bool course = ! f.lane[0].empty();
+    const double span = course ? (double) f.lane[0].size() * level::HOP / SR : 2.0 * f.period;
+    P.x0 = 0; P.x1 = span; P.xLabel = "s"; P.yLabel = "dB"; P.xTicks = ticks (0, span);
+    const level::GainAt at (f); const int N = 600; double low = 0;
+    Curve cl, cr; cl.colour = 0; cr.colour = 1;
+    for (int i = 0; i <= N; ++i)
+    {
+        const double t = span * i / N; double gl, gr, ol, orr; at (t * SR * speed, gl, gr); at (t * SR, ol, orr);
+        cl.pts.push_back ({ t, amount * gl }); cr.pts.push_back ({ t, amount * gr }); low = std::min ({ low, ol, orr, amount * gl, amount * gr });      // the axis holds the movement as found too
+    }
+    P.y1 = 3; P.y0 = std::clamp (std::floor (1.15 * low - 1.0), -72.0, -6.0);
+    const double step = P.y0 < -40 ? 12 : P.y0 < -16 ? 6 : 3; for (double d = 0; d > P.y0 + 0.3 * step; d -= step) P.yTicks.push_back (d);
+    for (Curve* c : { &cl, &cr }) for (auto& q : c->pts) q.second = std::max (q.second, P.y0);
+    P.curves.push_back (cl); if (M.against) P.curves.push_back (cr);
+    const double rate = f.rate * speed, depth = f.depth * amount; std::string c;
+    if (M.against)
+        c = course ? "Moves from side to side about once in " + num (f.period / speed, 1) + " s, " + (depth >= 40 ? std::string ("all the way to each side") : "up to " + num (depth) + " dB between the sides") + " (teal left, orange right). Seen less than twice: drawn as it was measured."
+                   : "Moves between the sides " + num (rate, 2) + " times a second, " + (depth >= 40 ? std::string ("all the way to each side") : "up to " + num (depth) + " dB between them") + " (teal left, orange right).";
+    else if (M.steps) c = "Opens and closes " + num (rate, 2) + " times a second, " + num (depth) + " dB down when closed" + (f.skip.empty() ? "." : ", some steps left out.");
+    else c = "The level goes down by " + num (depth) + " dB and back " + num (rate, 2) + " times a second.";
+    {                                                                  // where in the sound it is, when that is not all of it
+        const double all = (double) M.n / SR; double in = 0; for (const level::Span& sp : M.spans) in += (double) (sp.b - sp.a) / SR;
+        if (! M.spans.empty() && in < 0.97 * all && all >= 1.0)
+        {
+            const std::string where = onSecond ? "On the first sound it is there " : "It is there ", rest = onSecond ? "; it goes onto the second sound at the same times." : "; the rest of the sound is left alone.";
+            if (M.spans.size() == 1) c += " " + where + "from " + timeText ((double) M.spans[0].a / SR) + " to " + timeText ((double) M.spans[0].b / SR) + rest;
+            else c += " " + where + "on " + num (in, 0) + " of " + num (all, 0) + " s, in " + std::to_string (M.spans.size()) + " stretches" + rest;
+        }
+    }
+    if (amount < 1e-3) c += onSecond ? " Amount at zero: not put on the second sound." : " Amount at zero: taken out.";
+    P.caption = c; return P;
+}
+
+// The flanger engine's group: the copy's delay over time as the faders have it (teal left, orange right).
+inline Plot flangerPlot (const FoundFx& F, const Params& p, double s, bool onSecond)
+{
+    using namespace disp;
+    Plot P; P.title = F.title; if (F.sweep == nullptr || ! F.sweep->found) return P;
+    const sweep::Result& R = *F.sweep; const double speed = sweepSpeed (p), reach = sweepReach (p), fbAdd = sweepFeedback (p), amount = std::max (s, 0.0);
+    const int c0 = R.has[0] ? 0 : 1; const sweep::Found& f = R.ch[c0]; const int T = (int) f.d.size(); if (T < 2) return P;
+    const bool periodic = f.curve.valid; const double all = (double) T / sweep::FPS;
+    // where along the first sound the copy is: the picture starts at its longest stretch
+    const auto spans = sweep::where (R); double in = 0, from = 0, longest = 0;
+    for (const auto& sp : spans) { const double len = (double) (sp.second - sp.first) / SR; in += len; if (len > longest) { longest = len; from = (double) sp.first / SR; } }
+    const bool part = ! spans.empty() && in < 0.97 * (double) R.n / SR;
+    const double span = periodic && f.curve.rate * speed > 1e-6 ? std::clamp (2.0 / (f.curve.rate * speed), 0.5, std::max (0.5, all)) : std::min (part ? std::max (longest, 2.0) : all, 12.0);
+    const int n = std::max (2, (int) std::ceil (span * sweep::FPS)), off = part && ! periodic ? (int) (from * sweep::FPS / std::max (speed, 1e-3)) : 0; double hi = 0, lo = 1e9; Vec seen;
+    for (int c = 0; c < 2; ++c)
+    {
+        if (! R.has[c] || (c == 1 && R.has[0] && R.ch[0].d == R.ch[1].d && speed == 1.0 && reach == 1.0)) continue;
+        const Vec d = sweep::movement (R.ch[c], off + n, speed, reach); Curve cv; cv.colour = c;
+        for (int t = 0; t < n; ++t) { const double ms = d[(size_t) (off + t)] / SR * 1e3; cv.pts.push_back ({ (double) (off + t) / sweep::FPS, ms }); hi = std::max (hi, ms); lo = std::min (lo, ms); seen.push_back (ms); }
+        P.curves.push_back (cv);
+    }
+    P.x0 = (double) off / sweep::FPS; P.x1 = (double) (off + n - 1) / sweep::FPS; P.y0 = 0; P.y1 = std::max (1.0, hi * 1.2); P.xLabel = "s"; P.yLabel = "ms"; P.xTicks = ticks (P.x0, P.x1); P.yTicks = ticks (P.y0, P.y1);
+    if (! periodic && seen.size() >= 200)       // a free line: the caption's range leaves out its outermost hundredths (the first frames of a stretch can be off)
+    {
+        std::sort (seen.begin(), seen.end()); const size_t k = seen.size() / 100;
+        lo = seen[k]; hi = seen[seen.size() - 1 - k];
+    }
+    const double g = std::clamp (amount * std::abs (f.g), 0.0, 0.98), fb = std::clamp (f.fb + fbAdd, -0.9, 0.9);
+    std::string c = "A copy of the sound at " + num (g * 100, 0) + "% of its level" + (f.g < 0 ? " (flipped)" : "") + ", its delay moving between " + num (lo, 2) + " and " + num (hi, 2) + " ms";
+    c += periodic ? ", " + num (f.curve.rate * speed, 2) + " times a second" : ", freely";
+    if (std::abs (fb) >= 0.05) c += ", feedback " + num (std::abs (fb) * 100, 0) + "%";
+    c += P.curves.size() > 1 ? " (teal left, orange right)." : ".";
+    if (part)           // a flanger on a part of the first sound: taken out there only; onto a second sound it goes all the way
+    {
+        const std::string where = onSecond ? "On the first sound it is there " : "It is there ", rest = onSecond ? "; it goes onto the whole of the second sound." : "; the rest of the sound is left alone.";
+        if (spans.size() == 1) c += " " + where + "from " + timeText ((double) spans[0].first / SR) + " to " + timeText ((double) spans[0].second / SR) + rest;
+        else c += " " + where + "on " + num (in, 0) + " of " + num ((double) R.n / SR, 0) + " s, in " + std::to_string (spans.size()) + " stretches" + rest;
+    }
+    if (amount < 1e-3) c = onSecond ? "Amount at zero: not put on the second sound." : "Amount at zero: the copy is taken out.";
+    P.caption = c; return P;
+}
+
 // s: the effect's Amount fader (0..2); p: its settings with the settings faders applied. onSecond: the effect
 // goes onto a second sound (only the room's picture depends on it).
 inline Plot makePlot (const FoundFx& F, const Params& scaledP, double s, bool onSecond = false)
@@ -198,6 +283,8 @@ inline Plot makePlot (const FoundFx& F, const Params& scaledP, double s, bool on
     if (F.room != nullptr) return roomPlot (F, scaledP, s, onSecond);
     if (F.tone != nullptr) return tonePlot (F, scaledP, s, onSecond);
     if (F.echo != nullptr) return echoPlot (F, scaledP, s, onSecond);
+    if (F.level != nullptr) return levelPlot (F, scaledP, s, onSecond);
+    if (F.sweep != nullptr) return flangerPlot (F, scaledP, s, onSecond);
     const std::string& f = F.name; Plot P; P.title = F.title;
     bool fade = false; const Params e = mapAmount (f, scaledP, std::max (s, 0.0), fade); const double w = fade ? std::min (1.0, s) : 1.0;
     auto g = [&] (const char* k, double d) { return get (e, k, d); };

@@ -5,6 +5,8 @@
 // own engines (RoomEngine.h, Tone.h, Echo.h); their groups are built here.
 
 #include "Echo.h"
+#include "Level.h"
+#include "Sweep.h"
 #include "Effects.h"
 #include "Hand.h"
 #include "Inspector.h"
@@ -309,6 +311,8 @@ struct FoundFx
     std::shared_ptr<const room::Found> room;   // a reverb the room engine found: its faders work that engine (see roomFx)
     std::shared_ptr<const tone::Found> tone;   // a group of the tone engine (COMB FILTER, TONE MATCH): what it found on the first sound
     std::shared_ptr<const echo::Found> echo;   // the echoes the echo engine found: its faders work that engine (see echoFx)
+    std::shared_ptr<const level::Movement> level;   // the level movement the level engine found (TREMOLO, AUTO PAN, GATED RHYTHM): its faders work that engine (see levelFx)
+    std::shared_ptr<const sweep::Result> sweep;     // the moving copy the flanger engine found: its faders work that engine (see flangerFx)
     Vec curveL, curveR;                        // TONE MATCH, for the picture and Export IR: the curves of the last render (left, right; Amount in the middle)
     Vec foundL, foundR;                        // the same with Detail in the middle too
 };
@@ -634,6 +638,59 @@ inline EchoIr echoIr (const echo::Found& f, const Params& p)
     return out;
 }
 
+// ---------------------------------------------------------------- the level engine's groups (Level.h)
+// TREMOLO, AUTO PAN and GATED RHYTHM: a gain that moves and repeats, as the level engine measured it on the sound
+// (the period, the shape over one cycle for each side, a gate's steps to a fraction of a millisecond). Left and
+// right moving against each other is AUTO PAN; both together is GATED RHYTHM when the shape has steep steps and
+// TREMOLO otherwise.
+// Amount: on the sound itself 0 = taken out (the sound lifted by what the gain took), 1 = untouched, 2 = twice as
+// deep; on a second sound 0 = none, 1 = as found, 2 = twice as deep (all in dB). Speed: half to double; on the sound
+// itself a changed speed means the found movement out and the new one in.
+inline const char* levelName (const level::Movement& m) { return m.against ? "autopan" : (m.steps ? "gatedrhythm" : "tremolo"); }
+inline FoundFx levelFx (std::shared_ptr<const level::Movement> found, double prob)
+{
+    FoundFx F; F.name = levelName (*found); F.title = titleFor (F.name); F.prob = prob; F.level = std::move (found); F.est = { { "speed", 1.0 } };
+    Knob a; a.id = F.name + ".amount"; a.label = "Amount"; a.neutral = 0; a.lo = 0; a.hi = 2;
+    Knob s; s.key = "speed"; s.id = F.name + ".speed"; s.label = "Speed"; s.neutral = 0; s.lo = 0; s.hi = 2; s.ownTip = true;
+    s.tip = "How fast the movement goes. Middle = as found. Left = slower, down to half. Right = faster, up to twice.";
+    F.knobs = { a, s }; return F;
+}
+// The Speed fader (0 .. 2, 1 = as found) as a factor: half to double.
+inline double levelSpeed (const Params& p) { return std::pow (2.0, std::clamp (get (p, "speed", 1.0), 0.0, 2.0) - 1.0); }
+// The level engine's verdict goes into the inspection: of the three groups only the one it found can show.
+inline void mergeLevel (Inspection& I, const level::Movement& m)
+{
+    for (const char* f : { "tremolo", "autopan", "gatedrhythm" }) I.prob[f] = level::sureNone;
+    if (m.found) I.prob[levelName (m)] = m.sure;
+}
+
+// ---------------------------------------------------------------- the flanger engine's group (Sweep.h)
+// FLANGER: the copy of the sound whose delay moves, as the flanger engine measured it. Amount: on the sound itself 0 =
+// the copy taken out, 1 = untouched, 2 = the copy twice as loud; on a second sound 0 = none, 1 = as found, 2 = twice
+// as loud. Speed: the sweep half to twice as fast. Sweep: how far the delay moves (0 = it stands still at its middle,
+// 2 = twice as far). Feedback: less or more ringing than found. On the sound itself a moved setting means the found
+// copy out and the new one in.
+constexpr double sweepSure = 0.9;                                       // the flanger engine's rule says yes or no: a yes stands here on the Sureness scale
+inline FoundFx flangerFx (std::shared_ptr<const sweep::Result> found, double prob)
+{
+    FoundFx F; F.name = "flanger"; F.title = titleFor (F.name); F.prob = prob; F.sweep = std::move (found); F.est = { { "speed", 1.0 }, { "sweep", 1.0 }, { "feedback", 1.0 } };
+    auto K = [] (const char* key, const char* label, const char* tip) { Knob k; k.key = key; k.id = std::string ("flanger.") + key; k.label = label; k.tip = tip; k.neutral = 0; k.lo = 0; k.hi = 2; k.ownTip = true; return k; };
+    Knob a; a.id = "flanger.amount"; a.label = "Amount"; a.neutral = 0; a.lo = 0; a.hi = 2;
+    F.knobs = { a, K ("speed", "Speed", "How fast the comb sweeps. Middle = as found. Left = slower, down to half. Right = faster, up to twice."),
+                K ("sweep", "Sweep", "How far the comb moves. Middle = as found. Left = less, down to a comb that stands still. Right = further, up to twice as far."),
+                K ("feedback", "Feedback", "How much the comb rings. Middle = as found. Left = less. Right = more.") };
+    return F;
+}
+// The faders (0 .. 2, 1 = as found) as the engine takes them: the speed as a factor (half to double), the sweep's
+// reach as a factor (0 .. 2), the feedback as what is added to the found one (-0.5 .. +0.5).
+inline double sweepSpeed (const Params& p) { return std::pow (2.0, std::clamp (get (p, "speed", 1.0), 0.0, 2.0) - 1.0); }
+inline double sweepReach (const Params& p) { return std::clamp (get (p, "sweep", 1.0), 0.0, 2.0); }
+inline double sweepFeedback (const Params& p) { return 0.5 * (std::clamp (get (p, "feedback", 1.0), 0.0, 2.0) - 1.0); }
+// The flanger engine's verdict goes into the inspection: the FLANGER group shows when the engine found a moving copy.
+// A long sound is measured in pieces: when only one of several shows the copy the report stays under the default Sureness.
+constexpr double sweepAlone = 0.5;
+inline void mergeSweep (Inspection& I, const sweep::Result& r) { I.prob["flanger"] = ! r.found ? level::sureNone : r.sounding >= 2 && r.shown < 2 ? sweepAlone : sweepSure; }
+
 // Settings of each found effect (estimate.estimate, without the slower sweep fit for now).
 inline bool isNewFx (const std::string& f) { return f == "saturation" || f == "exciter" || f == "ringmod" || f == "filter" || f == "stutter" || f == "gatedrhythm"; }
 // One cut for every effect: the Sureness slider. The six 0.2.0 additions needed a higher score while the detectors'
@@ -658,9 +715,12 @@ inline void pruneFound (std::vector<FoundFx>& out)
 // room: what the room engine found on the sound; with a room found, the reverb is that room (roomFx).
 // tone: what the tone engine found on the sound; with reflections found, they are the COMB FILTER group (combFx).
 // echo: what the echo engine found on the sound; with echoes found, they are the DELAY group (echoFx).
+// lvl: what the level engine found on the sound; a movement found is the TREMOLO, AUTO PAN or GATED RHYTHM group (levelFx).
+// swp: what the flanger engine found on the sound; a moving copy found is the FLANGER group (flangerFx).
 inline std::vector<FoundFx> estimate (const Inspection& I, const Stereo& y, double cut = 0.65, const std::set<std::string>* only = nullptr,
                                       const std::shared_ptr<const room::Found>& room = {}, const std::shared_ptr<const tone::Found>& tone = {},
-                                      const std::shared_ptr<const echo::Found>& echo = {})
+                                      const std::shared_ptr<const echo::Found>& echo = {}, const std::shared_ptr<const level::Movement>& lvl = {},
+                                      const std::shared_ptr<const sweep::Result>& swp = {})
 {
     std::vector<FoundFx> out;
     (void) est::pinkProbe ((size_t) (6 * SR));      // built once before the fits run in parallel
@@ -674,6 +734,8 @@ inline std::vector<FoundFx> estimate (const Inspection& I, const Stereo& y, doub
         if (f == "reverb" && room != nullptr && room->found) { out.push_back (roomFx (room, pit->second)); continue; }
         if (f == "comb") { if (tone != nullptr && ! tone->echoes.empty()) out.push_back (combFx (tone)); continue; }
         if (f == "delay") { if (echo != nullptr && echo->any()) out.push_back (echoFx (echo, pit->second)); continue; }
+        if (lvl != nullptr && (f == "tremolo" || f == "autopan" || f == "gatedrhythm")) { if (lvl->found && f == levelName (*lvl)) out.push_back (levelFx (lvl, pit->second)); continue; }
+        if (swp != nullptr && f == "flanger") { if (swp->found) out.push_back (flangerFx (swp, pit->second)); continue; }
         FoundFx F; F.name = f; F.title = titleFor (f); F.prob = pit->second; F.knobs = knobsFor (f); Params& e = F.est;
         if (f == "haas") e["lag"] = (double) hand::gccPhat (y, 30.0).lag;
         else if (f == "width") e["amount"] = std::clamp (S (f, "amount", 0.5), 0.05, 1.2);
@@ -754,7 +816,7 @@ inline Params scaled (const FoundFx& F, const std::map<std::string, double>& fad
         p[k.key] = std::clamp (nv, k.lo, k.hi);
     }
     if (F.name == "tonematch") { auto it = faders.find ("tonematch.detail"); p["detail"] = matchDetailAt (F, it == faders.end() ? 1.0 : it->second); }
-    if (F.name == "flanger" && p["dmin"] >= p["dmax"]) p["dmin"] = p["dmax"] * 0.5;
+    if (F.name == "flanger" && F.sweep == nullptr && p["dmin"] >= p["dmax"]) p["dmin"] = p["dmax"] * 0.5;
     if ((F.name == "phaser" || F.name == "filtersweep") && p["fmin"] >= p["fmax"] * 0.9) p["fmin"] = p["fmax"] * 0.9;
     return p;
 }
@@ -799,6 +861,18 @@ inline Stereo applyTo (const Stereo& target, const std::vector<FoundFx>& found, 
             if (s > 1e-9) { Stereo r = echo::render (y, *F.echo, echoShape (scaled (F, faders), s), false, cancelled); if (r.size() == y.size()) y = std::move (r); }
             continue;
         }
+        if (F.level != nullptr)     // the found level movement on this sound
+        {
+            const double s = amountOf (F, faders);
+            if (s > 1e-9) { Vec gl, gr; level::ontoDb (*F.level, y.size(), s, levelSpeed (scaled (F, faders)), gl, gr); y = level::withDb (y, gl, gr); }
+            continue;
+        }
+        if (F.sweep != nullptr)     // the found moving copy on this sound
+        {
+            const double s = amountOf (F, faders); const Params p = scaled (F, faders);
+            if (s > 1e-9) y = sweep::apply (y, *F.sweep, std::min (s, 2.0), sweepSpeed (p), sweepReach (p), sweepFeedback (p));
+            continue;
+        }
         y = applyAmount (F.name, y, scaled (F, faders), amountOf (F, faders));
     }
     for (auto& F : found)
@@ -821,7 +895,7 @@ inline Stereo applyTo (const Stereo& target, const std::vector<FoundFx>& found, 
 
 // One sound: take the found effects out (left), leave as is (middle) or double (right).
 inline bool canRemove (const std::string& f) { return f != "reverb" && f != "distortion" && f != "bitcrush" && ! isNewFx (f); }
-inline bool canRemove (const FoundFx& F) { return F.room != nullptr || F.tone != nullptr || F.echo != nullptr || canRemove (F.name); }      // the room engine takes its reverb out, the tone engine its reflections, the echo engine its echoes
+inline bool canRemove (const FoundFx& F) { return F.room != nullptr || F.tone != nullptr || F.echo != nullptr || F.level != nullptr || F.sweep != nullptr || canRemove (F.name); }      // the room engine takes its reverb out, the tone engine its reflections, the echo engine its echoes, the level engine its movement, the flanger engine its moving copy
 // The found effect turned down to s (0 = out as far as this effect allows, 1 = untouched).
 inline Stereo takeOut (const FoundFx& F, const Stereo& in, double s)
 {
@@ -868,6 +942,20 @@ inline Stereo reshape (const Stereo& src, const std::vector<FoundFx>& found, con
         {
             // the found echoes out and those the faders give in, as one filter per channel
             Stereo r = echo::render (y, *F.echo, echoShape (scaled (F, faders), s), true, cancelled); if (r.size() == y.size()) y = std::move (r);
+        }
+        else if (F.level != nullptr)
+        {
+            // the found movement out and what the faders give in, as one gain per side; the level engine's answer belongs to this very sound (same length)
+            if (F.level->n == y.size()) { Vec gl, gr; level::ownDb (*F.level, y.size(), s, levelSpeed (scaled (F, faders)), gl, gr); y = level::withDb (y, gl, gr); }
+        }
+        else if (F.sweep != nullptr)
+        {
+            // the found copy out (the exact inverse moving filter) and what the faders give in; the flanger engine's answer belongs to this very sound (same length)
+            if (F.sweep->n == y.size())
+            {
+                const Params p = scaled (F, faders);
+                y = moved || s > 1.0 ? sweep::render (y, *F.sweep, true, s, sweepSpeed (p), sweepReach (p), sweepFeedback (p)) : sweep::apply (y, *F.sweep, s - 1.0);
+            }
         }
         else if (F.name == "tonematch") {}      // two sounds only
         else if (canRemove (F.name))

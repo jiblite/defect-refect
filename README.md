@@ -74,6 +74,60 @@ between 15 and 30 ms nothing looks); a quiet echo (a fifth of the sound's level 
 often not shown at the default Sureness and comes up when Sureness is lowered; an echo that crosses sides on a
 wide stereo sound is not found. Method, numbers and limits: `Research/echo/README.md`.
 
+**Level movement (new engine in 0.4.3):** tremolo, auto pan and a gated rhythm are one thing: a gain that moves
+over time and repeats, on both sides together or on left against right. The engine measures that gain on the
+sound itself (how fast, the shape of one cycle for each side, how deep, a gate's steps to a fraction of a
+millisecond) and the TREMOLO, AUTO PAN and GATED RHYTHM groups work on it:
+- one sound: Amount takes the movement out (the sound is lifted by what the gain took) or deepens it, Speed
+  makes it slower or faster (half to double);
+- two sounds: the movement goes onto the second sound in the first sound's beat, at the times at which the first
+  sound has it;
+- the display shows the gain over two cycles, and says from when to when the movement is there when it is not on
+  all of the sound.
+
+A gain that was put on the sound is told from the sound's own rhythm by two things: it moves all bands by the
+same amount at the same moment, and it repeats exactly. Notes and hits do neither. A sound of 12 s or more is
+measured piece by piece, and every stretch of about a second is asked whether it does what would be taken out, so
+an effect that is on a part of the sound is taken out of that part and the rest is left exactly as it was.
+
+TODO-LEVEL-NUMBERS
+
+Known limits: a tremolo of a few dB on a busy sound and a sawtooth that falls (a level that jumps up and sinks
+back is what struck notes do) are not shown at the default Sureness; one movement per sound; nothing faster than
+16.7 times a second; a gate that closes fully is left closed (what is under it is as likely noise). Method,
+numbers and limits: `Research/level/README.md`.
+
+**Flanger (new engine in 0.4.3):** a flanger is the sound plus a copy of itself whose delay moves. The copy
+leaves a line in the picture of the sound's short-time cepstrum, at its delay, as high as its gain. The engine
+follows that line (delays of 0.2 to 16 ms), reads the copy's gain and feedback, and the FLANGER group works on
+what was read:
+- one sound: Amount takes the copy out with the exact inverse of the moving filter, or makes it louder; Speed,
+  Sweep and Feedback change the movement, how far the delay travels and how much it rings;
+- two sounds: the same moving filter goes onto the second sound, moving as it does on the first;
+- the display shows the copy's delay over time, and says from when to when the copy is there when it is not on
+  all of the sound (a line under the waveform shows it too).
+
+A line is followed through the whole sound, also through a stretch that has no flanger, where it would hold on
+to whatever the picture has. So every half second is asked two things the rule asks of the whole sound: is there
+a moving line (a copy's line is smooth; a made-up one wanders), and does taking the copy out lower the level by
+what a copy adds? The inverse filter works only where the answer is yes: a flanger that comes in halfway is taken
+out from there, and the rest of the sound is left exactly as it was. A sound of 24 s or more is measured in
+pieces of 12 to 24 s. Onto a second sound the flanger goes all the way.
+
+On the scoreboard's eight cases with a flanger from outside effects (sounds of 6 s) the app shows the FLANGER
+group on 4 at the default Sureness (build 0.4.2: none), takes 91, 89, 96 and 39 of 100 out and puts 91, 91, 94
+and 27 onto the case's other sound. Not shown: the two thru-zero cases, a setting whose delay moves by 4 samples
+only, and a light copy (a quarter of the sound's level). On the 198 clean sounds of the corpus it shows a flanger
+on none. Long sounds (33 to 62 s, 24 a set): no flanger on 24 clean ones; on 24 flanged from end to end it is
+shown on 3 (93, 85 and 30 of 100 taken out) and found on 3 more when Sureness is lowered, and none comes out
+worse than it went in; on 24 flanged in one half it is shown on 4 (65, 75, 63 and -5 taken out), and the clean
+half comes back as it went in. A piece of a long flanged sound shows the copy in 16 % of the cases, so on long
+sounds a flanger is found less often than on short ones.
+
+Known limits: a light flanger on a busy sound is found on some sounds and not on others; thru-zero flangers and
+flangers whose delay stays under 1.3 ms are not found; chorus, phaser and filter sweep have no engine yet (the
+flanger engine finds nothing on them, as it should). Method, numbers and limits: `Research/sweep/README.md`.
+
 **What is shown (new in 0.4.2):** up to 0.4.1 an effect was shown as soon as one 3 s window of the sound scored
 above the cut. Measured with the app's own code that showed 1.6 effects per sound that are not there. Now every
 effect is checked against the whole sound before it is shown (`Verify.h`): per effect a small model reads what the
@@ -104,8 +158,9 @@ often than before (9, 39, 39 and 9 % against 36, 73, 61 and 34 %), because most 
 as many false ones; ring mod and stutter are found far more often (82 and 93 % against 23 and 52 %). The
 Sureness slider means the same for every effect now: shown when the score is above the slider. At 30 % more is
 shown (63 % found, 67 % of clean sounds clean), at 80 % less (39 %, 98 %). A long sound is judged in blocks of 6 s
-and an effect has to be there in half of them, so an effect on a short part of a long sound is not shown. Reverb,
-the comb filter and the delay keep their own engines' verdicts. Method and tables: `Research/detect/README.md`.
+and an effect has to be there in half of them, so an effect on a short part of a long sound is not shown (the
+level and flanger engines of 0.4.3 look for themselves where on the sound their effect is). Reverb, the comb
+filter, the delay, tremolo, auto pan, gated rhythm and the flanger keep their own engines' verdicts. Method and tables: `Research/detect/README.md`.
 
 Effects it knows so far (19): flanger, chorus, phaser, Haas width, stereo width, comb filter, delay, reverb,
 distortion, bitcrush, filter sweep, tremolo, auto pan; added in 0.2.0: saturation, exciter, ring mod,
@@ -120,6 +175,10 @@ filter, stutter, gated rhythm (from a larger 27-effect detector).
   minimum-phase filter and as an impulse response).
   The echo engine: `Echo.h` (the ripple picture, what is measured about an echo time, the echo filter and its
   faders), `EchoRule.h` (the fitted rule "is this an echo", written by `Research/echo/export_rule.py`).
+  The level engine: `Level.h` (what is measured about a gain that moves and repeats, the fitted rule, a gate's
+  steps, long sounds piece by piece, where the movement is, the gain for taking out and putting on).
+  The flanger engine: `Sweep.h` (the cepstrum picture, the line through it, gain and feedback, the rule, where
+  along the sound the copy is, the moving filter and its inverse, long sounds piece by piece).
   `Verify.h` the check of every effect against the whole sound before it is shown.
 - `Source/App/Main.cpp` the JUCE app.
 - `Resources/models.bin` (12 effects) and `models27.bin` (27 effects, `DR_MODEL27=1`) the trained models, written by `Tools/export_models.py`.
@@ -135,6 +194,10 @@ filter, stutter, gated rhythm (from a larger 27-effect detector).
   `Tools/echo_parity.py` compares it with the prototype.
 - `Tests/verify.cpp` the verification step alone: `drverify Resources sound.wav ...`; `Tools/verify_parity.py`
   compares it with the Python side.
+- `Tests/level.cpp` the level engine alone: `drlevel measure|out|onto|pieces|own|put|both ...` (see the top of the
+  file); `Tools/level_parity.py` compares it with the prototype.
+- `Tests/sweep.cpp` the flanger engine alone: `drsweep ...` (see the top of the file); `Tools/sweep_parity.py`
+  compares it with the prototype.
 - `Research/room/` the Python side of the reverb engine as it was run: the scoreboard, the reference engine the
   C++ matches, training and the experiments (see its README).
 - `Research/tone/` the Python side of the tone engine: the prototype the C++ matches, its scores and the report.
@@ -142,6 +205,10 @@ filter, stutter, gated rhythm (from a larger 27-effect detector).
   its rule, the scores.
 - `Research/detect/` the Python side of the verification step: what was wrong with the detection, the sounds and
   features, the training, the tables.
+- `Research/level/` the Python side of the level engine: the prototype the C++ matches, the data and the fit of
+  its rule, the tests on long sounds.
+- `Research/sweep/` the Python side of the flanger engine: the prototype the C++ matches, the numbers behind its
+  rule, the ceilings, the tests on long sounds.
 
 ## Build
 `cmake -S . -B build && cmake --build build --config Release --target DefectRefect`

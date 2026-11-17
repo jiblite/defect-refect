@@ -7,6 +7,7 @@
 #include <juce_gui_extra/juce_gui_extra.h>
 
 #include <atomic>
+#include <future>
 #include <set>
 #include <thread>
 
@@ -139,6 +140,8 @@ public:
     }
     void setPlayhead (double t) { if (std::abs (t - head) > 0.001) { head = t; repaint(); } }
     void setStatus (const juce::String& s) { status = s; repaint(); }
+    // Stretches of the sound drawn as a line under the wave (from, to: 0 .. 1 of its length): where the selected effect is.
+    void setMarks (std::vector<std::pair<double, double>> m) { if (m != marks) { marks = std::move (m); repaint(); } }
     bool isInterestedInFileDrag (const juce::StringArray& f) override { return f.size() > 0 && juce::File (f[0]).hasFileExtension ("wav;aif;aiff;flac;mp3;ogg"); }
     void fileDragEnter (const juce::StringArray&, int, int) override { over = true; repaint(); }
     void fileDragExit (const juce::StringArray&) override { over = false; repaint(); }
@@ -177,10 +180,17 @@ public:
             const float p = peaks[(size_t) (x * (int) peaks.size() / juce::jmax (1, wave.getWidth()))] / mx * hh;
             g.drawVerticalLine (wave.getX() + x, cy - p, cy + p);
         }
+        g.setColour (col);
+        for (const auto& m : marks)
+        {
+            const int x0 = wave.getX() + (int) std::lround (m.first * wave.getWidth()), x1 = wave.getX() + (int) std::lround (m.second * wave.getWidth());
+            if (x1 > x0) g.fillRect (x0, wave.getBottom() + 1, x1 - x0, 2);
+        }
         if (head > 0) { g.setColour (theme::text); g.drawVerticalLine (wave.getX() + (int) (head * wave.getWidth()), (float) wave.getY(), (float) wave.getBottom()); }
     }
 private:
     juce::String title, hint, file, status; juce::Colour col; bool over = false; std::vector<float> peaks; double head = 0; juce::Rectangle<int> wave;
+    std::vector<std::pair<double, double>> marks;
     juce::TextButton clear;
 };
 
@@ -223,6 +233,7 @@ public:
         {
             const float x = X (t); if (x < pr.getX() - 1 || x > pr.getRight() + 1) continue;
             g.setColour (theme::outline); g.drawVerticalLine ((int) x, pr.getY(), pr.getBottom());
+            if (! plot.xLabel.empty() && x > pr.getRight() - 26) continue;      // the unit stands at the right end: no number under it
             g.setColour (theme::textDim); g.drawText (label (t, plot.xLog), (int) x - 30, (int) pr.getBottom() + 2, 60, 14, juce::Justification::centred);
         }
         for (double t : plot.yTicks)
@@ -528,6 +539,8 @@ private:
     std::shared_ptr<const dr::room::Found> roomFound;           // what the room engine found on the first sound
     std::shared_ptr<const dr::tone::Found> toneFound;           // what the tone engine found on it: long-term spectra and reflections
     std::shared_ptr<const dr::echo::Found> echoFound;           // what the echo engine found on it
+    std::shared_ptr<const dr::level::Movement> levelFound;      // what the level engine found on it
+    std::shared_ptr<const dr::sweep::Result> sweepFound;        // what the flanger engine found on it
     std::vector<dr::FoundFx> groups;                            // the groups shown: the effects found, and TONE MATCH when it is switched on (two sounds)
     dr::FoundFx matchShown;                                     // TONE MATCH as the last render used it, with its curves (for the picture and Export IR)
     std::weak_ptr<const dr::Stereo> pairA, pairB; bool pairSame = false;     // are the two sounds versions of one recording (worked out once per pair; weak: a new sound at an old address is still a new sound)
@@ -576,7 +589,7 @@ private:
     void clearSlot (int slot)
     {
         sound[slot].reset(); names[slot] = {}; (slot == 0 ? zoneA : zoneB).setSound ({}, nullptr);
-        if (slot == 0) { ++generation; busy = false; found.clear(); groups.clear(); inspected = false; roomFound.reset(); toneFound.reset(); echoFound.reset(); matchShown = {}; faders.clearSwitches(); faders.build ({}, false); result.reset(); updatePlayerBuffer(); updateUi(); }
+        if (slot == 0) { ++generation; busy = false; found.clear(); groups.clear(); inspected = false; roomFound.reset(); toneFound.reset(); echoFound.reset(); levelFound.reset(); sweepFound.reset(); matchShown = {}; faders.clearSwitches(); faders.build ({}, false); result.reset(); updatePlayerBuffer(); updateUi(); }
         else modeChanged();
     }
     void swapSlots()
@@ -587,15 +600,31 @@ private:
     }
     void inspect()
     {
-        ++generation; busy = true; inspected = false; found.clear(); groups.clear(); cache.clear(); inspection.reset(); roomFound.reset(); toneFound.reset(); echoFound.reset(); matchShown = {}; faders.clearSwitches(); faders.build ({}, false); updateUi();
+        ++generation; busy = true; inspected = false; found.clear(); groups.clear(); cache.clear(); inspection.reset(); roomFound.reset(); toneFound.reset(); echoFound.reset(); levelFound.reset(); sweepFound.reset(); matchShown = {}; faders.clearSwitches(); faders.build ({}, false); updateUi();
         zoneA.setStatus ("inspecting..."); modeLabel.setText ("Looking for effects on the first sound...", juce::dontSendNotification);
         auto src = sound[0]; auto M = models; auto M27 = models27; auto RN = roomNet; auto RN2 = roomNet2; auto out = std::make_shared<std::vector<dr::FoundFx>>();
         auto insp = std::make_shared<dr::Inspection>(); auto roomOut = std::make_shared<std::shared_ptr<const dr::room::Found>>(); const double c = cut();
         auto toneOut = std::make_shared<std::shared_ptr<const dr::tone::Found>>(); auto echoOut = std::make_shared<std::shared_ptr<const dr::echo::Found>>();
+        auto levelOut = std::make_shared<std::shared_ptr<const dr::level::Movement>>(); auto sweepOut = std::make_shared<std::shared_ptr<const dr::sweep::Result>>();
         const int gen = generation.load();
-        startWorker ([src, M, M27, RN, RN2, out, insp, roomOut, toneOut, echoOut, c, gen, this]
+        startWorker ([src, M, M27, RN, RN2, out, insp, roomOut, toneOut, echoOut, levelOut, sweepOut, c, gen, this]
                      {
                          auto alive = [this, gen] (float) { return generation.load() == gen; };
+                         // the level engine and the flanger engine need nothing from the others: they measure on threads of their own while the rest goes on here
+                         auto levelJob = std::async (std::launch::async, [this, gen, src]
+                                                     {
+                                                         std::shared_ptr<dr::level::Movement> m;
+                                                         try { m = std::make_shared<dr::level::Movement> (dr::level::analyse (*src, [this, gen] { return generation.load() != gen; })); }
+                                                         catch (const std::exception&) { m.reset(); }        // the level engine failed: the detectors' verdicts and the old handling stay
+                                                         return m;
+                                                     });
+                         auto sweepJob = std::async (std::launch::async, [this, gen, src]
+                                                     {
+                                                         std::shared_ptr<dr::sweep::Result> r;
+                                                         try { r = std::make_shared<dr::sweep::Result> (dr::sweep::find (*src, [this, gen] { return generation.load() != gen; })); }
+                                                         catch (const std::exception&) { r.reset(); }        // the flanger engine failed: the detectors' verdict and the old handling stay
+                                                         return r;
+                                                     });
                          auto I = dr::inspect (*M, *src, alive);
                          if (generation.load() != gen) return;
                          dr::mergeNew (I, dr::inspect (*M27, *src, alive, &I));
@@ -641,11 +670,21 @@ private:
                              catch (const std::exception&) {}
                              if (generation.load() != gen) return;
                          }
-                         *out = dr::estimate (I, *src, c, nullptr, *roomOut, *toneOut, *echoOut); *insp = I;
+                         {       // the level engine: a gain that moves and repeats (its verdict replaces the detectors' about tremolo, auto pan and gated rhythm)
+                             const std::shared_ptr<dr::level::Movement> m = levelJob.get();
+                             if (generation.load() != gen) return;
+                             if (m != nullptr && ! m->stopped) { dr::mergeLevel (I, *m); *levelOut = m; }
+                         }
+                         {       // the flanger engine: a copy of the sound whose delay moves (its verdict replaces the detectors' about the flanger)
+                             const std::shared_ptr<dr::sweep::Result> r = sweepJob.get();
+                             if (generation.load() != gen) return;
+                             if (r != nullptr && ! r->stopped) { dr::mergeSweep (I, *r); *sweepOut = r; }
+                         }
+                         *out = dr::estimate (I, *src, c, nullptr, *roomOut, *toneOut, *echoOut, *levelOut, *sweepOut); *insp = I;
                      },
-                     [this, out, insp, roomOut, toneOut, echoOut]
+                     [this, out, insp, roomOut, toneOut, echoOut, levelOut, sweepOut]
                      {
-                         busy = false; found = *out; inspected = true; inspection = insp; roomFound = *roomOut; toneFound = *toneOut; echoFound = *echoOut;
+                         busy = false; found = *out; inspected = true; inspection = insp; roomFound = *roomOut; toneFound = *toneOut; echoFound = *echoOut; levelFound = *levelOut; sweepFound = *sweepOut;
                          for (auto& F : found) cache[F.name] = F;
                          zoneA.setStatus (juce::String ((int) found.size()) + (found.size() == 1 ? " effect found" : " effects found"));
                          emptyText = "No effects found on this sound (from the 19 it knows so far).";
@@ -670,14 +709,36 @@ private:
         };
         if (missing.empty()) { show(); return; }
         busy = true; ++generation; modeLabel.setText ("Reading the settings of the newly shown effects...", juce::dontSendNotification);
-        auto I = inspection; auto src = sound[0]; auto rf = roomFound; auto tf = toneFound; auto ef = echoFound; auto out = std::make_shared<std::vector<dr::FoundFx>>();
-        startWorker ([I, src, missing, out, rf, tf, ef] { *out = dr::estimate (*I, *src, 0.0, &missing, rf, tf, ef); },
+        auto I = inspection; auto src = sound[0]; auto rf = roomFound; auto tf = toneFound; auto ef = echoFound; auto lf = levelFound; auto wf = sweepFound; auto out = std::make_shared<std::vector<dr::FoundFx>>();
+        startWorker ([I, src, missing, out, rf, tf, ef, lf, wf] { *out = dr::estimate (*I, *src, 0.0, &missing, rf, tf, ef, lf, wf); },
                      [this, out, show] { busy = false; for (auto& F : *out) cache[F.name] = F; show(); updateUi(); });
     }
     // The picture for the selected effect: as the faders have it now, with the found state faintly behind.
     void updateDisplay()
     {
         const dr::FoundFx* F = nullptr; for (auto& x : groups) if (x.name == faders.focus) F = &x;
+        {       // a level movement or a flanger that is on a part of the first sound only: a line under the wave shows where, and where it goes onto the second sound
+            std::vector<std::pair<double, double>> ma, mb;
+            if (F != nullptr && F->level != nullptr && F->level->found && F->level->n > 0 && ! F->level->spans.empty())
+            {
+                const auto& M = *F->level; const double na = (double) M.n; double in = 0; for (const auto& sp : M.spans) in += (double) (sp.b - sp.a);
+                if (in < 0.97 * na)
+                {
+                    const double nb = sound[1] != nullptr ? (double) sound[1]->size() : 0.0;
+                    for (const auto& sp : M.spans)
+                    {
+                        ma.push_back ({ (double) sp.a / na, (double) sp.b / na });
+                        if (nb > 0 && (double) sp.a < nb) mb.push_back ({ (double) sp.a / nb, sp.b >= M.n ? 1.0 : juce::jmin (1.0, (double) sp.b / nb) });
+                    }
+                }
+            }
+            if (F != nullptr && F->sweep != nullptr && F->sweep->found && F->sweep->n > 0)       // a flanger on a part of the first sound (onto a second sound it goes all the way: no line there)
+            {
+                const auto spans = dr::sweep::where (*F->sweep); const double na = (double) F->sweep->n; double in = 0; for (const auto& sp : spans) in += (double) (sp.second - sp.first);
+                if (in < 0.97 * na) for (const auto& sp : spans) ma.push_back ({ (double) sp.first / na, (double) sp.second / na });
+            }
+            zoneA.setMarks (ma); zoneB.setMarks (mb);
+        }
         if (F == nullptr) { display.set ({}, {}, inspected && groups.empty() ? juce::String ("Nothing found to show.") : juce::String()); return; }
         dr::FoundFx withCurves;        // TONE MATCH: its curves come from the last render
         if (F->name == "tonematch" && matchShown.name == "tonematch") { withCurves = *F; withCurves.curveL = matchShown.curveL; withCurves.curveR = matchShown.curveR; withCurves.foundL = matchShown.foundL; withCurves.foundR = matchShown.foundR; F = &withCurves; }
@@ -883,10 +944,9 @@ inline void dumpPlots (const juce::File& dir)
         { "reverb", { { "rt60", 1.8 }, { "mix", 0.35 } } },
         { "distortion", { { "drive", 8 }, { "kind", 1 }, { "top", -1 }, { "drive_scale", 1 } } },
         { "bitcrush", { { "bits", 6 }, { "down", 4 } } },
-        { "tremolo", { { "rate", 4 }, { "amp_db", 6 }, { "phase", 0.1 } } }, { "autopan", { { "rate", 0.7 }, { "amp_db", 9 }, { "phase", 0 } } },
         { "saturation", { { "drive", 12 }, { "kind", 1 }, { "tone", 0.5 } } }, { "exciter", { { "amount", 0.4 }, { "freq", 3000 } } },
         { "ringmod", { { "carrier", 220 }, { "mix", 0.8 } } }, { "filter", { { "cutoff", 1500 }, { "resonance", 2.5 }, { "type", 2 }, { "slope", 1 } } },
-        { "stutter", { { "slice_ms", 120 }, { "repeats", 4 }, { "prob", 0.4 } } }, { "gatedrhythm", { { "rate", 8 }, { "duty", 0.5 }, { "depth", 0.9 } } } };
+        { "stutter", { { "slice_ms", 120 }, { "repeats", 4 }, { "prob", 0.4 } } } };
     for (auto& [name, est] : typical)
     {
         dr::FoundFx F; F.name = name; F.title = dr::titleFor (name); F.est = est; F.knobs = dr::knobsFor (name);
@@ -920,6 +980,54 @@ inline void dumpPlots (const juce::File& dir)
             juce::File out = dir.getChildFile (juce::String (F->name) + (moved ? "-moved" : "") + ".png"); out.deleteFile();
             juce::FileOutputStream os (out); juce::PNGImageFormat png; if (os.openedOk()) png.writeImageToStream (img, os);
             ++n;
+        }
+    }
+    // the level engine's groups: a tremolo of 9 dB at 4 Hz, a pan at 0.7 Hz, a gate at 8 Hz that closes by 30 dB
+    for (int kind = 0; kind < 3; ++kind)
+    {
+        auto m = std::make_shared<dr::level::Movement>(); m->found = true; m->against = kind == 1; m->steps = kind == 2; m->sure = 0.95; m->sounding = m->carrying = 1; m->lead = 0; m->pieces.resize (1);
+        dr::level::Found& f = m->pieces[0].f; f.found = true; f.against = m->against; f.K = 32; f.rate = kind == 0 ? 4.0 : kind == 1 ? 0.7 : 8.0; f.period = 1.0 / f.rate; f.depth = kind == 0 ? 9.0 : kind == 1 ? 18.0 : 30.0;
+        for (int ch = 0; ch < 2; ++ch)
+        {
+            f.prof[ch].resize (32);
+            for (int k = 0; k < 32; ++k)
+            {
+                const double ph = 2.0 * dr::PI * (k + 0.5) / 32.0;
+                f.prof[ch][(size_t) k] = kind == 0 ? -4.5 * (1.0 - std::cos (ph)) : kind == 1 ? -9.0 * (1.0 - (ch ? -1.0 : 1.0) * std::cos (ph)) : (k < 16 ? 0.0 : -30.0);
+            }
+        }
+        m->rate = f.rate; m->depth = f.depth;
+        const dr::FoundFx L = dr::levelFx (m, 0.95);
+        for (int moved = 0; moved < 2; ++moved)
+        {
+            DisplayPanel p; p.setSize (420, 330);
+            std::map<std::string, double> v; for (auto& k : L.knobs) v[k.id] = 1.0;
+            if (moved) { v[L.name + ".amount"] = 0.5; v[L.name + ".speed"] = 1.45; }
+            p.set (dr::makePlot (L, dr::scaled (L, v), dr::amountOf (L, v)), moved ? dr::makePlot (L, L.est, 1.0) : dr::Plot());
+            juce::Image img = p.createComponentSnapshot (p.getLocalBounds(), true, 2.0f);
+            juce::File out = dir.getChildFile (juce::String (L.name) + (moved ? "-moved" : "") + ".png"); out.deleteFile();
+            juce::FileOutputStream os (out); juce::PNGImageFormat png; if (os.openedOk()) png.writeImageToStream (img, os);
+        }
+    }
+    // the flanger engine's group: a copy at 70 % whose delay sweeps between 1 and 4 ms every 2.5 s, the right side a quarter turn behind
+    {
+        auto r = std::make_shared<dr::sweep::Result>(); r->found = true; const int T = (int) (8.0 * dr::sweep::FPS);
+        for (int c = 0; c < 2; ++c)
+        {
+            auto& f = r->ch[c]; r->has[c] = true; f.any = f.followed = true; f.g = 0.7; f.fb = 0.2; f.curve.valid = true; f.curve.kind = 0; f.curve.rate = 0.4; f.curve.phase = c ? 0.25 : 0.0; f.curve.lo = 48.0; f.curve.hi = 192.0;
+            f.d = dr::sweep::lfoCurve (T, f.curve); f.weight.assign ((size_t) T, 0.5); f.dmin = 48.0; f.dmax = 192.0; f.move = 144.0;
+        }
+        r->n = (size_t) (8.0 * dr::SR);
+        const dr::FoundFx W = dr::flangerFx (r, 0.9);
+        for (int moved = 0; moved < 2; ++moved)
+        {
+            DisplayPanel p; p.setSize (420, 330);
+            std::map<std::string, double> v; for (auto& k : W.knobs) v[k.id] = 1.0;
+            if (moved) { v["flanger.amount"] = 0.6; v["flanger.speed"] = 1.5; v["flanger.sweep"] = 0.5; v["flanger.feedback"] = 1.6; }
+            p.set (dr::makePlot (W, dr::scaled (W, v), dr::amountOf (W, v)), moved ? dr::makePlot (W, W.est, 1.0) : dr::Plot());
+            juce::Image img = p.createComponentSnapshot (p.getLocalBounds(), true, 2.0f);
+            juce::File out = dir.getChildFile (juce::String ("flanger-engine") + (moved ? "-moved" : "") + ".png"); out.deleteFile();
+            juce::FileOutputStream os (out); juce::PNGImageFormat png; if (os.openedOk()) png.writeImageToStream (img, os);
         }
     }
     // the echo engine's group: an echo every 320 ms on the left and every 240 ms on the right, with repeats

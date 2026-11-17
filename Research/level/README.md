@@ -1,0 +1,148 @@
+# The level-movement engine: Python side
+
+`level.py` is the prototype that the single-sound part of `Source/Core/Level.h` is a port of; `rule.json` holds
+the fitted rule. `Tools/level_parity.py` compares the two on whole sounds (TODO-PARITY). What `Level.h` does with
+long sounds (pieces, the clock, where the movement is) was written in C++ only and is tested from here through
+`drlevel` (`long.py`, `win.py`). The scripts are a record of how the engine was built and judged, as they were
+run: paths point to the working folder they ran in, and the audio is not in the repo.
+
+## The method
+Tremolo, auto pan and a gated rhythm are one thing: a gain per channel that moves over time and repeats. The engine
+measures that gain on the one sound (period, shape over one cycle, depth, how left and right differ) and uses it
+both ways: divided out of the sound it was found on, or multiplied onto another sound.
+
+How a gain that was put on the sound is told from the sound's own rhythm: a gain moves ALL bands by the same
+amount in dB at the same moment, and it repeats exactly. Notes and hits do neither.
+
+1. `levels` power in 15 bands per channel, one frame every millisecond (5.3 ms windows).
+2. Both sides together (tremolo, gate): `diff_lane` is what all bands do together over a short step (the median
+   over bands of the level change in dB, so the sound's own level, which differs from band to band, drops out).
+   `scan_together` asks for every period from 60 ms up how much of that lane repeats with it (epoch folding), and
+   `peaks_of` keeps the periods that stand out.
+3. `measure_together` everything about one candidate period: the shape over a cycle from level differences between
+   cells of the cycle (`pairs_fold`), its depth, and whether all bands and all cycles carry it (`agreement`: how
+   well each band follows the shape, the slope of each band against it, the size of each cycle, the two halves of
+   the sound against each other), how steep it is, whether it looks like struck notes (`struck_numbers`).
+4. Left against right (auto pan): `pan_lane` is left minus right in dB, where the sound itself cancels;
+   `find_pan` measures its swing, period and shape, and `fit_law` which law the two sides follow (the gains add up
+   to a constant, or the powers do). A pan slower than half the sound is fitted as one slow curve (`slow_fit`).
+5. A gate: steep steps are looked at finely (`sharpen`: power in steps of 0.125 ms laid over all cycles; the
+   period that makes the steps sharpest, each step's place and course), and steps the gate leaves out are found
+   (`left_out`, `gate_steps`).
+6. `apply` takes the gain out (never lifting by more than 40 dB, nor more than the bands say the gate really
+   closes, `band_depths`) or puts it on, scaled in dB for everything between and beyond.
+
+## Is it a movement? (the rule)
+A steady rhythm repeats too. Two small linear rules decide (`rule.json`, written by `fit4.py` for the shared
+movement and `fit5.py` for the pan; the same numbers are constants in `Level.h`):
+- together: 33 measures of step 3 after a coarse first filter (`first_filter`) and never for a shape that jumps
+  up and sinks back slowly, which is what struck and plucked notes do in every bar of music (`struck`);
+- against: 9 measures (swing, how alike the bands swing, what is left after the shape, the steepness...).
+
+Two things were added to the pan rule after the fit, from what the app's scoreboard showed (they are in `score_pan`
+and in `Level.h` alike):
+- the repeating shape must explain the lane: at least 0.2 over what chance explains (`adj`). Every true pan of the
+  fit data explains 0.3 and more. A stereo delay whose echoes fall on alternating sides swings left against right
+  by tens of dB and repeats nothing (-0.2), and that large swing alone had carried it over the cut;
+- a movement from side to side that the sound shows once only (less than 1.25 cycles: no part of it is seen coming
+  back) scores no higher than a sureness of one half, which the default Sureness does not show. Something that
+  passes by moves from side to side too: 6 of the corpus's 40 recordings do, by 6 to 35 dB. On the dry recordings
+  the bands do not swing alike and the rule refuses them, but an effect that makes the bands alike (a bitcrusher
+  did) left nothing to tell the two apart.
+
+Fitted on 527 clean 6 s clips and the same clips with one synthetic movement put on (`synth.py`, `mkdata.py`,
+`mkstage2.py`, `mkpan.py`), plus the 115 dry sounds of the scoreboard corpus's dev split (`mkdev.py`); the cut
+is set on out-of-fold scores so that 0.4 % (together) and 0.2 % (pan) of clean clips have a candidate over it.
+The score's zero is that cut, and the app's Sureness slider compares it: the default, 65 %, shows a movement from
+score 0 up; lower settings offer movements down to score -2.
+
+What the rule lets through (`final_rates.py`, `clean.py`):
+
+| sounds of 6 s                                                    | reported |
+|------------------------------------------------------------------|----------|
+| clean train clips (shared movement / pan)                        | 0 of 527 / 0 of 529 |
+| dry corpus sounds, dev / test split (test never used in the fit) | 0 of 115 / 0 of 83  |
+| synthetic gates on train clips, found with the right period      | 123 of 174 (71 %)   |
+| synthetic tremolos on train clips                                | 74 of 183 (40 %)    |
+| synthetic pans on train clips (0.15 to 3 Hz)                     | 412 of 529 (78 %); 47 more, seen once only, at a Sureness of 50 % or lower |
+
+The tremolos it misses are the shallow ones and the sawtooth that falls (0 of 28: a level that jumps up and sinks
+is exactly what the `struck` test refuses). A wrong period was chosen for 4 of 357 movements.
+
+## Outside effects (the scoreboard's kind of case)
+`ev.py` runs the prototype on cases made with effects from outside tools (four tremolos, four pans, three gates;
+two sounds per case, test split): found 11 of 16 tremolo sounds, 15 of 16 pans, 10 of 16 gates. Over all 16
+sounds of a family (a sound that is not found counts 0) the movement comes out at 92 (tremolo) and 94 (pan) of
+100 in the median and goes onto the case's other sound at 93 and 97; no result is worse than doing nothing.
+Gates are the hard family: out 22, onto 79.
+
+`others.py` asks the prototype on the sounds of the other families: it reports a movement on 5 of 224 sounds
+with another effect (two of them a ring modulator at 16 Hz, which is a level movement) and on 2 of 248 sounds of
+the reverb and tone sets (one sound, dry and wet).
+
+In the app (`Research/room/bench/famboard.py`, 8 cases per family, medians, a case that is not shown counts 0):
+
+TODO-SCOREBOARD
+
+## Long sounds (`Level.h` only)
+The rule was fitted and tested on sounds of 6 to 9 s. A longer sound is cut into pieces of 6 to 9 s:
+1. each piece is measured alone, as tested;
+2. every piece is measured again at the periods the others found (same measures, same rule, the period given);
+   the pieces that show the movement at its period carry it. The movement's score is the middle one of the
+   carrying pieces' scores (with more pieces the best score of a clean sound only goes up), less 1 when just one
+   of several pieces carries it;
+3. a pan too slow for such pieces is looked for in windows of 36 to 72 s. What such a window finds is asked again at
+   a half and a third of its period: a pan three times as fast looks like a slow one with a strong third harmonic,
+   and three cycles laid over each other also hold the sound's own wander from side to side. A fraction is only
+   asked when it still explains at least 0.4 of what the found period explains (folded at a wrong fraction of its
+   period a movement all but disappears, and the rule's score means nothing for a period that does not explain
+   the lane);
+4. the clock: where in the surest piece's cycle every place of the sound stands. One steady period if that puts
+   all carrying pieces within 0.03 cycles (an effect's own oscillator), else from piece to piece (a speed that
+   wanders);
+5. where the movement is: every stretch of half a second or more (a whole cycle; of a pan half a cycle) is asked
+   whether the sound does there what would be taken out. What the stretch does is set against what the movement
+   would do there and against no movement at all (sums of absolute differences): +1 = just what the movement
+   says, -1 = none of it, 0 = cannot be told (silence, or the sound's own changes far larger). The answers that
+   gather the most evidence are chosen, where every change between "there" and "not there" has a price, and each
+   change is then placed to the millisecond from the same evidence frame by frame. Only the stretches that have
+   the movement are touched. If one window found the movement and it turns out to be on a part of the window only,
+   that part is measured again by itself: the movement is surer and truer there;
+6. a gate's left-out steps: where eight or more cycles in a row are without the gate's steps and as loud as their
+   neighbours' open stretch, the gate is not there (nothing to lift), and they count against the movement in 5. A
+   pattern's own left-out steps stay closed.
+
+Taken out, a piece that carries the movement by the rule loses its own measured movement, any other stretch that
+has it the surest piece's movement on the clock. A carrying piece is asked with both and loses the surest piece's
+movement instead of its own when it follows that clearly better, or, for a gate, when that takes clearly more of
+the piece's level steps away (8 % and more): a gate's own measurement can be wrong in a way the stretches' answers
+do not show, because steps it takes for left out predict nothing and so cost nothing. Put onto another sound, the surest piece's shape runs on the first
+sound's clock at the times at which the first sound has the movement: an effect that comes in halfway comes in
+halfway on the second sound too (past the first sound's end it goes on as at its end).
+
+`long.py` makes the test sounds (dry corpus clips laid end to end, crossfaded, 20 to 62 s; the effects of
+`../detect/zoo_fx.py`) and runs `drlevel` on them:
+- `clean`: 48 long sounds without any effect;
+- `wet`: 88 with one of 11 outside effects on the whole sound;
+- `part`: 44 with the effect on one half only (the other half must come back untouched);
+- `drift`: 16 with a speed that wanders; `slow`: 24 with slow pans;
+- `SEED=1` draws a second set, kept for the final check.
+`win.py` reads a result file: what single stretches say with and without the effect, how much of each is marked,
+where the border was put, and what other prices would have chosen.
+
+TODO-LONG
+
+## Known limits
+- A tremolo of a few dB on a busy sound, and any sawtooth that falls, is not found at the default Sureness.
+- One movement per sound: a tremolo and a pan together give the surer one.
+- Movements faster than 16.7 Hz are not looked for (up there a sound's own roughness and beating take over).
+- A gate that is keyed by another sound has no fixed shape; what is found is its period and average shape.
+TODO-LIMITS
+
+## Files
+- `level.py`, `rule.json`: the prototype and its rule. `synth.py`: the synthetic movements of the fit data.
+- `mkdata.py`, `mkstage2.py`, `mkpan.py`, `mkdev.py`: the fit data. `fit4.py`, `fit5.py`: the two rules
+  (`fit1.py` to `fit3.py`, `fit4b.py`: earlier tries; `fit6.py`: a rule of hard limits tried against the fitted
+  sum). `final_rates.py`, `clean.py`: what the final rule lets through.
+- `ev.py`: outside effects on 6 s sounds. `others.py`: what the engine says on sounds with other effects.
+- `long.py`, `mk_case.py`, `win.py`: long sounds through `drlevel`.
