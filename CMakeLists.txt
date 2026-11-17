@@ -17,7 +17,7 @@ FetchContent_Declare(JUCE
 FetchContent_MakeAvailable(JUCE)
 
 # The trained models, built into the exe. The reverb engine's model for a second look (room2.bin) is optional.
-set(DR_MODEL_FILES Resources/models.bin Resources/models27.bin Resources/room.bin Resources/verify.bin)
+set(DR_MODEL_FILES Resources/models.bin Resources/models27.bin Resources/room.bin Resources/verify.bin Resources/moving.bin)
 set(DR_ROOM_SECOND 0)
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/Resources/room2.bin")
   list(APPEND DR_MODEL_FILES Resources/room2.bin)

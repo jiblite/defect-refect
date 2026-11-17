@@ -275,6 +275,50 @@ inline Plot flangerPlot (const FoundFx& F, const Params& p, double s, bool onSec
     P.caption = c; return P;
 }
 
+// The moving-tone engine's groups (PHASER, FILTER SWEEP): the found tone curve at three moments of its movement, where
+// it sits lowest on the frequency axis, in the middle (the strong line) and highest, as the Amount fader has it. Where the
+// curve sits at a moment: the middle of what it changes there, on the band axis.
+inline Plot movingPlot (const FoundFx& F, const Params& p, double s, bool onSecond)
+{
+    using namespace disp;
+    Plot P; P.title = F.title; if (F.moving == nullptr || ! F.moving->found) return P;
+    const moving::Found& M = *F.moving; const double speed = movingSpeed (p), amount = std::max (s, 0.0); const int NB = moving::NB;
+    auto cell = [&] (int t, int b) { const size_t i = (size_t) t * (size_t) NB + (size_t) b; return 0.5 * ((double) M.raw[0][i] + (double) M.raw[1][i]); };
+    std::vector<std::pair<double, int>> place; double low = 0, high = 0;
+    for (int t = 0; t < M.T; ++t)
+    {
+        if (M.gate[(size_t) t] < 1.0) continue;
+        double a = 0, w = 0;
+        for (int b = 0; b < NB; ++b) { const double v = cell (t, b); a += b * std::abs (v); w += std::abs (v); low = std::min (low, v); high = std::max (high, v); }
+        if (w > 0.25 * NB) place.push_back ({ a / w, t });          // a frame where the curve does something (a quarter of a dB a band)
+    }
+    freqAxes (P, -36, 18);
+    if (place.size() >= 3)
+    {
+        std::sort (place.begin(), place.end()); const size_t n = place.size(); int i = 0;
+        for (size_t k : { n / 10, n - 1 - n / 10, n / 2 })          // lowest and highest faintly, the middle one last and strong
+        {
+            const int t = place[k].second, t0 = std::max (t - 1, 0), t1 = std::min (t + 1, M.T - 1); Curve c; c.dim = i++ < 2;
+            for (int b = 0; b < NB; ++b) { double v = 0; for (int q = t0; q <= t1; ++q) v += cell (q, b); c.pts.push_back ({ moving::F0 * std::pow (2.0, b / moving::BPO), std::clamp (amount * v / (t1 - t0 + 1), P.y0, P.y1) }); }
+            P.curves.push_back (std::move (c));
+        }
+        P.curves.back().fill = true;
+    }
+    const bool phaser = F.name == "phaser"; const double all = (double) M.n / SR;
+    std::string c = phaser ? "Notches that travel up and down the spectrum" : "A filter whose curve travels up and down the spectrum";
+    c += ", up to " + num (std::max (-low, high) * amount, 0) + " dB " + (-low >= high ? "down" : "up") + ". Drawn where it sits lowest, in the middle (strong line) and highest.";
+    if (M.period > 0) c += " It comes round every " + num (M.period / moving::FPS / speed, 1) + " s.";
+    double in = 0; for (const auto& sp : M.spans) in += (double) (sp.second - sp.first) / moving::FPS; in = std::min (in, all);
+    if (! M.spans.empty() && in < 0.97 * all && all >= 1.0)             // where in the sound it is, when that is not all of it
+    {
+        const std::string where = onSecond ? "On the first sound it is there " : "It is there ", rest = onSecond ? "; it goes onto the second sound at the same times." : "; the rest of the sound is left alone.";
+        if (M.spans.size() == 1) c += " " + where + "from " + timeText (M.spans[0].first / moving::FPS) + " to " + timeText (std::min (all, M.spans[0].second / moving::FPS)) + rest;
+        else c += " " + where + "on " + num (in, 0) + " of " + num (all, 0) + " s, in " + std::to_string (M.spans.size()) + " stretches" + rest;
+    }
+    if (amount < 1e-3) c = onSecond ? "Amount at zero: not put on the second sound." : "Amount at zero: the moving filter is taken off.";
+    P.caption = c; return P;
+}
+
 // s: the effect's Amount fader (0..2); p: its settings with the settings faders applied. onSecond: the effect
 // goes onto a second sound (only the room's picture depends on it).
 inline Plot makePlot (const FoundFx& F, const Params& scaledP, double s, bool onSecond = false)
@@ -285,6 +329,7 @@ inline Plot makePlot (const FoundFx& F, const Params& scaledP, double s, bool on
     if (F.echo != nullptr) return echoPlot (F, scaledP, s, onSecond);
     if (F.level != nullptr) return levelPlot (F, scaledP, s, onSecond);
     if (F.sweep != nullptr) return flangerPlot (F, scaledP, s, onSecond);
+    if (F.moving != nullptr) return movingPlot (F, scaledP, s, onSecond);
     const std::string& f = F.name; Plot P; P.title = F.title;
     bool fade = false; const Params e = mapAmount (f, scaledP, std::max (s, 0.0), fade); const double w = fade ? std::min (1.0, s) : 1.0;
     auto g = [&] (const char* k, double d) { return get (e, k, d); };

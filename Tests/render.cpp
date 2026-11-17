@@ -7,6 +7,8 @@
 //   The tone engine and the echo engine always run (the DELAY group's faders: delay.amount, delay.time, delay.feedback, delay.bright).
 //   The level engine always runs: a found movement is the TREMOLO, AUTO PAN or GATED RHYTHM group (faders: <group>.amount, <group>.speed).
 //   The flanger engine always runs: a found moving copy is the FLANGER group (faders: flanger.amount, flanger.speed, flanger.sweep, flanger.feedback).
+//   The moving-tone engine runs when ResourcesDir holds moving.bin (as in the app): a found moving filter is the PHASER or FILTER SWEEP
+//   group (faders: <group>.amount, <group>.speed).
 //   The verifier's models are read from ResourcesDir/verify.bin (Source/Core/Verify.h): the scores are its scores, as in the app.
 //   match=1: two sounds with Tone Match switched on (its faders: tonematch.amount, tonematch.detail)
 #include <chrono>
@@ -87,11 +89,23 @@ int main (int argc, char** argv)
     std::cout << "flanger: found=" << wf->found; if (wf->found) { const auto& f = wf->ch[wf->has[0] ? 0 : 1]; std::cout << " gain=" << f.g << " feedback=" << f.fb << " delay_ms=" << f.dmin / 48.0 << ".." << f.dmax / 48.0 << (f.curve.valid ? " periodic rate_hz=" : " free") << (f.curve.valid ? std::to_string (f.curve.rate) : "");
         std::cout << " pieces=" << wf->shown << "/" << wf->sounding << " there_s="; const auto sp = dr::sweep::where (*wf); for (size_t i = 0; i < sp.size(); ++i) std::cout << (i ? "," : "") << (double) sp[i].first / 48000.0 << ".." << (double) sp[i].second / 48000.0; }     // where along the sound the copy is
     std::cout << "\n";
+    std::shared_ptr<const dr::moving::Found> mf; dr::moving::Net mnet;
+    {
+        std::ifstream f (dir + "/moving.bin", std::ios::binary);
+        if (f)
+        {
+            const std::vector<char> b ((std::istreambuf_iterator<char> (f)), {}); mnet.load (b.data(), b.size());
+            mf = std::make_shared<const dr::moving::Found> (dr::moving::find (mnet, src)); dr::mergeMoving (I, *mf, wf.get());
+            std::cout << "moving filter: found=" << mf->found;
+            if (mf->found) { std::cout << " kind=" << mf->kind << " sure=" << mf->sure << " period_s=" << mf->period / dr::moving::FPS << " there_s="; const auto sp = dr::moving::where (*mf); for (size_t i = 0; i < sp.size(); ++i) std::cout << (i ? "," : "") << (double) sp[i].first / 48000.0 << ".." << (double) sp[i].second / 48000.0; }
+            std::cout << "\n";
+        }
+    }
     auto t1 = clk::now();
     if (only) { for (auto& [f, p] : I.prob) std::cout << f << "=" << p << " "; std::cout << "\n"; return 0; }
-    const auto found0 = dr::estimate (I, src, cut, nullptr, rf, tf, ef, lf, wf);
+    const auto found0 = dr::estimate (I, src, cut, nullptr, rf, tf, ef, lf, wf, mf);
     auto t2 = clk::now();
-    for (auto& F : found0) { std::cout << F.name << " p=" << F.prob << (F.room ? " (room engine)" : F.tone ? " (tone engine)" : F.echo ? " (echo engine)" : F.level ? " (level engine)" : F.sweep ? " (flanger engine)" : ""); for (auto& [k, v] : F.est) std::cout << " " << k << "=" << v; std::cout << "\n"; }
+    for (auto& F : found0) { std::cout << F.name << " p=" << F.prob << (F.room ? " (room engine)" : F.tone ? " (tone engine)" : F.echo ? " (echo engine)" : F.level ? " (level engine)" : F.sweep ? " (flanger engine)" : F.moving ? " (moving-tone engine)" : ""); for (auto& [k, v] : F.est) std::cout << " " << k << "=" << v; std::cout << "\n"; }
     for (auto& B : blocks)
     {
         const bool two = B.tgt != "-"; dr::Stereo tgt; if (two) dr::readWav (B.tgt, tgt, sr);

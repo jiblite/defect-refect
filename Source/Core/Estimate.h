@@ -7,6 +7,7 @@
 #include "Echo.h"
 #include "Level.h"
 #include "Sweep.h"
+#include "Moving.h"
 #include "Effects.h"
 #include "Hand.h"
 #include "Inspector.h"
@@ -313,6 +314,7 @@ struct FoundFx
     std::shared_ptr<const echo::Found> echo;   // the echoes the echo engine found: its faders work that engine (see echoFx)
     std::shared_ptr<const level::Movement> level;   // the level movement the level engine found (TREMOLO, AUTO PAN, GATED RHYTHM): its faders work that engine (see levelFx)
     std::shared_ptr<const sweep::Result> sweep;     // the moving copy the flanger engine found: its faders work that engine (see flangerFx)
+    std::shared_ptr<const moving::Found> moving;    // the moving tone curve the moving-tone engine found (PHASER, FILTER SWEEP): its faders work that engine (see movingFx)
     Vec curveL, curveR;                        // TONE MATCH, for the picture and Export IR: the curves of the last render (left, right; Amount in the middle)
     Vec foundL, foundR;                        // the same with Detail in the middle too
 };
@@ -691,6 +693,30 @@ inline double sweepFeedback (const Params& p) { return 0.5 * (std::clamp (get (p
 constexpr double sweepAlone = 0.5;
 inline void mergeSweep (Inspection& I, const sweep::Result& r) { I.prob["flanger"] = ! r.found ? level::sureNone : r.sounding >= 2 && r.shown < 2 ? sweepAlone : sweepSure; }
 
+// ---------------------------------------------------------------- the moving-tone engine's groups (Moving.h)
+// PHASER and FILTER SWEEP: a filter whose curve moves, as the moving-tone engine read it off the sound (the change in
+// level per band and moment). Amount: on the sound itself 0 = the curve taken off, 1 = untouched, 2 = twice as strong
+// (in dB); on a second sound 0 = none, 1 = as found, 2 = twice as strong. Speed: the movement half to twice as fast; on
+// the sound itself a changed speed means the found curve off and the new one on.
+inline FoundFx movingFx (std::shared_ptr<const moving::Found> found, double prob)
+{
+    FoundFx F; F.name = found->kind; F.title = titleFor (F.name); F.prob = prob; F.moving = std::move (found); F.est = { { "speed", 1.0 } };
+    Knob a; a.id = F.name + ".amount"; a.label = "Amount"; a.neutral = 0; a.lo = 0; a.hi = 2;
+    Knob s; s.key = "speed"; s.id = F.name + ".speed"; s.label = "Speed"; s.neutral = 0; s.lo = 0; s.hi = 2; s.ownTip = true;
+    s.tip = "How fast the filter moves. Middle = as found. Left = slower, down to half. Right = faster, up to twice.";
+    F.knobs = { a, s }; return F;
+}
+// The Speed fader (0 .. 2, 1 = as found) as a factor: half to double.
+inline double movingSpeed (const Params& p) { return std::pow (2.0, std::clamp (get (p, "speed", 1.0), 0.0, 2.0) - 1.0); }
+// The moving-tone engine's verdict goes into the inspection: of its two groups only the one it found can show, and
+// neither when the flanger engine found its moving copy (a comb that sweeps also draws moving notches in the picture
+// the moving-tone engine reads; the flanger engine sees the copy itself and takes it out exactly).
+inline void mergeMoving (Inspection& I, const moving::Found& f, const sweep::Result* flanger = nullptr)
+{
+    for (const char* k : { "phaser", "filtersweep" }) I.prob[k] = level::sureNone;
+    if (f.found && ! (flanger != nullptr && flanger->found)) I.prob[f.kind] = f.sure;
+}
+
 // Settings of each found effect (estimate.estimate, without the slower sweep fit for now).
 inline bool isNewFx (const std::string& f) { return f == "saturation" || f == "exciter" || f == "ringmod" || f == "filter" || f == "stutter" || f == "gatedrhythm"; }
 // One cut for every effect: the Sureness slider. The six 0.2.0 additions needed a higher score while the detectors'
@@ -717,10 +743,11 @@ inline void pruneFound (std::vector<FoundFx>& out)
 // echo: what the echo engine found on the sound; with echoes found, they are the DELAY group (echoFx).
 // lvl: what the level engine found on the sound; a movement found is the TREMOLO, AUTO PAN or GATED RHYTHM group (levelFx).
 // swp: what the flanger engine found on the sound; a moving copy found is the FLANGER group (flangerFx).
+// mov: what the moving-tone engine found on the sound; a moving filter found is the PHASER or FILTER SWEEP group (movingFx).
 inline std::vector<FoundFx> estimate (const Inspection& I, const Stereo& y, double cut = 0.65, const std::set<std::string>* only = nullptr,
                                       const std::shared_ptr<const room::Found>& room = {}, const std::shared_ptr<const tone::Found>& tone = {},
                                       const std::shared_ptr<const echo::Found>& echo = {}, const std::shared_ptr<const level::Movement>& lvl = {},
-                                      const std::shared_ptr<const sweep::Result>& swp = {})
+                                      const std::shared_ptr<const sweep::Result>& swp = {}, const std::shared_ptr<const moving::Found>& mov = {})
 {
     std::vector<FoundFx> out;
     (void) est::pinkProbe ((size_t) (6 * SR));      // built once before the fits run in parallel
@@ -736,6 +763,7 @@ inline std::vector<FoundFx> estimate (const Inspection& I, const Stereo& y, doub
         if (f == "delay") { if (echo != nullptr && echo->any()) out.push_back (echoFx (echo, pit->second)); continue; }
         if (lvl != nullptr && (f == "tremolo" || f == "autopan" || f == "gatedrhythm")) { if (lvl->found && f == levelName (*lvl)) out.push_back (levelFx (lvl, pit->second)); continue; }
         if (swp != nullptr && f == "flanger") { if (swp->found) out.push_back (flangerFx (swp, pit->second)); continue; }
+        if (mov != nullptr && (f == "phaser" || f == "filtersweep")) { if (mov->found && f == mov->kind) out.push_back (movingFx (mov, pit->second)); continue; }
         FoundFx F; F.name = f; F.title = titleFor (f); F.prob = pit->second; F.knobs = knobsFor (f); Params& e = F.est;
         if (f == "haas") e["lag"] = (double) hand::gccPhat (y, 30.0).lag;
         else if (f == "width") e["amount"] = std::clamp (S (f, "amount", 0.5), 0.05, 1.2);
@@ -873,6 +901,12 @@ inline Stereo applyTo (const Stereo& target, const std::vector<FoundFx>& found, 
             if (s > 1e-9) y = sweep::apply (y, *F.sweep, std::min (s, 2.0), sweepSpeed (p), sweepReach (p), sweepFeedback (p));
             continue;
         }
+        if (F.moving != nullptr)    // the found moving tone curve on this sound, at the same times
+        {
+            const double s = amountOf (F, faders);
+            if (s > 1e-9) y = moving::apply (y, *F.moving, std::min (s, 2.0), movingSpeed (scaled (F, faders)), false);
+            continue;
+        }
         y = applyAmount (F.name, y, scaled (F, faders), amountOf (F, faders));
     }
     for (auto& F : found)
@@ -895,7 +929,7 @@ inline Stereo applyTo (const Stereo& target, const std::vector<FoundFx>& found, 
 
 // One sound: take the found effects out (left), leave as is (middle) or double (right).
 inline bool canRemove (const std::string& f) { return f != "reverb" && f != "distortion" && f != "bitcrush" && ! isNewFx (f); }
-inline bool canRemove (const FoundFx& F) { return F.room != nullptr || F.tone != nullptr || F.echo != nullptr || F.level != nullptr || F.sweep != nullptr || canRemove (F.name); }      // the room engine takes its reverb out, the tone engine its reflections, the echo engine its echoes, the level engine its movement, the flanger engine its moving copy
+inline bool canRemove (const FoundFx& F) { return F.room != nullptr || F.tone != nullptr || F.echo != nullptr || F.level != nullptr || F.sweep != nullptr || F.moving != nullptr || canRemove (F.name); }      // the room engine takes its reverb out, the tone engine its reflections, the echo engine its echoes, the level engine its movement, the flanger engine its moving copy, the moving-tone engine its curve
 // The found effect turned down to s (0 = out as far as this effect allows, 1 = untouched).
 inline Stereo takeOut (const FoundFx& F, const Stereo& in, double s)
 {
@@ -956,6 +990,11 @@ inline Stereo reshape (const Stereo& src, const std::vector<FoundFx>& found, con
                 const Params p = scaled (F, faders);
                 y = moved || s > 1.0 ? sweep::render (y, *F.sweep, true, s, sweepSpeed (p), sweepReach (p), sweepFeedback (p)) : sweep::apply (y, *F.sweep, s - 1.0);
             }
+        }
+        else if (F.moving != nullptr)
+        {
+            // the found curve off and what the faders give on, as one gain per bin and moment; the moving-tone engine's answer belongs to this very sound (same length)
+            if (F.moving->n == y.size()) y = moving::apply (y, *F.moving, std::min (s, 2.0) - 1.0, movingSpeed (scaled (F, faders)), true);
         }
         else if (F.name == "tonematch") {}      // two sounds only
         else if (canRemove (F.name))
