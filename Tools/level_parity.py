@@ -52,8 +52,8 @@ def main():
         # what was found, and the sounds
         if F is not None and C['found'] and kind == C['kind']:
             nfound += 1; prof = np.stack([C['profL'], C['profR']], 1); dsh = float(np.abs(prof - F['prof']).max()); dp = rel(F['period'], C['period'])
-            ne = len(F.get('edges') or []); same = ne == len(C['edges']) and list(F.get('skip') or []) == C['skip'] and F['K'] == C['K']
-            if not same: line += ' | edges / skipped steps differ (Python %d edges, C++ %d)' % (ne, len(C['edges'])); bad += 1
+            ne = len(F.get('edges') or []); same = ne == len(C['edges']) and all(list(F.get(k) or []) == C[k] for k in ('skip', 'open')) and F['K'] == C['K']
+            if not same: line += ' | edges / left-out steps differ (Python %d edges, C++ %d)' % (ne, len(C['edges'])); bad += 1
             else:
                 for a, b in zip(F.get('edges') or [], C['edges']): dsh = max(dsh, abs(a['off'] - b['off']), float(np.abs(np.asarray(a['u']) - np.asarray(b['u'])).max()))
             if 'trust' in F: dsh = max(dsh, abs(F['trust'] - C['trust']))

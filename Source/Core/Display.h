@@ -218,7 +218,7 @@ inline Plot levelPlot (const FoundFx& F, const Params& p, double s, bool onSecon
     if (M.against)
         c = course ? "Moves from side to side about once in " + num (f.period / speed, 1) + " s, " + (depth >= 40 ? std::string ("all the way to each side") : "up to " + num (depth) + " dB between the sides") + " (teal left, orange right). Seen less than twice: drawn as it was measured."
                    : "Moves between the sides " + num (rate, 2) + " times a second, " + (depth >= 40 ? std::string ("all the way to each side") : "up to " + num (depth) + " dB between them") + " (teal left, orange right).";
-    else if (M.steps) c = "Opens and closes " + num (rate, 2) + " times a second, " + num (depth) + " dB down when closed" + (f.skip.empty() ? "." : ", some steps left out.");
+    else if (M.steps) c = "Opens and closes " + num (rate, 2) + " times a second, " + num (depth) + " dB down when closed" + (f.leavesOut() ? ", some steps left out." : ".");
     else c = "The level goes down by " + num (depth) + " dB and back " + num (rate, 2) + " times a second.";
     {                                                                  // where in the sound it is, when that is not all of it
         const double all = (double) M.n / SR; double in = 0; for (const level::Span& sp : M.spans) in += (double) (sp.b - sp.a) / SR;

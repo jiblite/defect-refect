@@ -274,8 +274,10 @@ def left_out(L, K, g, share=0.4):
         if v and max(v) < share * dep: out.append(i)
     return start, out
 
-def gate_steps(L, K, g):
-    """A gate's shape measured again from the steps it does not leave out. Returns (shape, start bin of the laid-out cycles, left-out cycles)."""
+def gate_steps(L, K, g, clean=False):
+    """A gate's shape measured again from the steps it does not leave out. Returns (shape, start bin of the laid-out cycles, left-out cycles).
+    clean: every shape measured here is freed of a hard gate's clicks (despike) before it is used: for the shape that is taken out
+    (together_result). The rule's measures are taken from the plain shape (they were fitted on it)."""
     skip = []; start = 0
     for rnd in range(2):
         lo = left_out(L, K, g, 0.3 if rnd == 0 else 0.4)
@@ -286,7 +288,7 @@ def gate_steps(L, K, g):
         for i in skip: use[start + i * K:start + (i + 1) * K] = False
         g2, r2, npairs = pairs_fold(L, K, use=use)
         if npairs == 0: return g, start, []
-        g = g2
+        g = despike(g2) if clean else g2
     return g, start, skip
 
 # ---------------------------------------------------------------- left against right (auto pan)
@@ -464,9 +466,12 @@ def despike(g):
     gets peaks (up to three bins wide) over its open level. Peaks narrower than five bins are cut off when that lowers the top by
     more than 3 dB and leaves a movement standing: most of the depth, or 6 dB of it (clicks can stand higher over the open level
     than the gate goes down; a gate that is open for a short moment only leaves nothing when its peak is cut, and is kept)."""
-    import scipy.ndimage as ndi
-    o = ndi.grey_opening(g, size=5, mode='wrap'); left = depth_of(o)
+    o = opened(g); left = depth_of(o)
     return o if (top_of(g) - top_of(o) > 3.0 and (left >= 0.5 * depth_of(g) or left >= 6.0)) else g
+def opened(g):
+    """g without its peaks narrower than five bins."""
+    import scipy.ndimage as ndi
+    return ndi.grey_opening(g, size=5, mode='wrap')
 
 def band_depths(L, K, g, start=0, skip=()):
     """Per band (of both channels): how far its level is down in the low quarter of the shape g against the high quarter (median over
@@ -481,6 +486,39 @@ def band_depths(L, K, g, start=0, skip=()):
         warnings.simplefilter('ignore'); out = np.nanmedian(d, 0)
     return out[np.isfinite(out)]
 
+def open_steps(L, K, g, start=0, skip=()):
+    """Of the steps a gate leaves out, those in which there is no gate at all (a sound that has the effect on a part of it only): the
+    sound is as loud there as in the open stretch of the cycles around them (the level of all bands together over the bins where the
+    shape is high, against the middle of that level in the four nearest cycles that are not left out; as loud: less than half the
+    shape's depth under them). One step alone is not asked (a sound's own level goes up and down from step to step): eight or more
+    in a row are open when half of them are as loud; fewer are asked one by one only where they reach the sound's start or end."""
+    n = (len(L) - start) // K
+    if not len(skip) or n < 2: return []
+    lo, hi = g.min(), g.max(); dep = hi - lo
+    if dep < 6.0: return []
+    high = [j for j in range(K) if g[(start + j) % K] > hi - 0.25 * dep]
+    if not high: return []
+    left = np.zeros(n, bool); left[[i for i in skip if 0 <= i < n]] = True
+    C = L[start:start + n * K].reshape(n, K, -1)[:, high, :]; lev = 10 * np.log10(np.where(np.isnan(C), 0.0, 10.0 ** (np.nan_to_num(C) / 10.0)).sum((1, 2)) / len(high) + 1e-300)
+    loud = np.zeros(n, bool)
+    for i in np.where(left)[0]:
+        near = []
+        for d in range(1, n):
+            if len(near) >= 4: break
+            for k in (i - d, i + d):
+                if 0 <= k < n and not left[k] and len(near) < 4: near.append(lev[k])
+        loud[i] = bool(near) and lev[i] > np.median(near) - 0.5 * dep
+    out = []; a = 0
+    while a < n:
+        if not left[a]: a += 1; continue
+        b = a
+        while b + 1 < n and left[b + 1]: b += 1
+        if b - a + 1 >= 8:
+            if 2 * int(loud[a:b + 1].sum()) >= b - a + 1: out += list(range(a, b + 1))
+        elif a == 0 or b >= n - 1: out += [i for i in range(a, b + 1) if loud[i]]
+        a = b + 1
+    return [int(i) for i in out]
+
 def together_result(x, E, best, fine=True):
     """The found shared movement made ready for use: for a shape with steep steps the period and the steps are looked at finely first."""
     P, K, g, start, skip = best['P'], best['K'], despike(best['g']), best['start'], best['skip']; edges = []
@@ -491,12 +529,19 @@ def together_result(x, E, best, fine=True):
             if npairs > 0:
                 g2 = despike(g2)
                 st2, sk2 = 0, []
-                if shape_numbers(g2)[1] >= 0.3 and depth_of(g2) >= 6.0: g2, st2, sk2 = gate_steps(L, K, g2)
+                if shape_numbers(g2)[1] >= 0.3 and depth_of(g2) >= 6.0: g2, st2, sk2 = gate_steps(L, K, g2, clean=True)
                 P3, ed3 = sharpen(x, P2, K, g2, st2, sk2, ncyc)
                 if ed3: P, g, start, skip, edges = P3, g2, st2, sk2, ed3
-    bd = band_depths(cell_levels(E, P, K), K, g, start, skip); trust = float(np.percentile(bd, 25) + 6.0) if len(bd) >= 4 else CAP_DB
-    g = g - top_of(g); prof = np.stack([g, g], 1)
-    return dict(kind='together', period=P * HOP / SR, rate=SR / HOP / P, K=K, prof=prof, lane=None, n=len(x), depth=depth_of(g), start=int(start), skip=[int(i) for i in skip], edges=edges, trust=trust,
+    L = cell_levels(E, P, K); bd = band_depths(L, K, g, start, skip); trust = float(np.percentile(bd, 25) + 6.0) if len(bd) >= 4 else CAP_DB; opn = open_steps(L, K, g, start, skip)
+    # What counts as 0 dB: the top of the shape. A gate (steep steps between two levels) is open there and does nothing to the sound:
+    # 0 dB is the middle of its open stretch, and nothing stands above it (what the shape shows over that level next to a step is the
+    # click of a hard switch or the sound's own doing, not the gate's).
+    tp = top_of(g); gate = False
+    if edges:
+        o = opened(g); pl = plateaus(o)
+        if pl is not None: tp = float(np.median(o[[(pl[0] + r) % K for r in pl[1]]])); gate = True
+    g = np.minimum(g - tp, 0.0) if gate else g - tp; prof = np.stack([g, g], 1)
+    return dict(kind='together', period=P * HOP / SR, rate=SR / HOP / P, K=K, prof=prof, lane=None, n=len(x), depth=depth_of(g), start=int(start), skip=[int(i) for i in skip], open=opn, edges=edges, trust=trust,
                 measures={k: v for k, v in best.items() if k != 'g'})
 
 def gain_db(F, n):
@@ -508,8 +553,8 @@ def gain_db(F, n):
         r = rel[inside]; u = np.interp(r / DEC, np.arange(len(e['u'])), e['u']); taper = np.clip(np.minimum(r, 2 * half - r) / (0.25 * half), 0.0, 1.0)
         for ch in range(2):
             p = F['prof'][:, ch]; A = 0.5 * (p[(k - 2) % K] + p[(k - 1) % K]); B = 0.5 * (p[(k + 2) % K] + p[(k + 3) % K]); g[inside, ch] += taper * (A + u * (B - A) - g[inside, ch])
-    if F.get('skip'):                                                     # steps the gate left out: closed all through
-        low = np.sort(F['prof'], 0)[:max(1, K // 8)].mean(0); cyc = np.floor((t / Pf * K - F['start']) / K).astype(np.int64); g[np.isin(cyc, F['skip'])] = low
+    if F.get('skip'):                                                     # steps the gate left out: closed all through; those as loud as the open ones: no gate there, nothing done
+        low = np.sort(F['prof'], 0)[:max(1, K // 8)].mean(0); cyc = np.floor((t / Pf * K - F['start']) / K).astype(np.int64); g[np.isin(cyc, F['skip'])] = low; g[np.isin(cyc, F.get('open') or [])] = 0.0
     if F.get('lane') is not None:                                         # the measured course while it lasts, the repeating shape after it
         L = F['lane']; m = min(n, (len(L) - 1) * HOP)
         for ch in range(2): g[:m, ch] = np.interp(t[:m], np.arange(len(L)), L[:, ch])

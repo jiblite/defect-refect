@@ -602,8 +602,11 @@ inline bool leftOut (const Grid& L, int K, const Vec& g, double share, int& star
     }
     return true;
 }
-// A gate's shape measured again from the steps it does not leave out.
-inline void gateSteps (const Grid& L, int K, Vec& g, int& start, std::vector<int>& skip)
+inline Vec despike (const Vec& g);
+// A gate's shape measured again from the steps it does not leave out. clean: every shape measured here is freed of a
+// hard gate's clicks (despike) before it is used: for the shape that is taken out (togetherResult). The rule's
+// measures are taken from the plain shape (they were fitted on it).
+inline void gateSteps (const Grid& L, int K, Vec& g, int& start, std::vector<int>& skip, bool clean = false)
 {
     start = 0; skip.clear();
     for (int rnd = 0; rnd < 2; ++rnd)
@@ -615,7 +618,7 @@ inline void gateSteps (const Grid& L, int K, Vec& g, int& start, std::vector<int
         std::vector<char> use ((size_t) L.rows, 1);
         for (int i : skip) for (int r = start + i * K; r < start + (i + 1) * K && r < L.rows; ++r) use[(size_t) r] = 0;
         const Fold f = pairsFold (L, K, &use); if (f.npairs == 0) { skip.clear(); return; }
-        g = f.g;
+        g = clean ? despike (f.g) : f.g;
     }
 }
 
@@ -872,11 +875,11 @@ inline std::vector<Tog> candidatesTogether (const Levels& E, const Stop& stop, i
     return out;
 }
 // The same for a period given from outside (frames): the top of the scan within 3 % of it, measured and scored as a
-// peak of the sound's own scan would be.
-inline bool togetherAt (const Levels& E, double P0, Tog& m)
+// peak of the sound's own scan would be. pinned: at exactly that period (no top looked for around it, nothing refined).
+inline bool togetherAt (const Levels& E, double P0, Tog& m, bool pinned = false)
 {
     const double lo = PMIN, hi = E.T / 3.0; if (! (P0 >= lo && P0 <= hi)) return false;
-    const long w = 101, a = 15, n = 2 * (w + a) + 1; Vec Ps ((size_t) n), S ((size_t) n, 0.0); std::map<int, Lane> lane;
+    const long w = 101, a = pinned ? 0 : 15, n = 2 * (w + a) + 1; Vec Ps ((size_t) n), S ((size_t) n, 0.0); std::map<int, Lane> lane;
     for (long i = 0; i < n; ++i)
     {
         Ps[(size_t) i] = std::clamp (P0 * std::exp (0.002 * (double) (i - w - a)), lo, hi);
@@ -887,7 +890,7 @@ inline bool togetherAt (const Levels& E, double P0, Tog& m)
     long k = w + a; for (long i = w; i <= w + 2 * a; ++i) if (S[(size_t) i] > S[(size_t) k]) k = i;
     Vec win ((size_t) (2 * w + 1)); for (long j = -w; j <= w; ++j) win[(size_t) (j + w)] = S[(size_t) std::clamp (k + j, 0L, n - 1)];
     std::nth_element (win.begin(), win.begin() + w, win.end());
-    auto it = lane.find (tauFor (Ps[(size_t) k])); if (! measureTogether (E, Ps[(size_t) k], it != lane.end() ? &it->second : nullptr, m)) return false;
+    auto it = lane.find (tauFor (Ps[(size_t) k])); if (! measureTogether (E, Ps[(size_t) k], it != lane.end() && ! pinned ? &it->second : nullptr, m)) return false;
     m.share = S[(size_t) k]; m.excess = S[(size_t) k] - win[(size_t) w]; m.score = scoreTogether (m); return true;
 }
 // Of the candidates at or above `least`: the surest; the same movement seen at a shorter period (a whole fraction) wins if it passes too.
@@ -992,12 +995,16 @@ inline double sharpen (const Vec& q, double P, int K, const Vec& g, int start, c
 // that lowers the top by more than 3 dB and leaves a movement standing: most of the depth, or 6 dB of it (clicks can
 // stand higher over the open level than the gate goes down; a gate that is open for a short moment only leaves
 // nothing when its peak is cut, and is kept as it is).
-inline Vec despike (const Vec& g)
+inline Vec opened (const Vec& g)                                        // g without its peaks narrower than five bins
 {
     const int K = (int) g.size(); Vec er ((size_t) K), o ((size_t) K);
     for (int i = 0; i < K; ++i) { double v = g[(size_t) i]; for (int j = -2; j <= 2; ++j) v = std::min (v, g[(size_t) pmod (i + j, K)]); er[(size_t) i] = v; }
     for (int i = 0; i < K; ++i) { double v = er[(size_t) i]; for (int j = -2; j <= 2; ++j) v = std::max (v, er[(size_t) pmod (i + j, K)]); o[(size_t) i] = v; }
-    const double left = depthOf (o);
+    return o;
+}
+inline Vec despike (const Vec& g)
+{
+    const Vec o = opened (g); const double left = depthOf (o);
     return (topOf (g) - topOf (o) > 3.0 && (left >= 0.5 * depthOf (g) || left >= 6.0)) ? o : g;
 }
 // Per band (of both channels): how far its level is down in the low quarter of the shape against the high quarter
@@ -1076,6 +1083,7 @@ struct Found
     std::vector<int> open;                                      // of the steps left out: those as loud as the open ones (no gate there at all: nothing is done to them)
     double score = -std::numeric_limits<double>::infinity(), sure = 0;                          // the rule's answer (0 and up: reported by the prototype), and what the Sureness slider compares
     bool steps() const { return ! against && ! edges.empty(); }                                // a shape with steep steps: a gate
+    bool leavesOut() const { return skip.size() > open.size(); }                               // it has steps that count as closed all through
     Tog tog; Pan pan; std::vector<Tog> cands;                   // everything measured (for the parity test and the picture)
 };
 // The found shared movement made ready for use: for a shape with steep steps the period and the steps are looked at finely first.
@@ -1091,7 +1099,7 @@ inline void togetherResult (const Stereo& x, const Levels& E, const Tog& best, F
             if (f.npairs > 0)
             {
                 Vec g2 = despike (f.g); int st2 = 0; std::vector<int> sk2;
-                if (shapeNumbers (g2).steep >= 0.3 && depthOf (g2) >= 6.0) gateSteps (L, K, g2, st2, sk2);
+                if (shapeNumbers (g2).steep >= 0.3 && depthOf (g2) >= 6.0) gateSteps (L, K, g2, st2, sk2, true);
                 std::vector<Edge> ed3; const double P3 = sharpen (q, P2, K, g2, st2, sk2, ncyc, ed3);
                 if (! ed3.empty()) { P = P3; g = g2; start = st2; skip = sk2; edges = ed3; }
             }
@@ -1099,7 +1107,16 @@ inline void togetherResult (const Stereo& x, const Levels& E, const Tog& best, F
     }
     const Grid L = cellLevels (E.e[0], E.e[1], E.T, P, K); const Vec bd = bandDepths (L, K, g, start, skip);
     F.trust = bd.size() >= 4 ? pct (bd, 25.0) + 6.0 : CAP_DB; F.open = openSteps (L, K, g, start, skip);
-    const double tp = topOf (g); for (auto& v : g) v -= tp;
+    // What counts as 0 dB: the top of the shape. A gate (steep steps between two levels) is open there and does
+    // nothing to the sound: 0 dB is the middle of its open stretch, and nothing stands above it (what the shape shows
+    // over that level next to a step is the click of a hard switch or the sound's own doing, not the gate's).
+    double tp = topOf (g); bool gate = false;
+    if (! edges.empty())
+    {
+        const Vec o = opened (g); const Plateau pl = plateaus (o);
+        if (pl.ok) { Vec h; for (int r : pl.hi) h.push_back (o[(size_t) ((pl.start + r) % K)]); tp = med (h); gate = true; }
+    }
+    for (auto& v : g) v = gate ? std::min (v - tp, 0.0) : v - tp;
     F.found = true; F.against = false; F.period = P * HOP / SR; F.rate = SR / HOP / P; F.K = K; F.prof[0] = F.prof[1] = g; F.lane[0].clear(); F.lane[1].clear(); F.n = x.size();
     F.depth = depthOf (g); F.start = start; F.skip = skip; F.edges = edges; F.tog = best; F.score = best.score; F.sure = sureness (best.score);
 }
@@ -1148,12 +1165,12 @@ inline Found find (const Stereo& x, const Stop& stop = {}, double least = SCORE_
     return F;
 }
 // x measured at a movement found elsewhere in the same sound (its kind and period given): the same measures and the
-// same rule as for a movement x shows by itself.
-inline Found findAt (const Stereo& x, const Levels& E, bool against, double period)
+// same rule as for a movement x shows by itself. pinned (a shared movement only): at exactly that period.
+inline Found findAt (const Stereo& x, const Levels& E, bool against, double period, bool pinned = false)
 {
     Found F; F.n = x.size(); const double P = period * SR / HOP;
     if (against) { Pan pan = panAt (E, P); pan.score = scorePan (pan); F.pan = pan; if (pan.ok && fin (pan.score)) againstResult (x, E, pan, F); }
-    else { Tog m; if (togetherAt (E, P, m) && fin (m.score)) togetherResult (x, E, m, F); }
+    else { Tog m; if (togetherAt (E, P, m, pinned) && fin (m.score)) togetherResult (x, E, m, F); }
     return F;
 }
 // Only a pan slower than `slowest` seconds a cycle (what a piece of PIECE seconds cannot see often enough).
@@ -1310,13 +1327,18 @@ inline Stereo apply (const Stereo& x, const Found& F, double s = -1.0)
 // asked again at a half and a third of its period (findSlowPan: a pan three times as fast looks like a slow one with a
 // strong third harmonic, and three cycles laid over each other hold the sound's own wander from side to side).
 // The clock: where in the surest piece's cycle every place of the sound stands, from the pieces that carry the
-// movement (one steady speed if that fits them all, else from piece to piece).
+// movement (one steady speed if that fits them all, else from piece to piece). A gate's clock is set by the pieces
+// that saw its steps finely, and a piece that measured a steady movement at a speed a little off is measured again
+// at the clock's speed (oneSpeed).
 // Where the movement is: every stretch of half a second or more is asked whether the sound does there what would be
 // taken out (askPiece, spansOf). Only those stretches are touched: an effect that is on a part of the sound is taken
 // out of that part, and the rest is left exactly as it was. If one window found the movement and it turns out to be on
 // a part of it only, that part is measured again by itself (narrow): the movement is surer and truer there.
 // Taken out, a piece that carries the movement by the rule loses its own measured movement, any other stretch that
-// has it the surest piece's movement on the clock. Put onto another sound, the surest piece's shape runs on the first
+// has it the surest piece's movement on the clock. So does a carrying piece that follows the surest piece's movement
+// better than its own (askPiece), one that did not see a gate's steps finely, and, on a steady clock, one that has the
+// movement on a part of it only: what such a piece measured itself is less true than the surest piece's movement
+// laid on the clock. Put onto another sound, the surest piece's shape runs on the first
 // sound's clock, at the times at which the first sound has the movement (an effect that comes in halfway comes in
 // halfway on the second sound too; past the first sound's end as at its end).
 constexpr double PIECE = 6.0;                                           // seconds: the shortest piece
@@ -1389,14 +1411,17 @@ inline double shiftOf (const Found& lead, const Found& f)
 // The clock from the pieces that carry the movement by the rule. Each says where in the surest piece's cycle its own
 // middle stands (its shape set against the surest piece's shape). If one steady speed puts all of them within 0.03
 // cycles the clock is that straight line (an effect's own oscillator: the usual case); otherwise it runs from middle
-// to middle (a speed that wanders). One piece alone: its own period.
-inline Clock clockOf (const Movement& M)
+// to middle (a speed that wanders). One piece alone: its own period. leave: pieces that are not asked. A gate's
+// clock is set only by the pieces whose steps the fine look found: the others know their place in the cycle to a
+// few milliseconds, and a gate lifted that much too early or too late is worse than one left alone.
+inline Clock clockOf (const Movement& M, const std::vector<char>* leave = nullptr)
 {
     Clock C; const Found* F = M.best(); if (! M.found || F == nullptr) return C;
     struct Knot { double c, ph, P; }; std::vector<Knot> kn; int lead = -1; const bool course = ! F->lane[0].empty();
     for (size_t j = 0; j < M.pieces.size(); ++j)
     {
-        const Piece& p = M.pieces[j]; const bool isLead = (int) j == M.lead; if (! p.use || p.clocked || (course && ! isLead)) continue;
+        const Piece& p = M.pieces[j]; const bool isLead = (int) j == M.lead; if (! p.use || p.clocked || (course && ! isLead) || (leave != nullptr && (*leave)[j])) continue;
+        if (F->steps() && ! p.f.steps()) continue;
         const double P = p.f.period * SR, c = 0.5 * ((double) p.a + (double) p.b); if (isLead) lead = (int) kn.size();
         kn.push_back ({ c, (isLead ? 0.0 : shiftOf (*F, p.f)) + (c - (double) p.a) / P, P });
     }
@@ -1447,7 +1472,9 @@ inline Clock clockOf (const Movement& M)
 // a piece that has the movement on a part of it only has measured a blurred shape of its own. A gate's own measurement
 // can also be wrong in a way the answers per stretch do not show (steps it takes for left out predict nothing and so
 // cost nothing): there the surest piece's gate is taken as well when it takes clearly more of the piece's level steps
-// away (by 8 % and more: the sum of |z - m0| - |z - p - m1| over the piece).
+// away (by 8 % and more: the sum of |z - m0| - |z - p - m1| over the piece). And a piece in which the fine look did not
+// find the gate's steps has only the coarse shape, whose steps lie some milliseconds off: on a steady clock the
+// surest piece's steps are in the right place to a fraction of a millisecond, and its gate is taken.
 inline void askPiece (const Stereo& x, const Movement& M, const Piece& p, std::vector<Window>& out, bool& lead)
 {
     const Found& L = *M.best(); const bool rule = p.use && ! p.clocked, isLead = &p == &M.pieces[(size_t) M.lead]; lead = ! rule;
@@ -1513,7 +1540,7 @@ inline void askPiece (const Stereo& x, const Movement& M, const Piece& p, std::v
     if (rule) Wo = ask (true, so, go);
     if (! rule || (! isLead && M.pieces.size() > 1 && M.clock.t.size() >= 2 && L.lane[0].empty())) Wl = ask (false, sl, gl);
     for (const Window& w : Wl) sw += w.w;
-    lead = ! rule || (! Wl.empty() && (sl > so + 0.1 * sw || (L.steps() && gl > 0.0 && gl > 1.08 * go)));
+    lead = ! rule || (! Wl.empty() && (sl > so + 0.1 * sw || (L.steps() && gl > 0.0 && gl > 1.08 * go) || (L.steps() && ! p.f.steps() && M.clock.steady)));
     for (auto& w : lead ? Wl : Wo) out.push_back (std::move (w));
 }
 // The place between two neighbouring stretches, one with the movement and one without, where the frames change sides
@@ -1599,6 +1626,40 @@ inline bool narrow (const Stereo& x, Movement& M, const Stop& stop)
     for (Piece& p : M.pieces) { if (stop && stop()) { M.stopped = true; return true; } bool byLead = false; askPiece (x, M, p, M.windows, byLead); }
     return true;
 }
+// One steady movement, measured at a wrong speed in a piece. A piece that has the movement on a part of it only, or
+// whose sound has a beat of its own, may put the movement's speed up to 3 % off (the top of its own scan lies there):
+// its shape is then blurred and its place in the cycle a few hundredths of a cycle off. That tilts the clock (a gate
+// lifted 10 ms early) and hides where in the piece the movement ends. So: if the carrying pieces that agree with the
+// surest piece on the speed (over the length of a piece the two speeds part by less than DRIFT cycles) keep one
+// steady clock, every other carrying piece is measured again at exactly that clock's speed. If the rule is at least as
+// sure of each of them there as at the piece's own speed, the sound has one steady movement: those measurements stand,
+// and the clock is that of the pieces that agreed. If not (a speed that does wander), nothing is changed. The
+// movement's score stays what the pieces showed by themselves. A shared movement only (a pan's shape is too smooth
+// for a hundredth of a cycle to matter). True: measurements were replaced.
+constexpr double DRIFT = 0.1;
+constexpr double PARTLY = 0.85;                                         // a piece with less of it than this in the stretches that have the movement has it on a part only (as in narrow)
+inline bool oneSpeed (const Stereo& x, Movement& M, double carry, const Stop& stop)
+{
+    const Found* F = M.best(); if (! M.found || F == nullptr || F->against || M.pieces.size() < 2) return false;
+    std::vector<char> leave (M.pieces.size(), 0); std::vector<size_t> off; size_t in = 0;
+    for (size_t j = 0; j < M.pieces.size(); ++j)
+    {
+        const Piece& p = M.pieces[j]; if (! p.use) continue;
+        if (std::abs (p.f.period / F->period - 1.0) * (double) (p.b - p.a) / (F->period * SR) > DRIFT) { leave[j] = 1; off.push_back (j); } else ++in;
+    }
+    if (off.empty() || in < 2) return false;
+    const Clock C = clockOf (M, &leave); if (! C.steady || C.t.size() < 2) return false;
+    const double period = (C.t[1] - C.t[0]) / (C.ph[1] - C.ph[0]) / SR; std::vector<Found> fs;
+    for (size_t j : off)
+    {
+        if (stop && stop()) { M.stopped = true; return false; }
+        const Piece& p = M.pieces[j]; const Stereo s = x.slice (p.a, p.b - p.a); Found f = findAt (s, levels (s), false, period, true);
+        if (! f.found || f.against || f.score < carry || ! (f.score >= p.f.score)) return false;
+        fs.push_back (std::move (f));
+    }
+    for (size_t i = 0; i < off.size(); ++i) { Piece& p = M.pieces[off[i]]; p.f = std::move (fs[i]); p.guided = true; }
+    M.clock = C; return true;
+}
 // x in pieces of `seconds` to twice that; own (piece): what a piece shows by itself.
 template <typename Own>
 inline Movement lookPieces (const Stereo& x, double seconds, Own own, const Stop& stop, double carry, double price, double lean)
@@ -1670,6 +1731,7 @@ inline Movement lookPieces (const Stereo& x, double seconds, Own own, const Stop
     const Found& B = M.pieces[(size_t) M.lead].f;
     M.found = true; M.against = B.against; M.steps = B.steps(); M.rate = B.rate; M.depth = B.depth; M.score = bs; M.sure = sureness (bs);
     M.clock = clockOf (M);
+    if (np > 1) { oneSpeed (x, M, carry, stop); if (M.stopped) return M; }
     for (Piece& p : M.pieces)                                           // where the movement is
     {
         if (stop && stop()) { M.stopped = true; return M; }
@@ -1690,6 +1752,11 @@ inline Movement lookPieces (const Stereo& x, double seconds, Own own, const Stop
         p.there = (double) in / (double) std::max<size_t> (1, p.b - p.a);
         if (p.sounds && ! p.use && p.there >= 0.5) { p.use = p.clocked = true; ++M.carrying; }
     }
+    // A piece that has the movement on a part of it only has measured the movement together with the part without it:
+    // a gate's steps are laid over each other with stretches that have none, and their place comes out some
+    // milliseconds off. On one steady clock the surest piece's movement is the better picture of what happens there.
+    if (M.found && ! M.against && M.clock.steady && np > 1)
+        for (size_t j = 0; j < np; ++j) { Piece& p = M.pieces[j]; if ((int) j != M.lead && p.use && ! p.clocked && p.there > 0.0 && p.there < PARTLY) p.clocked = true; }
     return M;
 }
 inline Movement analyse (const Stereo& x, const Stop& stop = {}, double carry = CARRY, double price = SWITCH, double lean = LEAN)

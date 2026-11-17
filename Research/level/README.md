@@ -30,7 +30,12 @@ amount in dB at the same moment, and it repeats exactly. Notes and hits do neith
    to a constant, or the powers do). A pan slower than half the sound is fitted as one slow curve (`slow_fit`).
 5. A gate: steep steps are looked at finely (`sharpen`: power in steps of 0.125 ms laid over all cycles; the
    period that makes the steps sharpest, each step's place and course), and steps the gate leaves out are found
-   (`left_out`, `gate_steps`).
+   (`left_out`, `gate_steps`). A hard gate clicks where it opens, and the clicks stand in the measured shape as
+   peaks a few ms wide. The shape that is taken out is freed of them (`despike`), also each time it is measured
+   again without the left-out steps: with the peaks in it the top of the shape is the clicks, the open stretch
+   lies some dB under it and would be lifted by that much. For the same reason a gate's 0 dB is the middle of its
+   open stretch (`plateaus` of the shape without its narrow peaks) and nothing of the shape stands above it: open,
+   a gate does nothing to the sound.
 6. `apply` takes the gain out (never lifting by more than 40 dB, nor more than the bands say the gate really
    closes, `band_depths`) or puts it on, scaled in dB for everything between and beyond.
 
@@ -118,7 +123,12 @@ The rule was fitted and tested on sounds of 6 to 9 s. A longer sound is cut into
    the lane);
 4. the clock: where in the surest piece's cycle every place of the sound stands. One steady period if that puts
    all carrying pieces within 0.03 cycles (an effect's own oscillator), else from piece to piece (a speed that
-   wanders);
+   wanders). A gate's clock is set only by the pieces that saw its steps finely: a piece without them places the
+   cycle to a few ms, and a gate that is lifted a few ms off its steps is worse than no lift. A piece whose own
+   speed runs away from the others' steady clock by more than a tenth of a cycle over its length is measured again
+   at the clock's speed (`oneSpeed`): each piece picks the best period within 3 % of the one it is given, and a
+   piece that holds the movement's end can pick one that is a little off and gives a blurred shape. The new
+   measurement stands only if the rule still passes it and scores it no lower;
 5. where the movement is: every stretch of half a second or more (a whole cycle; of a pan half a cycle) is asked
    whether the sound does there what would be taken out. What the stretch does is set against what the movement
    would do there and against no movement at all (sums of absolute differences): +1 = just what the movement
@@ -135,9 +145,12 @@ Taken out, a piece that carries the movement by the rule loses its own measured 
 has it the surest piece's movement on the clock. A carrying piece is asked with both and loses the surest piece's
 movement instead of its own when it follows that clearly better, or, for a gate, when that takes clearly more of
 the piece's level steps away (8 % and more): a gate's own measurement can be wrong in a way the stretches' answers
-do not show, because steps it takes for left out predict nothing and so cost nothing. Put onto another sound, the surest piece's shape runs on the first
-sound's clock at the times at which the first sound has the movement: an effect that comes in halfway comes in
-halfway on the second sound too (past the first sound's end it goes on as at its end).
+do not show, because steps it takes for left out predict nothing and so cost nothing. On a steady clock two more
+kinds of piece lose the surest piece's movement: one that has the movement on a part of itself only (under 85 %:
+its own shape was measured across the part without it), and one without fine steps where the surest piece has
+them (its coarse shape puts the steps up to 7 ms off). Put onto another sound, the surest piece's shape runs on
+the first sound's clock at the times at which the first sound has the movement: an effect that comes in halfway
+comes in halfway on the second sound too (past the first sound's end it goes on as at its end).
 
 `long.py` makes the test sounds (dry corpus clips laid end to end, crossfaded, 20 to 62 s; the effects of
 `../detect/zoo_fx.py`) and runs `drlevel` on them:
