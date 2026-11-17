@@ -5,7 +5,7 @@
 import sys, os, json, subprocess, tempfile, pickle, numpy as np, soundfile as sf
 here = os.path.dirname(os.path.abspath(__file__)); sys.path.insert(0, os.path.join(here, '..', 'Research', 'echo')); import echo2
 args = [a for a in sys.argv[1:] if not a.startswith('--')]; tool, files = args[0], args[1:]; render = '--render' in sys.argv
-rule = pickle.load(open(os.environ.get('RULE', os.path.join(here, '..', 'Research', 'echo', 'rule3.pkl')), 'rb')) if os.path.exists(os.environ.get('RULE', os.path.join(here, '..', 'Research', 'echo', 'rule3.pkl'))) else None
+rule = pickle.load(open(os.environ.get('RULE', os.path.join(here, '..', 'Research', 'echo', 'rule5.pkl')), 'rb')) if os.path.exists(os.environ.get('RULE', os.path.join(here, '..', 'Research', 'echo', 'rule5.pkl'))) else None
 KEYS = ['ms', 'score', 'a', 'h', 'a2', 'added', 'removed', 'even', 'bands', 'others', 'npk', 'secs', 'pshare', 'pmed', 'piqr', 'pup', 'pn', 'pinfo', 'peff']
 worst = {k: 0.0 for k in KEYS + ['p', 'cand.score', 'cand.a']}; bad = 0; nrec = 0
 def rel(a, b): return abs(a - b) / max(abs(a), abs(b), 1e-9)

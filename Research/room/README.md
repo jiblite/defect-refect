@@ -40,6 +40,15 @@ mean) against 19.7 / 20.1, the same share made worse (12 %), room onto a second 
 `Estimate.h` (`roomSureness`), `sure_cpp.py` checks the app's own verdicts on sounds the rule was not fitted on,
 `own_stats.py` and `narrow_test.py` show what happens when left and right share nearly everything.
 
+`bench/cut_test.py` is the test behind the second look of 0.4.2 (`Estimate.h`, `recheckRoomEnd`): the verdict on
+sounds as files, cut off at 6 s, and with 3 s of silence after them. The model learned from sounds that end inside
+the file. Cut off while still playing, a room showed on 54 of 120 dry sounds (on 18 with silence after them) and
+on 90 of the corpus's 198 dry clips (29). The app now looks a second time with silence after the sound and the
+less sure verdict counts: 18 and 29. Sounds with a natural ending are unchanged (104 of 120 with a reverb, 18 of
+120 dry); cut sounds with a real reverb pay, 68 of 120 shown instead of 88. Other ways to join the two looks
+(their mean, the root of their product) keep 75 to 78 of those and show 21 to 22 of the dry ones. Training the
+model on sounds that are cut off is the real repair and is still to do.
+
 ## What was tried and did not help
 - A plain physical rule as the answer (direct sound smeared with the room's decay): `look_test.py`.
 - Rendering that treats the sound's left/right direction separately: `axis.py`, `axis_test.py`.

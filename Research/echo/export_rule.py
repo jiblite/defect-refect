@@ -1,6 +1,6 @@
-# Writes the fitted rule "is this lag an echo" (fit3.py -> rule3.pkl, a small boosted model) as Source/Core/EchoRule.h,
+# Writes the fitted rule "is this lag an echo" (fit5.py -> rule5.pkl, a small boosted model) as Source/Core/EchoRule.h,
 # and checks the written trees against the model on the fitting data.
-#   python3 export_rule.py rule3.pkl ../../Source/Core/EchoRule.h
+#   python3 export_rule.py rule5.pkl ../../Source/Core/EchoRule.h [X5.npy]
 import sys, pickle, numpy as np
 m = pickle.load(open(sys.argv[1], 'rb')); out = sys.argv[2]
 base = float(np.ravel(m._baseline_prediction)[0]); trees = [it[0].nodes for it in m._predictors]
@@ -15,7 +15,7 @@ for t in trees:
 nf = int(m.n_features_in_)
 src = '''#pragma once
 // The fitted rule of the echo engine: is a lag that stands out in a sound's ripple picture an echo? %d small trees over
-// %d measures (Echo.h, feats()). Written by Research/echo/export_rule.py from the model fitted by Research/echo/fit3.py:
+// %d measures (Echo.h, feats()). Written by Research/echo/export_rule.py from the model fitted by Research/echo/fit5.py:
 // do not edit by hand.
 #include <limits>
 

@@ -10,6 +10,7 @@
 #include "Inspector.h"
 #include "RoomEngine.h"
 #include "Tone.h"
+#include "Verify.h"
 #include <functional>
 #include <future>
 #include <memory>
@@ -466,6 +467,25 @@ inline bool mergeRoom (Inspection& I, const room::Found& f)
     I.prob["reverb"] = roomSureness (f); return true;
 }
 
+// A sound that is cut off while it is still playing has no ending. The model learned from sounds that end inside
+// the file, where a room shows as the tail after the last note, and where the file simply stops it reads a room into
+// many dry sounds: of the scoreboard's 120 dry sounds cut off at 6 s it showed a room on 54 (on 18 when silence
+// follows them, as in the sounds it learned from), of the corpus's 198 dry clips as files on 90.
+// So a found room is looked at a second time with silence after the sound, and the less sure of the two verdicts
+// counts (returned: the second one, or -1 when there was nothing to look at). Then a room shows on 18 of the 120
+// and on 29 of the 198. Sounds that end inside the file lose nothing (120 with a reverb whose tail rings out: 104
+// shown by either look; their dry versions: 18 and 18). The price is paid by sounds with a real reverb that are cut
+// off: 68 of 120 shown instead of 88 (Research/room/bench/cut_test.py). The room that is shown and worked with is
+// still the one found on the sound as it is. Costs one more look of the model.
+constexpr double roomEndSilence = 3.0;      // seconds
+inline double recheckRoomEnd (Inspection& I, const Stereo& y, const room::Net& net, const room::Net* second, const room::Stop& stop = {})
+{
+    auto r = I.prob.find ("reverb"); if (r == I.prob.end() || ! (r->second > roomNone)) return -1.0;
+    Stereo z = y; const size_t n = y.size() + (size_t) (roomEndSilence * SR); z.l.resize (n, 0.0); z.r.resize (n, 0.0);
+    const room::Found f = room::find (z, net, second, stop); if (f.stopped) return -1.0;
+    const double s = roomSureness (f); r->second = std::min (r->second, s); return s;
+}
+
 // ---------------------------------------------------------------- the tone engine's groups (Tone.h)
 // COMB FILTER: short reflections found on the sound (a copy of it a few milliseconds later, which colours the tone
 // with evenly spaced notches). The finder is strict: on the scoreboard it reports all 8 sounds that have one and
@@ -545,9 +565,10 @@ inline ToneIr toneIr (const Vec& curveL, const Vec& curveR)
 
 // ---------------------------------------------------------------- the echo engine's group (Echo.h)
 // DELAY: the echoes the echo engine found on the sound (30 ms to 2.5 s; one echo time per channel, with its
-// repeats). On the scoreboard's 16 sounds with a delay from outside effects it finds 15 (none with a wrong echo
-// time), takes 89 of 100 out (median; mean 83) and puts 95 of 100 onto the case's other sound (mean 87), where the
-// detector and the fitted delay of 0.4.1 found 12 and reached 54 and 50.
+// repeats). On the scoreboard's 8 cases with a delay from outside effects the group shows on 7 at the default
+// Sureness (none with a wrong echo time), takes 89 of 100 out (median; mean 77) and puts 95 of 100 onto the case's
+// other sound (mean 83), where the detector and the fitted delay of 0.4.1 showed it on 6 and reached 54 and 50
+// (Research/room/bench/famboard.py; sound by sound: Research/echo/evcpp.py).
 // Amount: on the sound itself 0 = taken out (the exact inverse of the found echo filter), 1 = untouched, 2 = the
 // echoes twice as loud; on a second sound 0 = none, 1 = as found, 2 = twice. Time: the echo time, half to double.
 // Feedback: how long the repeats go on. Brightness: the tone of the echoes. The setting faders hand their values
@@ -615,10 +636,9 @@ inline EchoIr echoIr (const echo::Found& f, const Params& p)
 
 // Settings of each found effect (estimate.estimate, without the slower sweep fit for now).
 inline bool isNewFx (const std::string& f) { return f == "saturation" || f == "exciter" || f == "ringmod" || f == "filter" || f == "stutter" || f == "gatedrhythm"; }
-// The 0.2.0 additions come from the larger 27-effect detector; they need a higher score to be named
-// (by default 80 %; with the Sureness slider: the slider's value plus newExtra).
-constexpr double newCut = 0.8, newExtra = 0.15;
-inline double cutFor (const std::string& f, double cut) { return isNewFx (f) ? std::min (0.99, std::max (cut + newExtra, cut == 0.65 ? newCut : 0.0)) : cut; }
+// One cut for every effect: the Sureness slider. The six 0.2.0 additions needed a higher score while the detectors'
+// own scores were shown; the verifier (Verify.h) now puts every effect's fixed cut at the slider's default.
+inline double cutFor (const std::string&, double cut) { return cut; }
 // The effects shown at a given sureness, in chain order.
 inline std::vector<std::string> namesAbove (const Inspection& I, double cut)
 {
@@ -704,6 +724,7 @@ inline std::vector<FoundFx> estimate (const Inspection& I, const Stereo& y, doub
 // Take the six 0.2.0 effects (probability, settings, speed guess) from the 27-effect inspection.
 inline void mergeNew (Inspection& I, const Inspection& I27)
 {
+    I.fx27 = I27.fx; I.win27 = I27.win;        // for the verifier (Verify.h)
     for (const char* f : { "saturation", "exciter", "ringmod", "filter", "stutter", "gatedrhythm" })
     {
         auto p = I27.prob.find (f); if (p != I27.prob.end()) I.prob[f] = p->second;
@@ -713,7 +734,7 @@ inline void mergeNew (Inspection& I, const Inspection& I27)
     }
     // When one of the six is there, the 12-effect detector can mistake it for a relative (a static filter for a
     // filter sweep, a gated rhythm for bitcrush). The 27-effect detector knows both: drop what it clearly rules out.
-    bool anyNew = false; for (auto& [f, v] : I.prob) if (isNewFx (f) && v > newCut) anyNew = true;
+    bool anyNew = false; for (auto& [f, v] : I.prob) if (isNewFx (f) && v > 0.8) anyNew = true;
     if (anyNew)
         for (auto& [f, v] : I.prob)
             if (! isNewFx (f)) { auto q = I27.prob.find (f); if (q != I27.prob.end() && q->second < 0.15) v = std::min (v, q->second); }

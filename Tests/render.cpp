@@ -5,6 +5,7 @@
 //   echoir=file.wav: also writes the found echoes as Export IR does for the DELAY group
 //   The room engine is used when ResourcesDir holds room.bin (as in the app), with a second look when it also holds room2.bin.
 //   The tone engine and the echo engine always run (the DELAY group's faders: delay.amount, delay.time, delay.feedback, delay.bright).
+//   The verifier's models are read from ResourcesDir/verify.bin (Source/Core/Verify.h): the scores are its scores, as in the app.
 //   match=1: two sounds with Tone Match switched on (its faders: tonematch.amount, tonematch.detail)
 #include <chrono>
 #include <fstream>
@@ -25,7 +26,7 @@ int main (int argc, char** argv)
     using clk = std::chrono::steady_clock; auto t0 = clk::now();
     auto loadM = [] (const std::string& p) { std::ifstream f (p, std::ios::binary); std::vector<char> b ((std::istreambuf_iterator<char> (f)), {}); dr::Models m; m.load (b.data(), b.size()); return m; };
     const std::string dir = argv[1]; const dr::Models M = loadM (dir + "/models.bin"), M27 = loadM (dir + "/models27.bin");
-    dr::Stereo src; double sr; dr::readWav (argv[2], src, sr);
+    dr::Stereo src; double sr = 0; if (! dr::readWav (argv[2], src, sr) || src.size() == 0) { std::cout << "cannot read " << argv[2] << "\n"; return 1; }
     struct Block { std::string tgt, out, ir, echoIr; std::map<std::string, double> fad; bool match = false; };
     std::vector<Block> blocks; double cut = 0.65;
     for (int i = 3; i + 1 < argc;)
@@ -41,7 +42,12 @@ int main (int argc, char** argv)
     }
     if (blocks.empty()) { std::cout << "usage: render ResourcesDir src.wav [target.wav|-] out.wav [fader=value ...] [-- [target.wav|-] out.wav [fader=value ...]] ...\n"; return 1; }
     const bool only = blocks[0].out == "-";
-    auto I = dr::inspect (M, src); dr::mergeNew (I, dr::inspect (M27, src));
+    auto I = dr::inspect (M, src); dr::mergeNew (I, dr::inspect (M27, src, {}, &I));
+    {
+        std::ifstream f (dir + "/verify.bin", std::ios::binary); if (! f) { std::cout << "no verify.bin in " << dir << "\n"; return 1; }
+        const std::vector<char> b ((std::istreambuf_iterator<char> (f)), {}); dr::Verifier vf; vf.load (b.data(), b.size());
+        dr::verify (I, src, vf);        // every effect's score is now the verifier's; reverb, the comb filter and the delay stay with their engines below
+    }
     std::shared_ptr<const dr::room::Found> rf; dr::room::Net net, net2;
     {
         std::ifstream f (dir + "/room.bin", std::ios::binary);
@@ -55,6 +61,11 @@ int main (int argc, char** argv)
             std::cout << "room: found=" << r->found << " detector=" << (I.prob.count ("reverb") ? I.prob.at ("reverb") : 0.0) << " sureness=" << dr::roomSureness (*r)
                       << " share=" << ev.share << " deep=" << ev.deep << " bands=" << ev.bands << " moments=" << ev.moments << " decay=" << ev.decay << " strength=" << ev.strength << " own=" << ev.own << "\n";
             if (dr::mergeRoom (I, *r)) rf = r;
+            if (rf != nullptr && r->found)      // a room on a sound that may be cut off while still playing: is it still there with silence after it?
+            {
+                const double s = dr::recheckRoomEnd (I, src, net, net2.ready() ? &net2 : nullptr);
+                if (s >= 0) std::cout << "room with silence after the sound: sureness=" << s << " counts=" << I.prob.at ("reverb") << "\n";
+            }
         }
     }
     const auto tf = std::make_shared<const dr::tone::Found> (dr::tone::analyse (src)); dr::mergeTone (I, *tf);

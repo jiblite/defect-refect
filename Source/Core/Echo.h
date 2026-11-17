@@ -10,7 +10,7 @@
 // numbers take the echo out exactly (the inverse filter) and put it on another sound.
 // Many things make peaks in that picture: a steady pitch, a drum loop, a note played twice. So every lag that
 // stands out is measured in several cheap ways (measure()) and a small fitted rule says how sure it is an echo
-// (EchoRule.h, fitted by Research/echo/fit3.py).
+// (EchoRule.h, fitted by Research/echo/fit5.py).
 // Limits: one echo time per channel (the surest); echoes that cross from one channel to the other on a wide sound
 // are not covered; under 30 ms it is a comb filter (Tone.h).
 
@@ -493,15 +493,17 @@ struct Found
     bool twin = false;                  // left and right are the same signal
     bool any() const { return ch[0].found || ch[1].found; }
 };
-// The rule's answer p is fitted on clips where one lag in three is an echo. Of the sounds a person drops on the app
-// far fewer carry one: taken as one in ten, p becomes "how sure is it that this sound has an echo", which is what
-// the Sureness slider compares (65 % on the slider is p = 0.89). On whole sounds the rule's p then behaves like
-// this (Research/echo/judge3.py): of the scoreboard's 16 sounds with an outside delay 15 are found at p >= 0.85 and
-// none with a wrong echo time; of 198 clean sounds 2 are reported at p >= 0.93 (both guitar loops with a quieter
-// copy exactly 1 s later) and 4 at p >= 0.78.
+// The rule's answer p is fitted on sounds where about one lag in three is an echo. Of the sounds a person drops on the
+// app far fewer carry one: taken as one in ten, p becomes "how sure is it that this sound has an echo", which is what
+// the Sureness slider compares (65 % on the slider is p = 0.90). The rule is the fifth round's (Research/echo/fit5.py),
+// fitted on what this engine measures on clips and whole sounds: clean, with an echo at any time or in time with the
+// sound's own repeats, and under every other effect. On the sources kept out of the fit, at 65 %: no echo shown on 83
+// clean sounds, on 1 of 176 sounds with another effect; 84 % of the echoes put on found (79 % of those in time with the
+// sound), an echo time that is not the one put on in 1 of 397. Of the scoreboard's 16 sounds with an outside delay 14
+// are shown at 65 %, none with a wrong echo time; the two others carry a quiet echo (a tenth and a fifth of the sound).
 // pFound: under this the surest lag is not offered at all. pOwn: what a second channel's lag needs when it does not
 // fit the surer channel's echo time. pJoin: .. and when it does (the same time, or one a multiple of the other).
-constexpr double priorFit = 0.334, priorUse = 0.10, pFound = 0.5, pOwn = 0.8, pJoin = 0.2, sureNone = 0.03;
+constexpr double priorFit = 0.361, priorUse = 0.10, pFound = 0.5, pOwn = 0.6, pJoin = 0.2, sureNone = 0.03;
 inline double sureness (double p) { const double k = priorUse / (1.0 - priorUse) / (priorFit / (1.0 - priorFit)); return p * k / (p * k + (1.0 - p)); }
 
 // The repeats of a channel's echo filter as found (levels against the sound itself), for the picture and the Feedback fader.

@@ -437,7 +437,7 @@ public:
         sure.setColour (juce::Slider::thumbColourId, theme::text); sure.setColour (juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack); sure.setColour (juce::Slider::textBoxTextColourId, theme::textDim);
         {
             const juce::String tip = "How sure the app must be before it shows an effect. Left shows more effects (including guesses), right shows only the clear ones. "
-                                     "The six newer effects (saturation, exciter, ring mod, filter, stutter, gated rhythm) need 15% more. Double-click for 65%.";
+                                     "Double-click for 65%.";
             sure.setTooltip (tip); sureLabel.setTooltip (tip);
         }
         sure.onValueChange = [this] { sureQueued = true; sureDelay = 6; };
@@ -457,6 +457,8 @@ public:
         busy = true; modeLabel.setText ("Loading the detector...", juce::dontSendNotification);
         startWorker ([this] { auto m = std::make_shared<dr::Models>(); m->load (BinaryData::models_bin, (size_t) BinaryData::models_binSize);
                              auto m27 = std::make_shared<dr::Models>(); m27->load (BinaryData::models27_bin, (size_t) BinaryData::models27_binSize);
+                             try { auto v = std::make_shared<dr::Verifier>(); v->load (BinaryData::verify_bin, (size_t) BinaryData::verify_binSize); verifier = v; }
+                             catch (const std::exception&) { verifier.reset(); }        // no usable verifier: the detectors' own scores are shown
                              auto rn = std::make_shared<dr::room::Net>(), rn2 = std::make_shared<dr::room::Net>();
                              try
                              {
@@ -521,6 +523,7 @@ private:
     juce::AudioDeviceManager dev; juce::AudioSourcePlayer srcPlayer; Player player; std::unique_ptr<juce::ResamplingAudioSource> resampler;
     struct DevListener : juce::ChangeListener { std::function<void()> fn; void changeListenerCallback (juce::ChangeBroadcaster*) override { if (fn) fn(); } } devListener;
     std::shared_ptr<dr::Models> models, models27;
+    std::shared_ptr<const dr::Verifier> verifier;                // the models that check every effect against the whole sound before it is shown (Verify.h)
     std::shared_ptr<const dr::room::Net> roomNet, roomNet2;     // the room engine's model and the one for its second look (none: the reverb is handled the old way)
     std::shared_ptr<const dr::room::Found> roomFound;           // what the room engine found on the first sound
     std::shared_ptr<const dr::tone::Found> toneFound;           // what the tone engine found on it: long-term spectra and reflections
@@ -595,7 +598,13 @@ private:
                          auto alive = [this, gen] (float) { return generation.load() == gen; };
                          auto I = dr::inspect (*M, *src, alive);
                          if (generation.load() != gen) return;
-                         dr::mergeNew (I, dr::inspect (*M27, *src, alive));
+                         dr::mergeNew (I, dr::inspect (*M27, *src, alive, &I));
+                         if (generation.load() != gen) return;
+                         if (verifier != nullptr)        // every effect's score is now the verifier's (Verify.h); reverb, the comb filter and the delay stay with their engines below
+                         {
+                             try { dr::verify (I, *src, *verifier, {}, [this, gen] { return generation.load() != gen; }); }
+                             catch (const std::exception&) {}        // the verifier failed: the detectors' own scores stay
+                         }
                          if (generation.load() != gen) return;
                          if (RN != nullptr && RN->ready())       // the room engine: is there a room on the sound, and which
                          {
@@ -605,6 +614,12 @@ private:
                              catch (const std::exception&) { f.reset(); }        // the room engine failed: the detector's verdict and the old reverb handling stay
                              if (generation.load() != gen) return;
                              if (f != nullptr && ! f->stopped && dr::mergeRoom (I, *f)) *roomOut = f;
+                             if (*roomOut != nullptr && (*roomOut)->found)       // a room on a sound that may be cut off while still playing: is it still there with silence after it?
+                             {
+                                 try { dr::recheckRoomEnd (I, *src, *RN, second, [this, gen] { return generation.load() != gen; }); }
+                                 catch (const std::exception&) {}
+                                 if (generation.load() != gen) return;
+                             }
                          }
                          {       // the tone engine: the sound's long-term spectra (for Tone Match) and short reflections on it
                              std::shared_ptr<dr::tone::Found> t;

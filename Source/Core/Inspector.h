@@ -14,6 +14,12 @@ struct Inspection
     std::map<std::string, std::map<std::string, double>> settings;        // effect -> parameter -> value (categories as index)
     std::map<std::string, std::map<std::string, std::string>> labels;     // category parameters as text
     std::map<std::string, double> reg;                                    // detector's own rate/time guess per effect (median over windows)
+    // Kept for the verifier (Verify.h): for every window that was analysed where it starts, the detector's outputs,
+    // the 15 hand numbers and the deciders' scores; the same of the 27-effect detector (put here by mergeNew); and
+    // the whole-file echo check.
+    struct Window { size_t start = 0; std::vector<float> logits, hand, p; };
+    std::vector<std::string> fx, fx27; std::vector<Window> win, win27; double echoScore = 0, echoMs = 0;
+    bool whole = false;                                                    // the inspection ran to its end (was not stopped)
     std::vector<std::string> found (double cut = 0.65) const
     {
         std::vector<std::string> f; for (auto& [k, v] : prob) if (v > cut) f.push_back (k); return f;
@@ -28,9 +34,12 @@ inline std::vector<Stereo> windows3s (const Stereo& y)
     return out;
 }
 
-inline Inspection inspect (const Models& M, const Stereo& y, const std::function<bool (float)>& progress = {})
+// same: the finished inspection of this very sound by the other detector, when there is one. The 15 hand numbers
+// of a window and the whole-file echo check do not depend on the detector, so they are taken from it and not
+// worked out a second time (which was up to 45 % of the two inspections' time). The result is the same either way.
+inline Inspection inspect (const Models& M, const Stereo& y, const std::function<bool (float)>& progress = {}, const Inspection* same = nullptr)
 {
-    Inspection I;
+    Inspection I; I.fx = M.fx;
     const auto wins = windows3s (y);
     std::vector<std::vector<float>> P, rows, R;
     size_t done = 0;
@@ -40,10 +49,12 @@ inline Inspection inspect (const Models& M, const Stereo& y, const std::function
         double e = 0; for (size_t i = 0; i < w.size(); ++i) e += 0.5 * (w.l[i] * w.l[i] + w.r[i] * w.r[i]);
         if (std::sqrt (e / (double) w.size()) < 1e-4) continue;
         const auto o = M.run (features (w));
-        const auto h = handFeatures (w);
+        const size_t start = (done - 1) * (size_t) (1.5 * SR), nth = I.win.size();
+        const auto h = same != nullptr && nth < same->win.size() && same->win[nth].start == start ? same->win[nth].hand : handFeatures (w);
         std::vector<float> x = o.logits; x.insert (x.end(), h.begin(), h.end());
         std::vector<float> p; for (auto& d : M.decide) p.push_back ((float) d.prob (x));
         P.push_back (p); R.push_back (o.reg);
+        I.win.push_back ({ start, o.logits, h, p });
         std::vector<float> z = o.emb; z.insert (z.end(), h.begin(), h.end()); rows.push_back (z);
         if (progress && ! progress ((float) done / (float) wins.size())) return I;
     }
@@ -58,8 +69,8 @@ inline Inspection inspect (const Models& M, const Stereo& y, const std::function
         if (! v.empty()) I.reg[M.fx[k]] = std::exp (median (v));
     }
     // whole-file echo check: a long file gives the echo finder far more evidence than one window
-    const auto [sc, ms] = hand::echoDetect (y);
-    (void) ms;
+    const auto [sc, ms] = same != nullptr && same->whole ? std::make_pair (same->echoScore, same->echoMs) : hand::echoDetect (y);
+    I.echoScore = sc; I.echoMs = ms; I.whole = true;
     if (sc > 60 && I.prob["bitcrush"] < 0.5) I.prob["delay"] = std::max (I.prob["delay"], std::min (0.99, 0.6 + sc / 1000.0));
     // settings readers: median over the windows
     for (auto& [fx, params] : M.settings)

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(DefectRefect VERSION 0.4.1 LANGUAGES C CXX)
+project(DefectRefect VERSION 0.4.2 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -17,7 +17,7 @@ FetchContent_Declare(JUCE
 FetchContent_MakeAvailable(JUCE)
 
 # The trained models, built into the exe. The reverb engine's model for a second look (room2.bin) is optional.
-set(DR_MODEL_FILES Resources/models.bin Resources/models27.bin Resources/room.bin)
+set(DR_MODEL_FILES Resources/models.bin Resources/models27.bin Resources/room.bin Resources/verify.bin)
 set(DR_ROOM_SECOND 0)
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/Resources/room2.bin")
   list(APPEND DR_MODEL_FILES Resources/room2.bin)
@@ -66,3 +66,6 @@ add_executable(drtone Tests/tone.cpp)
 
 # The echo engine without the UI (no JUCE): Tests/echo.cpp
 add_executable(drecho Tests/echo.cpp)
+
+# The verification step without the UI (no JUCE): Tests/verify.cpp
+add_executable(drverify Tests/verify.cpp)
