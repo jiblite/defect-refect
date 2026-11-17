@@ -144,14 +144,20 @@ two detectors computed over the sound together with 55 physical measurements. On
 And the whole app on the scoreboard (`Research/room/bench/famboard.py`; the drop in REVERB is the second look
 described above):
 
-| 136 cases, 17 effects from outside tools                        | 0.4.1    | 0.4.2   |
-|------------------------------------------------------------------|----------|---------|
-| the case's own effect shown                                      | 77       | 75      |
-| other groups shown: REVERB / the rest                            | 63 / 156 | 19 / 12 |
-| cases with no other group shown                                  | 16       | 107     |
-| own group far left: cases made worse than doing nothing          | 12 %     | 3 %     |
-| every shown group far left: cases made worse than doing nothing  | 78 %     | 19 %    |
-| everything shown put onto a second sound: cases made worse       | 71 %     | 36 %    |
+| 136 cases, 17 effects from outside tools                        | 0.4.1    | 0.4.2   | 0.4.3   |
+|------------------------------------------------------------------|----------|---------|---------|
+| the case's own effect shown                                      | 77       | 75      | 79      |
+| other groups shown: REVERB / the rest                            | 63 / 156 | 19 / 12 | 19 / 10 |
+| cases with no other group shown                                  | 16       | 107     | 109     |
+| own group far left: cases made worse than doing nothing          | 12 %     | 3 %     | 3 %     |
+| every shown group far left: cases made worse than doing nothing  | 78 %     | 19 %    | 19 %    |
+| everything shown put onto a second sound: cases made worse       | 71 %     | 36 %    | 30 %    |
+
+What changed from 0.4.2 to 0.4.3 besides the scores of the four reworked groups: four flangers are found; a
+tremolo that 0.4.2 took for a gate is shown as a tremolo; another tremolo, which 0.4.2 showed and took out at 24
+of 100, is now offered only at a lower Sureness; FLANGER on a chorus and AUTO PAN on a phaser are no longer shown.
+New and wrong: TREMOLO, just over the default Sureness, on a bass loop with a low shelf. Every other case is as
+it was.
 
 The price is in the third row of the first table, and it is uneven: flanger, phaser, filter sweep and a fixed filter are found less
 often than before (9, 39, 39 and 9 % against 36, 73, 61 and 34 %), because most of their earlier finds came with

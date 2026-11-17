@@ -1,7 +1,9 @@
 # The level-movement engine: Python side
 
 `level.py` is the prototype that the single-sound part of `Source/Core/Level.h` is a port of; `rule.json` holds
-the fitted rule. `Tools/level_parity.py` compares the two on whole sounds (TODO-PARITY). What `Level.h` does with
+the fitted rule. `Tools/level_parity.py` compares the two on whole sounds (48 sounds, 36 of them
+with a movement: the same answer on all, the measures agree to 1.4e-9, the scores to 1e-11, the shapes to 2e-10 dB
+and the rendered sounds to -217 dB). What `Level.h` does with
 long sounds (pieces, the clock, where the movement is) was written in C++ only and is tested from here through
 `drlevel` (`long.py`, `win.py`). The scripts are a record of how the engine was built and judged, as they were
 run: paths point to the working folder they ran in, and the audio is not in the repo.
@@ -82,13 +84,24 @@ sounds of a family (a sound that is not found counts 0) the movement comes out a
 100 in the median and goes onto the case's other sound at 93 and 97; no result is worse than doing nothing.
 Gates are the hard family: out 22, onto 79.
 
-`others.py` asks the prototype on the sounds of the other families: it reports a movement on 5 of 224 sounds
-with another effect (two of them a ring modulator at 16 Hz, which is a level movement) and on 2 of 248 sounds of
-the reverb and tone sets (one sound, dry and wet).
+`others.py` asks the prototype on the sounds of the other families. Run before the two additions to the pan
+rule, it reported a movement on 5 of 224 sounds with another effect (two with a ring modulator at 16 Hz, which is
+a level movement; a stereo delay and a bitcrushed recording, which the additions now refuse; a filtered bass
+loop) and on 2 of 248 sounds of the reverb and tone sets (one sound, dry and wet).
 
 In the app (`Research/room/bench/famboard.py`, 8 cases per family, medians, a case that is not shown counts 0):
 
-TODO-SCOREBOARD
+| 8 cases each | shown (0.4.2) | taken out, 0.4.2 to 0.4.3 | onto the other sound | taken out where shown      |
+|--------------|---------------|---------------------------|----------------------|----------------------------|
+| tremolo      | 5 (5)         | 41 to 85                  | 44 to 78             | 95, 84, 95, 96, 86         |
+| auto pan     | 8 (8)         | 64 to 96                  | 71 to 98             | 99, 92, 95, 81, 88, 96, 97, 98 |
+| gated rhythm | 6 (6)         | 0 to 60                   | -18 to 79            | 89, 92, 88, 45, 0, 76      |
+
+No case comes out worse than it went in (0.4.2: gated rhythm put onto the other sound made all six worse). On the
+198 dry sounds of the corpus the app shows none of the three groups. On the 112 cases of the other families it
+shows one of them once: TREMOLO, at a sureness of 0.66, on a bass loop with a low shelf (taking it out changes
+next to nothing). The detector of 0.4.2 had an AUTO PAN on a phaser there and, inside the family, a GATED RHYTHM
+on a tremolo. One tremolo that 0.4.2 showed (taken out at 24) is under the default Sureness now.
 
 ## Long sounds (`Level.h` only)
 The rule was fitted and tested on sounds of 6 to 9 s. A longer sound is cut into pieces of 6 to 9 s:
