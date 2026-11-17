@@ -1413,22 +1413,24 @@ inline double shiftOf (const Found& lead, const Found& f)
 // cycles the clock is that straight line (an effect's own oscillator: the usual case); otherwise it runs from middle
 // to middle (a speed that wanders). One piece alone: its own period. leave: pieces that are not asked. A gate's
 // clock is set only by the pieces whose steps the fine look found: the others know their place in the cycle to a
-// few milliseconds, and a gate lifted that much too early or too late is worse than one left alone.
+// few milliseconds, and a gate lifted that much too early or too late is worse than one left alone. If the surest
+// piece is the only one that saw the steps finely, its own period carried on is the clock, and it counts as a steady
+// one: the other pieces' coarse shapes are laid aside for the surest piece's steps on it (askPiece, oneSpeed).
 inline Clock clockOf (const Movement& M, const std::vector<char>* leave = nullptr)
 {
     Clock C; const Found* F = M.best(); if (! M.found || F == nullptr) return C;
-    struct Knot { double c, ph, P; }; std::vector<Knot> kn; int lead = -1; const bool course = ! F->lane[0].empty();
+    struct Knot { double c, ph, P; }; std::vector<Knot> kn; int lead = -1; const bool course = ! F->lane[0].empty(); bool coarse = false;
     for (size_t j = 0; j < M.pieces.size(); ++j)
     {
         const Piece& p = M.pieces[j]; const bool isLead = (int) j == M.lead; if (! p.use || p.clocked || (course && ! isLead) || (leave != nullptr && (*leave)[j])) continue;
-        if (F->steps() && ! p.f.steps()) continue;
+        if (F->steps() && ! p.f.steps()) { coarse = true; continue; }
         const double P = p.f.period * SR, c = 0.5 * ((double) p.a + (double) p.b); if (isLead) lead = (int) kn.size();
         kn.push_back ({ c, (isLead ? 0.0 : shiftOf (*F, p.f)) + (c - (double) p.a) / P, P });
     }
     if (lead < 0) return C;
     const int n = (int) kn.size(); const Knot L = kn[(size_t) lead];
     auto line = [&] (double c0, double ph0, double P) { C.t = { c0, c0 + P }; C.ph = { ph0, ph0 + 1.0 }; };
-    if (n == 1) { line (L.c, L.ph, L.P); return C; }
+    if (n == 1) { line (L.c, L.ph, L.P); C.steady = coarse; return C; }     // the only piece that saw a gate's steps finely: its line is the clock the others are laid on
     // one steady speed? the period near the pieces' own that brings their places in the cycle together best
     Vec per; for (const Knot& k : kn) per.push_back (k.P); const double Pm = medc (per);
     Vec dev; for (const Knot& k : kn) dev.push_back (std::abs (k.P / Pm - 1.0)); const double spread = std::clamp (2.0 * medc (dev), 0.001, 0.004), reach = 3.0 * spread;

@@ -124,7 +124,8 @@ The rule was fitted and tested on sounds of 6 to 9 s. A longer sound is cut into
 4. the clock: where in the surest piece's cycle every place of the sound stands. One steady period if that puts
    all carrying pieces within 0.03 cycles (an effect's own oscillator), else from piece to piece (a speed that
    wanders). A gate's clock is set only by the pieces that saw its steps finely: a piece without them places the
-   cycle to a few ms, and a gate that is lifted a few ms off its steps is worse than no lift. A piece whose own
+   cycle to a few ms, and a gate that is lifted a few ms off its steps is worse than no lift. If the surest piece
+   is the only one that saw them, the clock is its own period carried on. A piece whose own
    speed runs away from the others' steady clock by more than a tenth of a cycle over its length is measured again
    at the clock's speed (`oneSpeed`): each piece picks the best period within 3 % of the one it is given, and a
    piece that holds the movement's end can pick one that is a little off and gives a blurred shape. The new
