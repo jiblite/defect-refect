@@ -90,12 +90,29 @@ same amount at the same moment, and it repeats exactly. Notes and hits do neithe
 measured piece by piece, and every stretch of about a second is asked whether it does what would be taken out, so
 an effect that is on a part of the sound is taken out of that part and the rest is left exactly as it was.
 
-TODO-LEVEL-NUMBERS
+On the scoreboard's 24 cases with a tremolo, an auto pan or a gate from outside effects (sounds of 6 s; medians, a
+case that is not shown counts 0; build 0.4.2 in brackets): AUTO PAN is shown on 8 of 8, taken out at 96 of 100
+and put onto the case's other sound at 98 (64 and 71); TREMOLO on 5 of 8, 85 and 78 (41 and 44); GATED RHYTHM on
+6 of 8, 60 and 79 (0 and -18). No case comes out worse than it went in, and on the 198 clean sounds of the corpus
+none of the three groups is shown.
+
+Long sounds (20 to 62 s, test clips laid end to end; `Research/level/long.py`), at the default Sureness:
+- the effect on the whole sound: shown on 81 of 88, taken out at 88 (tremolo), 94 (auto pan) and 71 (gate) in the
+  median; one sound comes out a little worse than it went in (a tremolo, -4);
+- the effect on one half: shown on 36 of 44 and taken out at 77, none worse than it went in, and the half without
+  the effect comes back unchanged in 31 of the 36 (the difference to the input is under -170 dB; in the other
+  five the border sits a little off and it is at -73 to -35 dB);
+- slow pans, 3 to 23 s a cycle: shown on 21 of 24 and taken out at 94; the other three pass about once in their
+  sound and are offered at a lower Sureness (see the limits);
+- 48 clean long sounds: nothing shown.
+TODO-S1
 
 Known limits: a tremolo of a few dB on a busy sound and a sawtooth that falls (a level that jumps up and sinks
-back is what struck notes do) are not shown at the default Sureness; one movement per sound; nothing faster than
-16.7 times a second; a gate that closes fully is left closed (what is under it is as likely noise). Method,
-numbers and limits: `Research/level/README.md`.
+back is what struck notes do) are not shown at the default Sureness; a movement from side to side that the sound
+shows only once is offered at a lower Sureness, because something that passes by does the same; one movement per
+sound; nothing faster than 16.7 times a second; a gate that closes fully is left closed (what is under it is as
+likely noise); a tremolo whose speed wanders is taken out less well (67 where shown) and goes onto a second
+sound poorly. Method, numbers and limits: `Research/level/README.md`.
 
 **Flanger (new engine in 0.4.3):** a flanger is the sound plus a copy of itself whose delay moves. The copy
 leaves a line in the picture of the sound's short-time cepstrum, at its delay, as high as its gain. The engine

@@ -149,14 +149,50 @@ halfway on the second sound too (past the first sound's end it goes on as at its
 `win.py` reads a result file: what single stretches say with and without the effect, how much of each is marked,
 where the border was put, and what other prices would have chosen.
 
-TODO-LONG
+Numbers of the final code at the default Sureness (100 = the dry sound again, 0 = as if nothing had been done;
+"median": a sound that is not shown counts 0):
+
+| set                          | sounds | shown | taken out: median, where shown | onto a second sound | worse than nothing |
+|------------------------------|--------|-------|--------------------------------|---------------------|--------------------|
+| clean                        | 48     | 0     |                                |                     |                    |
+| whole sound: tremolo         | 32     | 27    | 88, 89                         | 92, 93              | 1 (-4)             |
+| whole sound: auto pan        | 32     | 31    | 94, 94                         | 97, 97              | 0                  |
+| whole sound: gate            | 24     | 23    | 71, 71                         | 81, 82              | 0                  |
+| one half: tremolo            | 16     | 9     | 78, 83                         | 82, 90              | 0                  |
+| one half: auto pan           | 16     | 16    | 92, 92                         | 93, 93              | 0                  |
+| one half: gate               | 12     | 11    | 67, 69                         | 75, 76              | 0                  |
+| wandering speed: tremolo     | 8      | 5     | 37, 67                         | 4, 19               | 1 (onto)           |
+| wandering speed: auto pan    | 8      | 8     | 89, 89                         | 84, 84              | 0                  |
+| slow pans (3 to 23 s)        | 24     | 21    | 94, 94                         | 94, 95              | 0                  |
+
+- Clean: two of the 48 are offered at the lowest Sureness (a "pan" of 3 dB once in 23 to 29 s).
+- Whole sound, stretch by stretch: of the 6 s stretches of the sounds that are shown, 9 % (tremolo), 2 % (auto
+  pan) and 19 % (gate) come out under 50.
+- One half: the half without the effect comes back unchanged in 31 of the 36 sounds that are shown (the difference
+  to the input is at -172 to -200 dB); in five the border sits a little off and it is at -73 to -35 dB.
+- Slow pans: the three that are not shown pass 1.2, 1.2 and 0.9 times in their sound and are offered at a
+  sureness of one half (taken out, they come out at 93, 87 and 89).
+- What the late changes did, case by case against the run before them: the changes to the pan rule (the fraction
+  rule of step 3, the least share) brought back a fast pan the long look had lost (0 to 92) and lifted six more
+  pans (by 1 to 20); the gate choice lifted three gates (by 4 to 8); the pan seen once took the three slow pans
+  above from shown to offered; every other case is the same.
+TODO-S1
+- Time: TODO-TIME
 
 ## Known limits
 - A tremolo of a few dB on a busy sound, and any sawtooth that falls, is not found at the default Sureness.
 - One movement per sound: a tremolo and a pan together give the surer one.
 - Movements faster than 16.7 Hz are not looked for (up there a sound's own roughness and beating take over).
 - A gate that is keyed by another sound has no fixed shape; what is found is its period and average shape.
-TODO-LIMITS
+- A movement from side to side that the sound shows less than 1.25 times is never shown at the default Sureness
+  (a pan of 16 s on a sound of 20 s).
+- A tremolo on a part of a long sound is found less often (9 of 16) than one on all of it (27 of 32).
+- A speed that wanders inside a piece: the clock is steady within a piece, so such a tremolo is taken out less
+  well (67 where shown) and goes onto another sound poorly (19).
+- A slow pan on a stretch shorter than four of its cycles cannot be measured by itself, so on a part of a long
+  sound it is not found.
+- Echoes that fall on alternating sides in a slow, even rhythm can still read as a pan (1 of 15 synthetic
+  ping-pong delays), and on the scoreboard a bass loop with a low shelf shows TREMOLO just over the default.
 
 ## Files
 - `level.py`, `rule.json`: the prototype and its rule. `synth.py`: the synthetic movements of the fit data.
