@@ -50,6 +50,12 @@ and in `Level.h` alike):
   the bands do not swing alike and the rule refuses them, but an effect that makes the bands alike (a bitcrusher
   did) left nothing to tell the two apart.
 
+The look in long windows (below) asks for the first of the two afterwards. A pan that is on a part of a window only
+explains less of the whole window (0.13 for one on the first half of a minute), so what that look finds is a hint:
+it stands when it explains 0.2 after all, or when the stretch that has it, measured by itself, passes the whole
+rule; otherwise it is no find. Asked straight away, the least share had cost a slow pan on one half of a sound
+(taken out at 95 before and after).
+
 Fitted on 527 clean 6 s clips and the same clips with one synthetic movement put on (`synth.py`, `mkdata.py`,
 `mkstage2.py`, `mkpan.py`), plus the 115 dry sounds of the scoreboard corpus's dev split (`mkdev.py`); the cut
 is set on out-of-fold scores so that 0.4 % (together) and 0.2 % (pan) of clean clips have a candidate over it.

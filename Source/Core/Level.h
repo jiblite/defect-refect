@@ -844,10 +844,11 @@ inline std::array<double, NPAN> panFeatures (const Pan& m)
 }
 // Never a pan: a swing of less than 3 dB; bands that do not swing alike; a repeating shape that explains less of the
 // lane than 0.2 over what chance explains (echoes that fall on alternating sides swing the lane by tens of dB and
-// repeat nothing: every true pan of the fit data explains 0.3 and more).
-inline double scorePanRaw (const Pan& m)
+// repeat nothing: every true pan of the fit data explains 0.3 and more). adjMin: that least share; the look in long
+// windows asks for it afterwards (findSlowPan).
+inline double scorePanRaw (const Pan& m, double adjMin = PAN_ADJ_MIN)
 {
-    if (! m.ok || m.swing < 3.0 || m.known < 0.3 || m.slope_hi - m.slope_lo > 0.2 || m.adj < PAN_ADJ_MIN) return -std::numeric_limits<double>::infinity();     // a pan swings every band alike
+    if (! m.ok || m.swing < 3.0 || m.known < 0.3 || m.slope_hi - m.slope_lo > 0.2 || m.adj < adjMin) return -std::numeric_limits<double>::infinity();     // a pan swings every band alike
     const auto f = panFeatures (m); double s = 0; for (int i = 0; i < NPAN; ++i) s += PAN_W[i] * f[(size_t) i];
     return s + PAN_B - PAN_CUT;
 }
@@ -1165,17 +1166,22 @@ inline Found findAt (const Stereo& x, const Levels& E, bool against, double peri
 // explains less than 0.4 of what the found period explains is not asked at all: a movement folded at a wrong fraction
 // of its period all but disappears (0 to 0.15 is left), and the rule's score means nothing for a period that does not
 // explain the lane (it was fitted on periods that do).
+// The least share a pan must explain (PAN_ADJ_MIN) is not asked here: a pan that is on a part of the window only
+// explains less of the whole window (0.13 for one on the first half of a minute). What this look finds is a hint: it
+// stands only when it explains that share after all, or when the stretch that has it, measured by itself, passes
+// the whole rule (narrow); otherwise it is no find (lookPieces).
 inline Found findSlowPan (const Stereo& x, const Stop& stop, double slowest)
 {
     Found F; F.n = x.size(); if (x.size() < (size_t) (4 * HOP)) return F;
     const Levels E = levels (x); if (stop && stop()) { F.stopped = true; return F; }
-    Pan pan = findPan (E, stop); pan.score = scorePanRaw (pan); F.pan = pan; if (stop && stop()) { F.stopped = true; return F; }
+    const double any = -std::numeric_limits<double>::infinity();        // no least share here: see above
+    Pan pan = findPan (E, stop); pan.score = scorePanRaw (pan, any); F.pan = pan; if (stop && stop()) { F.stopped = true; return F; }
     if (pan.ok && pan.score >= SCORE_MIN)
     {
         Pan surer, fuller;
         for (int m = 2; m <= 3; ++m)
         {
-            Pan q = panAt (E, pan.P / m); q.score = scorePanRaw (q); if (! q.ok || ! fin (q.score) || q.adj < std::max (0.1, 0.4 * pan.adj)) continue;
+            Pan q = panAt (E, pan.P / m); q.score = scorePanRaw (q, any); if (! q.ok || ! fin (q.score) || q.adj < std::max (0.1, 0.4 * pan.adj)) continue;
             if (pan.score >= 0.0 && q.score > pan.score && (! surer.ok || q.score > surer.score)) surer = q;
             if (! pan.slow && q.adj >= 0.1 && q.adj >= pan.adj + 0.1 && (! fuller.ok || q.adj > fuller.adj)) fuller = q;
         }
@@ -1671,6 +1677,12 @@ inline Movement lookPieces (const Stereo& x, double seconds, Own own, const Stop
     }
     M.spans = spansOf (M.windows, price, lean);
     if (np == 1 && narrow (x, M, stop)) { if (M.stopped) return M; M.spans = spansOf (M.windows, price, lean); }
+    if (const Found* B = M.best(); B != nullptr && B->against && B->pan.adj < PAN_ADJ_MIN)      // the long look's hint did not hold on a stretch of its own (see findSlowPan): no find
+    {
+        for (Piece& p : M.pieces) { Piece q; q.a = p.a; q.b = p.b; q.sounds = p.sounds; p = std::move (q); }
+        M.found = M.against = M.steps = false; M.score = none; M.sure = M.rate = M.depth = 0; M.lead = -1; M.carrying = 0; M.clock = Clock(); M.windows.clear(); M.spans.clear();
+        return M;
+    }
     for (Window& w : M.windows) { w.e.clear(); w.e.shrink_to_fit(); }
     for (Piece& p : M.pieces)
     {
