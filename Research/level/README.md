@@ -100,7 +100,7 @@ In the app (`Research/room/bench/famboard.py`, 8 cases per family, medians, a ca
 |--------------|---------------|---------------------------|----------------------|----------------------------|
 | tremolo      | 5 (5)         | 41 to 85                  | 44 to 78             | 95, 84, 95, 96, 86         |
 | auto pan     | 8 (8)         | 64 to 96                  | 71 to 98             | 99, 92, 95, 81, 88, 96, 97, 98 |
-| gated rhythm | 6 (6)         | 0 to 60                   | -18 to 79            | 89, 92, 88, 45, 0, 76      |
+| gated rhythm | 6 (6)         | 0 to 67                   | -18 to 79            | 89, 94, 88, 59, 0, 75      |
 
 No case comes out worse than it went in (0.4.2: gated rhythm put onto the other sound made all six worse). On the
 198 dry sounds of the corpus the app shows none of the three groups. On the 112 cases of the other families it
@@ -159,7 +159,8 @@ comes in halfway on the second sound too (past the first sound's end it goes on 
 - `wet`: 88 with one of 11 outside effects on the whole sound;
 - `part`: 44 with the effect on one half only (the other half must come back untouched);
 - `drift`: 16 with a speed that wanders; `slow`: 24 with slow pans;
-- `SEED=1` draws a second set, kept for the final check.
+- `SEED=1` draws a second set, kept for the final check, and `SEED=2` a third. The second set brought out three
+  faults with gates (the clicks, the open level and the clock above); the third was drawn after those were fixed.
 `win.py` reads a result file: what single stretches say with and without the effect, how much of each is marked,
 where the border was put, and what other prices would have chosen.
 
@@ -198,6 +199,12 @@ TODO-S1
 - One movement per sound: a tremolo and a pan together give the surer one.
 - Movements faster than 16.7 Hz are not looked for (up there a sound's own roughness and beating take over).
 - A gate that is keyed by another sound has no fixed shape; what is found is its period and average shape.
+- A gate with a pattern (some steps of the bar stay open): the steps it leaves out are known piece by piece,
+  not as a pattern that repeats. Where no piece carries the gate by itself every step is taken for a closing
+  one, and onto a second sound the pattern is not carried on past the surest piece.
+- A gate's place in time comes from the pieces that saw its steps finely. If only one piece did, its own period
+  is carried along the sound. On one test sound that period was 0.03 % off, which twenty seconds away puts the
+  lift about 6 ms off the steps (heard as clicks). One fine look over the whole sound is the next step here.
 - A movement from side to side that the sound shows less than 1.25 times is never shown at the default Sureness
   (a pan of 16 s on a sound of 20 s).
 - A tremolo on a part of a long sound is found less often (9 of 16) than one on all of it (27 of 32).
@@ -214,4 +221,7 @@ TODO-S1
   (`fit1.py` to `fit3.py`, `fit4b.py`: earlier tries; `fit6.py`: a rule of hard limits tried against the fitted
   sum). `final_rates.py`, `clean.py`: what the final rule lets through.
 - `ev.py`: outside effects on 6 s sounds. `others.py`: what the engine says on sounds with other effects.
-- `long.py`, `mk_case.py`, `win.py`: long sounds through `drlevel`.
+- `long.py`, `mk_case.py`, `win.py`, `one.py`: long sounds through `drlevel`. `lsum.py`, `tables.py`: the numbers
+  above from the result files. `sub.py`: a part of the cases again; `fast.py`, `fsum.py`: several builds of
+  `drlevel` on the same cases (whole-sound scores only); `merge.py`: rerun rows laid over a run before;
+  `timing.py`: what the analysis costs on an idle machine.

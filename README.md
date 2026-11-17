@@ -93,7 +93,7 @@ an effect that is on a part of the sound is taken out of that part and the rest 
 On the scoreboard's 24 cases with a tremolo, an auto pan or a gate from outside effects (sounds of 6 s; medians, a
 case that is not shown counts 0; build 0.4.2 in brackets): AUTO PAN is shown on 8 of 8, taken out at 96 of 100
 and put onto the case's other sound at 98 (64 and 71); TREMOLO on 5 of 8, 85 and 78 (41 and 44); GATED RHYTHM on
-6 of 8, 60 and 79 (0 and -18). No case comes out worse than it went in, and on the 198 clean sounds of the corpus
+6 of 8, 67 and 79 (0 and -18). No case comes out worse than it went in, and on the 198 clean sounds of the corpus
 none of the three groups is shown.
 
 Long sounds (20 to 62 s, test clips laid end to end; `Research/level/long.py`), at the default Sureness:
