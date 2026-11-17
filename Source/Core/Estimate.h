@@ -576,6 +576,21 @@ inline echo::Shape echoShape (const Params& p, double s)
 // a delay on 6 of the scoreboard's 8 delay cases and on about one clean sound in ten).
 inline void mergeEcho (Inspection& I, const echo::Found& f) { I.prob["delay"] = f.any() ? f.sure : echo::sureNone; }
 
+// A train of echoes dies away as a room does, and the room engine can take it for one: on the scoreboard's 16 sounds
+// with a delay it showed a REVERB group (rule above 65 %) on 5, and only one of those sounds has a room of its own.
+// So when the echo engine finds echoes and the room engine a room, the room must still be there with the echoes
+// taken out: the room engine looks at that sound as well, and the less sure of its two verdicts counts (returned:
+// the second one, or -1 when there was nothing to look at). On the 16 sounds that takes 3 of the 4 away and adds
+// none (Research/echo/roomcheck.py; that rooms with echoes on top keep their group: roomcheck2.py). The room that
+// is shown and worked with is still the one found on the sound as it is. Costs about a second.
+inline double recheckRoom (Inspection& I, const Stereo& y, const echo::Found& e, const room::Net& net, const room::Net* second, const room::Stop& stop = {})
+{
+    auto r = I.prob.find ("reverb"); if (! e.any() || r == I.prob.end() || ! (r->second > roomNone)) return -1.0;
+    echo::Shape sh; sh.amount = 0.0; const Stereo dry = echo::render (y, e, sh, true, stop); if (dry.size() != y.size()) return -1.0;
+    const room::Found f = room::find (dry, net, second, stop); if (f.stopped) return -1.0;
+    const double s = roomSureness (f); r->second = std::min (r->second, s); return s;
+}
+
 // What Export IR writes for the DELAY group: the echoes alone, without the sound itself (the file starts with the
 // silence before the first echo), left and right, as the Time, Feedback and Brightness faders have them and with
 // Amount in the middle. In a convolution plug-in, wet and dry at the same level then give the echoes as found. A

@@ -620,6 +620,12 @@ private:
                              if (generation.load() != gen) return;
                              if (e != nullptr) { dr::mergeEcho (I, *e); *echoOut = e; } else I.prob["delay"] = dr::echo::sureNone;
                          }
+                         if (*echoOut != nullptr && *roomOut != nullptr && RN != nullptr && RN->ready())     // a room on a sound with echoes: is it still there without them?
+                         {
+                             try { dr::recheckRoom (I, *src, **echoOut, *RN, RN2 != nullptr && RN2->ready() ? RN2.get() : nullptr, [this, gen] { return generation.load() != gen; }); }
+                             catch (const std::exception&) {}
+                             if (generation.load() != gen) return;
+                         }
                          *out = dr::estimate (I, *src, c, nullptr, *roomOut, *toneOut, *echoOut); *insp = I;
                      },
                      [this, out, insp, roomOut, toneOut, echoOut]

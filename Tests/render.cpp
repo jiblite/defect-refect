@@ -42,12 +42,12 @@ int main (int argc, char** argv)
     if (blocks.empty()) { std::cout << "usage: render ResourcesDir src.wav [target.wav|-] out.wav [fader=value ...] [-- [target.wav|-] out.wav [fader=value ...]] ...\n"; return 1; }
     const bool only = blocks[0].out == "-";
     auto I = dr::inspect (M, src); dr::mergeNew (I, dr::inspect (M27, src));
-    std::shared_ptr<const dr::room::Found> rf;
+    std::shared_ptr<const dr::room::Found> rf; dr::room::Net net, net2;
     {
         std::ifstream f (dir + "/room.bin", std::ios::binary);
         if (f)
         {
-            const std::vector<char> b ((std::istreambuf_iterator<char> (f)), {}); dr::room::Net net, net2; net.load (b.data(), b.size());
+            const std::vector<char> b ((std::istreambuf_iterator<char> (f)), {}); net.load (b.data(), b.size());
             std::ifstream f2 (dir + "/room2.bin", std::ios::binary);        // the model for the second look, when there is one
             if (f2) { const std::vector<char> b2 ((std::istreambuf_iterator<char> (f2)), {}); net2.load (b2.data(), b2.size()); }
             auto r = std::make_shared<dr::room::Found> (dr::room::find (src, net, net2.ready() ? &net2 : nullptr));
@@ -61,6 +61,11 @@ int main (int argc, char** argv)
     std::cout << "tone: reflections=" << tf->echoes.size(); for (auto& e : tf->echoes) std::cout << " delay_ms=" << e.delay / 48.0 << " gain=" << e.gain; std::cout << "\n";
     const auto ef = std::make_shared<const dr::echo::Found> (dr::echo::analyse (src)); dr::mergeEcho (I, *ef);
     std::cout << "echo: sure=" << ef->sure; for (int c = 0; c < 2; ++c) if (ef->ch[c].found) std::cout << (c ? " right" : " left") << "_ms=" << ef->ch[c].rec.q / 48.0 << " p=" << ef->ch[c].rec.p; std::cout << "\n";
+    if (rf != nullptr && net.ready())        // a room on a sound with echoes: is it still there without them?
+    {
+        const double s = dr::recheckRoom (I, src, *ef, net, net2.ready() ? &net2 : nullptr);
+        if (s >= 0) std::cout << "room without the echoes: sureness=" << s << " counts=" << I.prob.at ("reverb") << "\n";
+    }
     auto t1 = clk::now();
     if (only) { for (auto& [f, p] : I.prob) std::cout << f << "=" << p << " "; std::cout << "\n"; return 0; }
     const auto found0 = dr::estimate (I, src, cut, nullptr, rf, tf, ef);
