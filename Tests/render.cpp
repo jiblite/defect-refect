@@ -107,7 +107,7 @@ int main (int argc, char** argv)
     if (cf->found)
     {
         const dr::chorus::Piece* pc = cf->best(); std::cout << " sure=" << cf->sure << " voices=" << pc->voices[0].size() << "+" << pc->voices[1].size();
-        for (int c = 0; c < 2; ++c) for (auto& v : pc->voices[c]) std::cout << " [" << (c ? "R " : "L ") << (v.kind ? "tri " : "sin ") << v.rate << " Hz " << v.mid / dr::chorus::FS * 1e3 << "+-" << std::abs (v.half) / dr::chorus::FS * 1e3 << " ms loud " << v.loud << "]";
+        for (int c = 0; c < 2; ++c) for (auto& v : pc->voices[c]) std::cout << " [" << (c ? "R " : "L ") << (v.kind ? "tri " : "sin ") << v.rate << " Hz " << v.mid / dr::chorus::FS * 1e3 << "+-" << std::abs (v.half) / dr::chorus::FS * 1e3 << " ms loud " << v.loud << (v.ahead ? " ahead" : "") << "]";
         std::cout << " there_s="; const auto sp = dr::chorus::where (*cf); for (size_t i = 0; i < sp.size(); ++i) std::cout << (i ? "," : "") << (double) sp[i].first / 48000.0 << ".." << (double) sp[i].second / 48000.0;
     }
     std::cout << "\n";

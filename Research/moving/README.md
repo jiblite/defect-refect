@@ -4,7 +4,10 @@
 `Source/Core/Moving.h` is a port of. `Tools/moving_parity.py` compares the two on whole sounds: on the 32 phaser and
 filter sweep sounds of the scoreboard the answers are the same (found, kind, stretches, how often the curve was
 read), the curve agrees to 5e-5 dB and the rendered sounds to -125 dB or better, with one exception at -72 dB (a
-second reading in which a cell at the edge of silence fell on the other side). The scripts are a record of how the
+second reading in which a cell at the edge of silence fell on the other side). `memcheck.py` runs the app's whole
+processing built with the compiler's memory and arithmetic checks (`-fsanitize=address,undefined`) over every
+engine's group, alone and with a shorter, an equal and a longer second sound, the faders in the middle and at both
+ends. The scripts are a record of how the
 engine was built and judged, as they were run: paths point to the working folder they ran in, and no audio is in
 the repo.
 
@@ -89,6 +92,17 @@ part of a deep cut that the 24 dB limit does not bring back).
 
 The best phaser goes from 29 to 51 (onto: 34 to 58), two filter sweeps of a tool the fit never saw from 62 and 50
 to 79 and 78 onto the other sound. None of the shown ones comes out worse than it went in.
+
+## How fast the curve comes round (`per.py`, `per_long.py`, `per_rules.py`)
+When the curve has to last longer than it was found (Speed right of the middle, a longer second sound), a curve
+that repeats goes round its last period and any other goes back and forth. The period (`moving.period`) is the
+first lag at which the curve of the longest stretch is like itself again (0.8 or more), seen twice or more within
+the stretch. A filter's fixed part is like itself at any lag, so the curve less its mean over the stretch, its
+movement, must be like itself at that lag as well (0.2 or more). Checked on the 53 found curves of the scoreboard's
+phasers and sweeps and of the long sounds below, against the effect's own speed: without the second test the first
+small bump was taken on 2 of the 18 curves that show a period and whose effect has a steady speed (1.0 s for a
+sweep of 1.8 s, 1.9 s for one of 3.5 s); with it 17 are right and one is 9 % long (the curve as the model read it).
+False lags reach 0.05 on the second test, true ones start at 0.32.
 
 ## Long sounds (`mklong.py`, `tlong.py`, through the app's code)
 Sounds of 30 to 48 s made of 5 to 8 corpus sounds one after another; the effects from the outside tools with new

@@ -50,6 +50,7 @@ constexpr int BLOCK = 282, BHOP = 141;                  // frames: the model rea
 constexpr double ON = 0.5;                              // a frame counts from this probability of a moving filter
 constexpr int GAP = 24, SHORT = 47, RAMP = 5, SMOOTH = 15;          // frames: holes under 0.5 s are closed, stretches under 1 s dropped; 0.1 s fades; the say-so is averaged over 0.3 s
 constexpr double PERIODIC = 0.8;                        // the curve repeats if it is this like itself one period on
+constexpr double MOVES = 0.2;                           // ... and its movement is too: the curve less its mean over the stretch (a filter's fixed part is like itself at any lag)
 constexpr double GS = 10.0;                             // the model's unit for the curve: 10 dB
 constexpr double LIFT = 24.0, CUT = 60.0;               // the most a bin is turned up or down
 constexpr double SHOWN = 0.65;                          // the app's default Sureness: `sure` is scaled so that a find shows at the default when it is over this
@@ -360,11 +361,17 @@ inline double periodOf (const Vec& G, int T)
         for (size_t i = 0; i < m; ++i) s += a[i] * b[i];
         r[(size_t) L] = s / std::max (std::sqrt (cum[(size_t) (T - L)] * (cum[(size_t) T] - cum[(size_t) L])), 1e-12);
     }
+    Vec D (G.begin(), G.begin() + (std::ptrdiff_t) ((size_t) T * NB)), mc ((size_t) T + 1, 0.0);          // the curve less its mean over time, band by band: its movement
+    for (int b = 0; b < NB; ++b) { double m = 0; for (int t = 0; t < T; ++t) m += D[(size_t) t * NB + (size_t) b]; m /= T; for (int t = 0; t < T; ++t) D[(size_t) t * NB + (size_t) b] -= m; }
+    for (int t = 0; t < T; ++t) { double s = 0; for (int b = 0; b < NB; ++b) { const double v = D[(size_t) t * NB + (size_t) b]; s += v * v; } mc[(size_t) t + 1] = mc[(size_t) t] + s; }
     for (int L = 13; L < top; ++L)
         if (r[(size_t) L] >= PERIODIC && r[(size_t) L] >= r[(size_t) L - 1] && r[(size_t) L] >= r[(size_t) L + 1])
         {
+            double s = 0; const size_t m = (size_t) (T - L) * NB; const double* a = D.data(); const double* b = D.data() + (size_t) L * NB;
+            for (size_t i = 0; i < m; ++i) s += a[i] * b[i];
+            if (s < MOVES * std::max (std::sqrt (mc[(size_t) (T - L)] * (mc[(size_t) T] - mc[(size_t) L])), 1e-12)) continue;        // only the fixed part is like itself here
             const double d = r[(size_t) L - 1] - 2 * r[(size_t) L] + r[(size_t) L + 1];
-            return L + (d < 0 ? 0.5 * (r[(size_t) L - 1] - r[(size_t) L + 1]) / d : 0.0);
+            return L + (d < 0 ? 0.5 * (r[(size_t) L - 1] - r[(size_t) L + 1]) / d : 0.0);          // the first lag at which it is like itself again, movement and all
         }
     return 0.0;
 }
@@ -392,7 +399,7 @@ inline Vec curve (const Found& F, int c, int T2, double speed = 1.0)
     const double P = F.period;
     for (size_t k = 0; k < F.spans.size(); ++k)
     {
-        const int a = F.spans[k].first, b = F.spans[k].second, e = (k + 1 == F.spans.size() && b >= T - 15) ? std::max (b, T2) : std::min (b, T2);
+        const int a = F.spans[k].first, b = F.spans[k].second, e = (k + 1 == F.spans.size() && b >= T - 15) ? T2 : std::min (b, T2);     // never past the end of the sound it goes onto
         if (e <= a) continue;
         const int L = std::max (b - 1 - a, 1); const Vec m = fades (a, e - a, T2);
         for (int t = a; t < e; ++t)

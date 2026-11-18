@@ -15,6 +15,7 @@ BLOCK = 282; BHOP = 141                    # frames: 6 s, 3 s
 ON = 0.5; GAP = 24; SHORT = 47; RAMP = 5    # a frame counts from this probability; holes under 0.5 s are closed, stretches under 1 s dropped; 0.1 s fades at the ends
 SMOOTH = 15                                # the per-frame say-so is averaged over 0.3 s first
 PERIODIC = 0.8                             # the curve repeats if it is this like itself one period on
+MOVES = 0.2                                # ... and its movement is too: the curve less its mean over the stretch (a filter's fixed part is like itself at any lag)
 CUT = 0.65                                 # the app's default Sureness: what `sure` is scaled to
 PHASER = 0.93                              # the say-so a phaser needs to be shown at that default
 SWEEP = 0.81; BIG = 7.4                    # the say-so and the curve's size (dB, inside the stretch) a filter sweep needs
@@ -59,8 +60,9 @@ def period(G):
     T = len(G); e = (G ** 2).sum(1); best = 0.0; r = np.zeros(T // 2 + 1)
     if T < 48 or e.sum() <= 0: return 0.0
     for L in range(12, T // 2 + 1): r[L] = (G[:-L] * G[L:]).sum() / max(np.sqrt(e[:-L].sum() * e[L:].sum()), 1e-12)
+    D = G - G.mean(0); m = (D ** 2).sum(1)
     for L in range(13, T // 2):
-        if r[L] >= PERIODIC and r[L] >= r[L - 1] and r[L] >= r[L + 1]:                  # the first lag at which it is like itself again
+        if r[L] >= PERIODIC and r[L] >= r[L - 1] and r[L] >= r[L + 1] and (D[:-L] * D[L:]).sum() >= MOVES * max(np.sqrt(m[:-L].sum() * m[L:].sum()), 1e-12):     # the first lag at which it is like itself again, movement and all
             d = r[L - 1] - 2 * r[L] + r[L + 1]; return L + (0.5 * (r[L - 1] - r[L + 1]) / d if d < 0 else 0.0)
     return 0.0
 
@@ -120,7 +122,7 @@ def curve(F, c, T2, speed=1.0):
     if T2 <= T and speed == 1.0: return F['G'][c][:T2]
     out = np.zeros((T2, pic.NB)); P = F['period']
     for k, (a, b) in enumerate(F['spans']):
-        e = max(b, T2) if (k == len(F['spans']) - 1 and b >= T - 15) else min(b, T2)
+        e = T2 if (k == len(F['spans']) - 1 and b >= T - 15) else min(b, T2)      # never past the end of the sound it goes onto
         if e <= a: continue
         t = np.arange(a, e); u = a + (t - a) * speed; L = max(b - 1 - a, 1)
         if 0 < P < L: over = u > b - 1; u[over] = b - 1 - P + np.mod(u[over] - (b - 1), P)
