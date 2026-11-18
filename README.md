@@ -152,8 +152,63 @@ half comes back as it went in. A piece of a long flanged sound shows the copy in
 sounds a flanger is found less often than on short ones.
 
 Known limits: a light flanger on a busy sound is found on some sounds and not on others; thru-zero flangers and
-flangers whose delay stays under 1.3 ms are not found; chorus, phaser and filter sweep have no engine yet (the
-flanger engine finds nothing on them, as it should). Method, numbers and limits: `Research/sweep/README.md`.
+flangers whose delay stays under 1.3 ms are not found. Method, numbers and limits: `Research/sweep/README.md`.
+
+**Chorus (new engine in 0.4.4):** a chorus is the sound plus copies of itself whose delays move round and round
+(3 to 45 ms). A copy whose delay grows is the sound played a little slower, so the engine matches every moment
+of the sound against itself stretched by up to 6 % either way: a copy is a sharp peak at its delay and its
+stretch. Peaks that repeat as a sine or a triangle are a voice. For each voice the engine reads its loudness in
+eight frequency ranges (it takes the voices out, measures what is left along each curve, and corrects, six
+rounds), and the CHORUS group works on what was read:
+- one sound: Amount takes the voices out with the inverse of the moving copies, or makes them louder; Speed and
+  Depth change how fast and how far they drift;
+- two sounds: the same voices go onto the second sound, along the same curves;
+- the display shows every voice's delay over time, and says from when to when the chorus is there.
+
+A drifting pitch draws curves too. A voice counts only if it is seen all round its cycle and has no twins at
+simple ratios of its delay (a pitch period shows at twice and half its length; a copy does not), if it is loud
+enough, and if taking it out leaves less than half along its curve. A copy louder than the sound cannot be taken
+out forwards; it is told apart and taken out from the end of the sound backwards. A sound longer than 12 s is
+read in pieces of 12 s, one every 6 s; onto a second sound the clearest piece's voices go all the way.
+
+On the scoreboard's eight chorus cases (four outside tools, sounds of 6 s) the app shows CHORUS on all eight
+(build 0.4.3: two, both made far worse), takes 86, 79, 87, 67 and 71 of 100 out of five of them and 2, 1 and -9
+out of three, and puts 88, 85, 87, 94, 80, 47, 23 and 29 onto the case's other sound. It shows a chorus on none
+of the 198 clean sounds and on none of the 624 sounds with one of the 18 other effects. A copy louder than the
+sound comes out at 71 and 74; a 42 s sound at 81 from end to end, and its chorus goes onto a 27 s sound at 91.
+
+Known limits: a chorus whose voices move at different speeds is found but hardly taken out (only the voices of
+one speed are read); so is a copy that is louder than the sound and fed back; a copy as loud as the sound comes
+out only partly (29 to 57); a faint chorus can be missed; a chorus that starts part way keeps its first seconds;
+reading takes about half the sound's length. Method, numbers and limits: `Research/chorus/README.md`.
+
+**Phaser and filter sweep (new engine in 0.4.4):** both are a filter whose curve moves. What they leave is in
+the picture of the band levels over time: an edge, a peak or a few notches that travel while the sound's own
+partials stay where they are. A small model reads that picture and answers the tone curve per band and moment,
+and whether a filter sweep or a phaser is at work. The PHASER and FILTER SWEEP groups work on that curve:
+- one sound: Amount takes the curve off or makes it stronger; Speed moves it slower or faster;
+- two sounds: the same curve goes onto the second sound at the same times;
+- the display shows the curve at three moments of its movement and where along the sound the filter is.
+
+What the model says is not enough by itself: a sound's own tone moves too, and at the usual setting the model's
+plain answer showed a filter on one clean sound in seven. So a filter sweep is shown when its curve is also big
+(a real one cuts by 8 dB and more), and a phaser, whose curve is as small as a sound's own movement, only when
+the model is very sure. The model also reads a curve too small: where it is sure, the curve is taken off, what
+is left is read again and added.
+
+On the scoreboard (four outside tools each, two of each four never seen in the fit; both sounds of a case): all
+16 filter sweeps are shown, taken out at 28 of 100 (median; a deep sweep throws away what no gain brings back)
+and put onto the other sound at 56. Of the 16 phasers 7 are shown, taken out at 23 (17 to 51) and put on at 23;
+none of the shown comes out worse than it went in. On the 198 clean sounds neither group is shown; on the 608
+sounds with other effects one false PHASER (a reverb that moves by itself). Long sounds (30 to 48 s): nothing on
+12 clean ones; a filter sweep is shown on 7 of 8, and one that starts half way leaves the part before it as it
+was; a phaser on 1 of 8.
+
+Known limits: the phaser is the weak one. It is shown only when it is strong and clear, and then taken out by a
+quarter to a half; a light phaser is not told from the sound's own movement (lowering Sureness shows the
+candidates, some of which get worse when taken off). A gentle filter sweep (under 8 dB) is not shown at the
+default. The model is small; a larger one is the next step. Method, numbers and limits:
+`Research/moving/README.md`.
 
 **What is shown (new in 0.4.2):** up to 0.4.1 an effect was shown as soon as one 3 s window of the sound scored
 above the cut. Measured with the app's own code that showed 1.6 effects per sound that are not there. Now every
@@ -171,20 +226,25 @@ two detectors computed over the sound together with 55 physical measurements. On
 And the whole app on the scoreboard (`Research/room/bench/famboard.py`; the drop in REVERB is the second look
 described above):
 
-| 136 cases, 17 effects from outside tools                        | 0.4.1    | 0.4.2   | 0.4.3   |
-|------------------------------------------------------------------|----------|---------|---------|
-| the case's own effect shown                                      | 77       | 75      | 79      |
-| other groups shown: REVERB / the rest                            | 63 / 156 | 19 / 12 | 19 / 10 |
-| cases with no other group shown                                  | 16       | 107     | 109     |
-| own group far left: cases made worse than doing nothing          | 12 %     | 3 %     | 3 %     |
-| every shown group far left: cases made worse than doing nothing  | 78 %     | 19 %    | 19 %    |
-| everything shown put onto a second sound: cases made worse       | 71 %     | 36 %    | 30 %    |
+| 136 cases, 17 effects from outside tools                        | 0.4.1    | 0.4.2   | 0.4.3   | 0.4.4  |
+|------------------------------------------------------------------|----------|---------|---------|--------|
+| the case's own effect shown                                      | 77       | 75      | 79      | 89     |
+| other groups shown: REVERB / the rest                            | 63 / 156 | 19 / 12 | 19 / 10 | 19 / 7 |
+| cases with no other group shown                                  | 16       | 107     | 109     | 112    |
+| own group far left: cases made worse than doing nothing          | 12 %     | 3 %     | 3 %     | 1 %    |
+| every shown group far left: cases made worse than doing nothing  | 78 %     | 19 %    | 19 %    | 15 %   |
+| everything shown put onto a second sound: cases made worse       | 71 %     | 36 %    | 30 %    | 27 %   |
 
 What changed from 0.4.2 to 0.4.3 besides the scores of the four reworked groups: four flangers are found; a
 tremolo that 0.4.2 took for a gate is shown as a tremolo; another tremolo, which 0.4.2 showed and took out at 24
 of 100, is now offered only at a lower Sureness; FLANGER on a chorus and AUTO PAN on a phaser are no longer shown.
 New and wrong: TREMOLO, just over the default Sureness, on a bass loop with a low shelf. Every other case is as
 it was.
+
+What changed from 0.4.3 to 0.4.4: the three new groups. CHORUS is shown on 8 of 8 cases (2), FILTER SWEEP on 8
+of 8 (5), PHASER on 3 of 8 (2, both of which went onto a second sound far worse than nothing); two false FILTER SWEEPs (on a Haas widener and on a
+stutter) are gone. Every other case is as it was. Still open: a false REVERB on some chorus, phaser and flanger
+sounds, which is most of what the last two rows have left.
 
 The price is in the third row of the first table, and it is uneven: flanger, phaser, filter sweep and a fixed filter are found less
 often than before (9, 39, 39 and 9 % against 36, 73, 61 and 34 %), because most of their earlier finds came with
@@ -193,7 +253,8 @@ Sureness slider means the same for every effect now: shown when the score is abo
 shown (63 % found, 67 % of clean sounds clean), at 80 % less (39 %, 98 %). A long sound is judged in blocks of 6 s
 and an effect has to be there in half of them, so an effect on a short part of a long sound is not shown (the
 level and flanger engines of 0.4.3 look for themselves where on the sound their effect is). Reverb, the comb
-filter, the delay, tremolo, auto pan, gated rhythm and the flanger keep their own engines' verdicts. Method and tables: `Research/detect/README.md`.
+filter, the delay, tremolo, auto pan, gated rhythm, the flanger, the chorus, the phaser and the filter sweep keep
+their own engines' verdicts. Method and tables: `Research/detect/README.md`.
 
 Effects it knows so far (19): flanger, chorus, phaser, Haas width, stereo width, comb filter, delay, reverb,
 distortion, bitcrush, filter sweep, tremolo, auto pan; added in 0.2.0: saturation, exciter, ring mod,
@@ -212,11 +273,17 @@ filter, stutter, gated rhythm (from a larger 27-effect detector).
   steps, long sounds piece by piece, where the movement is, the gain for taking out and putting on).
   The flanger engine: `Sweep.h` (the cepstrum picture, the line through it, gain and feedback, the rule, where
   along the sound the copy is, the moving filter and its inverse, long sounds piece by piece).
+  The chorus engine: `Chorus.h` (the picture of the sound against itself stretched, peaks, voices, the tests
+  against a drifting pitch, loudness per range, copies louder than the sound, long sounds piece by piece, the
+  voices taken out, changed or put onto a second sound).
+  The moving-tone engine (phaser, filter sweep): `Moving.h` (the band picture, the model, stretches and their
+  sureness, the repeated reading, the curve put on and taken off).
   `Verify.h` the check of every effect against the whole sound before it is shown.
 - `Source/App/Main.cpp` the JUCE app.
 - `Resources/models.bin` (12 effects) and `models27.bin` (27 effects, `DR_MODEL27=1`) the trained models, written by `Tools/export_models.py`.
 - `Resources/room.bin` and `room2.bin` the reverb engine's model (first and second look), written by `Tools/export_room_model.py`.
 - `Resources/verify.bin` the verifier's models, written by `Research/detect/export_verify.py`.
+- `Resources/moving.bin` the moving-tone engine's model, written by `Tools/export_moving_model.py`.
 - `Tests/render.cpp` the app's processing without the UI: `drrender Resources first.wav [second.wav|-] out.wav [id=value ...]`
   (out `-` only prints what was found; `ir=file.wav` writes what Export IR writes, `echoir=file.wav` the same for
   the DELAY group; `match=1` switches Tone Match on;
@@ -231,6 +298,10 @@ filter, stutter, gated rhythm (from a larger 27-effect detector).
   file); `Tools/level_parity.py` compares it with the prototype.
 - `Tests/sweep.cpp` the flanger engine alone: `drsweep ...` (see the top of the file); `Tools/sweep_parity.py`
   compares it with the prototype.
+- `Tests/chorus.cpp` the chorus engine alone: `drchorus a.wav b.wav prefix`, `drchorus both ...`, `drchorus find ...`
+  (see the top of the file); `Tools/chorus_parity.py` compares it with the prototype.
+- `Tests/moving.cpp` the moving-tone engine alone: `drmoving model.bin a.wav b.wav prefix`, `drmoving both ...`
+  (see the top of the file); `Tools/moving_parity.py` compares it with the prototype.
 - `Research/room/` the Python side of the reverb engine as it was run: the scoreboard, the reference engine the
   C++ matches, training and the experiments (see its README).
 - `Research/tone/` the Python side of the tone engine: the prototype the C++ matches, its scores and the report.
@@ -242,6 +313,10 @@ filter, stutter, gated rhythm (from a larger 27-effect detector).
   its rule, the tests on long sounds.
 - `Research/sweep/` the Python side of the flanger engine: the prototype the C++ matches, the numbers behind its
   rule, the ceilings, the tests on long sounds.
+- `Research/chorus/` the Python side of the chorus engine: the prototype the C++ matches, the studies behind its
+  tests, the scores, the tests on long sounds.
+- `Research/moving/` the Python side of the moving-tone engine: the prototype the C++ matches, the fit data and
+  the training, the rule study, the repeated reading, the tests on long sounds.
 
 ## Build
 `cmake -S . -B build && cmake --build build --config Release --target DefectRefect`
