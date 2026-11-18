@@ -388,18 +388,17 @@ inline RoomEvidence roomEvidence (const room::Found& f)
     }
     return e;
 }
-// How sure it is that there is a room on the sound, 0 .. 1: what the Sureness slider compares. Fitted on the
-// scoreboard's 240 sounds with reverb against 368 without (the same sounds dry, and with tone effects only;
-// Research/room/train/sure_stats.py and sure_fit2.py with PRIOR=0.62), as a probability for a sound that is somewhat
-// more likely to carry reverb than not (62 in 100). Most of the answer is whether the engine finds a room at all (it
-// does on 96 % of the sounds with reverb and on 34 % of those without); among the found ones, more cells that are
-// clearly room and more bands with all-room moments make it surer. At the slider's 65 % the reverb then shows on
-// 86 % of the sounds that have one, on 17 % of the dry ones and on 12 % of those with a tone effect only
-// (cross-validated); the "dry" ones it shows on are mostly recorded loops and recordings, which may carry a room of
-// their own. The numbers belong to the model in Resources (0.4.1: first look unet_w, second look unet_wp2) and are
-// fitted again with every new model.
-// roomNone: what is left when the engine finds no room (then about 9 in 10 sounds have none).
-constexpr double roomSure0 = 2.100, roomSureDeep = 1.215, roomSureBands = 2.264, roomNone = 0.09;
+// How sure it is that there is a room on the sound, 0 .. 1: what the Sureness slider compares. A probability for a
+// sound that is somewhat more likely to carry reverb than not (62 in 100). Most of the answer is whether the engine
+// finds a room at all; among the found ones, more cells that are clearly room and more bands with all-room moments
+// make it surer.
+// Fitted for the model of 0.4.5 (first look unet_x, second look unet_xp2) on 2470 sounds that are not its training
+// cases (Research/room/bench/prep_sb.py, prep_nw.py, fit_sure.py): every reverb tool on a clean clip and after
+// another effect, ringing out and cut off at 6 s, against clean clips, the other 17 effect families alone and tone
+// effects alone. The rule is fitted on the half made with the tools and clips that training used and checked on the
+// other half, which the model never saw. NUMBERS_HERE
+// roomNone: what is left when the engine finds no room (then about 4 in 5 sounds have none).
+constexpr double roomSure0 = 1.902, roomSureDeep = 0.847, roomSureBands = 2.649, roomNone = 0.22;
 inline double roomSureness (const room::Found& f)
 {
     if (! f.found) return roomNone;
@@ -475,24 +474,13 @@ inline bool mergeRoom (Inspection& I, const room::Found& f)
     I.prob["reverb"] = roomSureness (f); return true;
 }
 
-// A sound that is cut off while it is still playing has no ending. The model learned from sounds that end inside
-// the file, where a room shows as the tail after the last note, and where the file simply stops it reads a room into
-// many dry sounds: of the scoreboard's 120 dry sounds cut off at 6 s it showed a room on 54 (on 18 when silence
-// follows them, as in the sounds it learned from), of the corpus's 198 dry clips as files on 90.
-// So a found room is looked at a second time with silence after the sound, and the less sure of the two verdicts
-// counts (returned: the second one, or -1 when there was nothing to look at). Then a room shows on 18 of the 120
-// and on 29 of the 198. Sounds that end inside the file lose nothing (120 with a reverb whose tail rings out: 104
-// shown by either look; their dry versions: 18 and 18). The price is paid by sounds with a real reverb that are cut
-// off: 68 of 120 shown instead of 88 (Research/room/bench/cut_test.py). The room that is shown and worked with is
-// still the one found on the sound as it is. Costs one more look of the model.
-constexpr double roomEndSilence = 3.0;      // seconds
-inline double recheckRoomEnd (Inspection& I, const Stereo& y, const room::Net& net, const room::Net* second, const room::Stop& stop = {})
-{
-    auto r = I.prob.find ("reverb"); if (r == I.prob.end() || ! (r->second > roomNone)) return -1.0;
-    Stereo z = y; const size_t n = y.size() + (size_t) (roomEndSilence * SR); z.l.resize (n, 0.0); z.r.resize (n, 0.0);
-    const room::Found f = room::find (z, net, second, stop); if (f.stopped) return -1.0;
-    const double s = roomSureness (f); r->second = std::min (r->second, s); return s;
-}
+// A sound that is cut off while it is still playing has no ending. The models up to 0.4.4 had learned from sounds
+// that end inside the file only: they read a room into many dry sounds that simply stop, and on a real reverb that is
+// cut off they did as much harm as good. From 0.4.2 a found room was therefore looked at a second time with silence
+// after the sound, and the less sure verdict counted (recheckRoomEnd). The model of 0.4.5 has learned from files that
+// stop while the sound plays and from excerpts cut at both ends (Research/room/train/mkcases_x.py); next to its
+// verdict on the sound as it is, the look with silence adds nothing (fit_sure.py), so it is gone, and with it one
+// run of the model per sound.
 
 // ---------------------------------------------------------------- the tone engine's groups (Tone.h)
 // COMB FILTER: short reflections found on the sound (a copy of it a few milliseconds later, which colours the tone
@@ -788,7 +776,7 @@ inline std::vector<FoundFx> estimate (const Inspection& I, const Stereo& y, doub
     {
         auto pit = I.prob.find (f); if (pit == I.prob.end()) continue;
         if (only ? ! only->count (f) : pit->second <= cutFor (f, cut)) continue;
-        if (f == "reverb" && room != nullptr && room->found) { out.push_back (roomFx (room, pit->second)); continue; }
+        if (f == "reverb" && room != nullptr) { if (room->found) out.push_back (roomFx (room, pit->second)); continue; }        // the room engine ran: its room or none
         if (f == "comb") { if (tone != nullptr && ! tone->echoes.empty()) out.push_back (combFx (tone)); continue; }
         if (f == "delay") { if (echo != nullptr && echo->any()) out.push_back (echoFx (echo, pit->second)); continue; }
         if (lvl != nullptr && (f == "tremolo" || f == "autopan" || f == "gatedrhythm")) { if (lvl->found && f == levelName (*lvl)) out.push_back (levelFx (lvl, pit->second)); continue; }

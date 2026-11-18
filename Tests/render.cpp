@@ -66,11 +66,6 @@ int main (int argc, char** argv)
             std::cout << "room: found=" << r->found << " detector=" << (I.prob.count ("reverb") ? I.prob.at ("reverb") : 0.0) << " sureness=" << dr::roomSureness (*r)
                       << " share=" << ev.share << " deep=" << ev.deep << " bands=" << ev.bands << " moments=" << ev.moments << " decay=" << ev.decay << " strength=" << ev.strength << " own=" << ev.own << "\n";
             if (dr::mergeRoom (I, *r)) rf = r;
-            if (rf != nullptr && r->found)      // a room on a sound that may be cut off while still playing: is it still there with silence after it?
-            {
-                const double s = dr::recheckRoomEnd (I, src, net, net2.ready() ? &net2 : nullptr);
-                if (s >= 0) std::cout << "room with silence after the sound: sureness=" << s << " counts=" << I.prob.at ("reverb") << "\n";
-            }
         }
     }
     const auto tf = std::make_shared<const dr::tone::Found> (dr::tone::analyse (src)); dr::mergeTone (I, *tf);

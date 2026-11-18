@@ -27,6 +27,11 @@ static void look (const dr::Stereo& y, const dr::room::Net& net, const dr::room:
         const double L = (double) std::max<size_t> (live, 1);
         std::cout << ", \"frames\": " << T << ", \"live\": " << (double) live / (double) n << ", \"u3\": " << u3 / L << ", \"u6\": " << u6 / L << ", \"u12\": " << u12 / L << ", \"u20\": " << u20 / L;
         for (int k = 0; k < 3; ++k) std::cout << ", \"r" << k << "\": " << (all3[k] > 0 ? room3[k] / all3[k] : 0.0);
+        // how the file begins and ends: the level of its first and last tenth of a second against its loudest moment (dB); near 0 = cut off while playing
+        std::vector<double> e ((size_t) T, 0.0); double mx = 1e-30;
+        for (int t = 0; t < T; ++t) { for (int b = 0; b < NB; ++b) e[(size_t) t] += std::pow (10.0, f.picture.LE[(size_t) t * (size_t) NB + (size_t) b] / 10.0); mx = std::max (mx, e[(size_t) t]); }
+        auto lev = [&] (int a, int b) { double s = 0; int c = 0; for (int t = std::max (a, 0); t < std::min (b, T); ++t) { s += e[(size_t) t]; ++c; } return 10.0 * std::log10 (std::max (c > 0 ? s / c : 0.0, 1e-30) / mx); };
+        std::cout << ", \"startDb\": " << lev (4, 14) << ", \"endDb\": " << lev (T - 15, T - 5);
     }
     for (int q = 0; q < 4; ++q)
     {
@@ -50,7 +55,7 @@ int main (int argc, char** argv)
         dr::Stereo y; double sr = 0; if (! dr::readWav (p, y, sr)) { std::cerr << "cannot read " << p << "\n"; continue; }
         if (cut > 0 && (size_t) (cut * 48000.0) < y.size()) { y.l.resize ((size_t) (cut * 48000.0)); y.r.resize ((size_t) (cut * 48000.0)); }
         std::cout << "{\"path\": \"" << p << "\", \"cut\": " << cut << ", \"sec\": " << (double) y.size() / 48000.0 << ", "; look (y, net, net2.ready() ? &net2 : nullptr, "as");
-        dr::Stereo z = y; const size_t n = y.size() + (size_t) (dr::roomEndSilence * dr::SR); z.l.resize (n, 0.0); z.r.resize (n, 0.0);
+        dr::Stereo z = y; const size_t n = y.size() + (size_t) (3.0 * dr::SR);       // 3 s of silence after the sound, as the app's end look had it up to 0.4.4 z.l.resize (n, 0.0); z.r.resize (n, 0.0);
         std::cout << ", "; look (z, net, net2.ready() ? &net2 : nullptr, "end"); std::cout << "}" << std::endl;
     }
     return 0;

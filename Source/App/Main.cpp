@@ -665,12 +665,6 @@ private:
                              catch (const std::exception&) { f.reset(); }        // the room engine failed: the detector's verdict and the old reverb handling stay
                              if (generation.load() != gen) return;
                              if (f != nullptr && ! f->stopped && dr::mergeRoom (I, *f)) *roomOut = f;
-                             if (*roomOut != nullptr && (*roomOut)->found)       // a room on a sound that may be cut off while still playing: is it still there with silence after it?
-                             {
-                                 try { dr::recheckRoomEnd (I, *src, *RN, second, [this, gen] { return generation.load() != gen; }); }
-                                 catch (const std::exception&) {}
-                                 if (generation.load() != gen) return;
-                             }
                          }
                          {       // the tone engine: the sound's long-term spectra (for Tone Match) and short reflections on it
                              std::shared_ptr<dr::tone::Found> t;
