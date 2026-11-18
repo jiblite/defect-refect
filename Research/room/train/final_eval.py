@@ -10,7 +10,7 @@ def one(d):
     c = truth.load(d, 'A'); direct, rev = truth.parts(c); wet = c['wet']; ft = cm.features(wet, direct); gt = np.clip(ft['LS'] - ft['LE'], -30.0, 0.0)       # gt: the right answer on the band grid
     an = engine.analyse(wet, MODEL, g=gt if ORACLE else None); sc0 = score.Scorer(direct); dw = sc0(wet); out = {}
     def sc(y): return 100.0 * (1.0 - sc0(y) / max(dw, 1e-9))
-    out['reverb out'] = sc(engine.one_sound(wet, an, 0.0)); out['half way'] = sc(engine.one_sound(wet, an, 0.5)); out['bolder'] = sc(engine.fader(wet, an, 0.0))       # the app's fader: half way left, a quarter left, far left
+    out['reverb out'] = sc(engine.one_sound(wet, an, 0.0)); out['half way'] = sc(engine.one_sound(wet, an, 0.5)); out['bolder'] = sc(engine.fader_bold(wet, an, 0.0))       # the app's fader: half way left, a quarter left, far left
     tgt = direct + 2.0 * rev; sc2 = score.Scorer(tgt); d2 = sc2(wet)
     out['doubled'] = 100.0 * (1.0 - sc2(engine.one_sound(wet, an, 2.0)) / max(d2, 1e-9))
     cB = truth.load(d, 'B'); sb = score.Scorer(cB['wet']); base = sb(cB['dry']); out['room onto second sound'] = 100.0 * (1.0 - sb(engine.onto(cB['dry'], an, 1.0)) / max(base, 1e-9)); bases = dict(out=float(dw), onto=float(base))

@@ -392,21 +392,23 @@ inline RoomEvidence roomEvidence (const room::Found& f)
 // sound that is somewhat more likely to carry reverb than not (62 in 100). Most of the answer is whether the engine
 // finds a room at all; among the found ones, more cells that are clearly room and more bands with all-room moments
 // make it surer.
-// Fitted for the model of 0.4.5 (first look unet_x, second look unet_xp2) on 2470 sounds that are not its training
-// cases (Research/room/bench/prep_sb.py, prep_nw.py, fit_sure.py): every reverb tool on a clean clip and after
-// another effect, ringing out and cut off at 6 s, against clean clips, the other 17 effect families alone and tone
-// effects alone. The rule is fitted on the half made with the tools and clips that training used and checked on the
-// other half, which the model never saw. There the engine finds a room on 96 % of the reverbs that ring out, on
-// 77 % of those that are cut off and on 18 % of the sounds without one; at the slider's 65 % the reverb shows on
-// 95 %, on 71 % and on 11 % (clean clips 8 %, another effect alone 13 %, a tone effect alone none; with the look
-// without the other effects at the end of this file: another effect alone 10 %, all sounds without reverb 9 %), and
-// what the number says holds: of the sounds it calls 65 to 80 % sure 74 % have a reverb, 80 to 90: 83 %, over 90:
-// 96 %. The sounds without reverb it still shows on are mostly recorded loops and recordings, which may carry a
-// room of their own, and sampled instruments that ring by themselves or carry the hall they were recorded in. More
-// evidence (the room part's share, strength, decay time, the levels at the file's two ends, a look with silence
-// after the sound, a look at left and right summed to mono) was tried and did not help on the unseen half.
-// roomNone: what is left when the engine finds no room (then about 4 in 5 sounds have none).
-constexpr double roomSure0 = 1.902, roomSureDeep = 0.847, roomSureBands = 2.649, roomNone = 0.22;
+// Fitted for the model of 0.4.6 (first look unet_y1, second look unet_y1p2, with the guard of RoomNumbers.h) on 2470
+// sounds that are not its training cases (Research/room/bench/prep_sb.py, prep_nw.py, fit_sure.py): every reverb
+// tool on a clean clip and after another effect, ringing out and cut off at 6 s, against clean clips, the other 17
+// effect families alone and tone effects alone. The rule is fitted on the half made with the tools and clips that
+// training used and checked on the other half, which the model never saw. There the engine finds a room on 95 % of
+// the reverbs that ring out, on 76 % of those that are cut off and on 13 % of the sounds without one (the model of
+// 0.4.5: 96, 77 and 18 %); at the slider's 65 % the reverb shows on 94 %, on 68 % and on 11 % (clean clips 11 %,
+// another effect alone 12 %, a tone effect alone 2 %; with the look without the other effects at the end of this
+// file: another effect alone 10 %, all sounds without reverb 9 %), and what the number says holds: of the sounds it
+// calls 65 to 80 % sure 77 % have a reverb, 80 to 90: 85 %, over 90: 95 %. (The rule of 0.4.5, for its model: 1.902,
+// 0.847, 2.649 and 0.22.) The sounds without reverb it still shows on are mostly recorded loops and recordings,
+// which may carry a room of their own, and sampled instruments that ring by themselves or carry the hall they were
+// recorded in. More evidence (the room part's share, strength, decay time, the levels at the file's two ends, a look
+// with silence after the sound, a look at left and right summed to mono) was tried and did not help on the unseen
+// half.
+// roomNone: what is left when the engine finds no room (then about 3 in 4 sounds have none).
+constexpr double roomSure0 = 1.892, roomSureDeep = 0.758, roomSureBands = 2.875, roomNone = 0.25;
 inline double roomSureness (const room::Found& f)
 {
     if (! f.found) return roomNone;
@@ -502,30 +504,21 @@ inline FoundFx roomFx (std::shared_ptr<const room::Found> found, double prob)
                 K ("width", "Width", "How wide the room is. Middle = as found. Left = narrower, down to mono. Right = wider.") };
     return F;
 }
-// The Amount fader of a found room on the sound itself (s 0 .. 2, 1 = untouched). From the middle to half way left
-// the engine's own answer comes in, and half way left it is in full. How deep the cut should go depends on the
-// sound (a wet one wants more, a nearly dry one less), so from there to far left the answer is made bolder, up to
-// depth roomDeep: the cells the engine is sure about stay where they are and the doubtful ones move most. The ear
-// picks. Right of the middle: more reverb. (The prototype's engine.fader.)
-constexpr double roomHalf = 0.5, roomDeep = 1.5;
-// What that fader does to the room's level, for the display (dB): how far the room comes down where it is on its own
+// The Amount fader of a found room on the sound itself (s 0 .. 2, 1 = untouched). Left of the middle the engine's
+// own answer comes in along a straight line (in dB), and at far left it is in full. Right of the middle: more reverb.
+// (The prototype's engine.fader. Up to 0.4.5 the answer was in full at half way left and was made bolder from there
+// to far left: the doubtful cells were turned down further. Measured on the scoreboard's 120 reverbs that was the
+// worst of 28 ways to shape the answer: 37 % of the cases came out worse than untouched against 14 % for the plain
+// answer, and on the sound itself, without its ring-out, 56 % against 28 %: Research/room/train/depth2_test.py.)
+// What the fader does to the room's level, for the display (dB): how far the room comes down where it is on its own
 // is the typical value over the scoreboard's 120 reverb cases with the model of 0.4.5, 7.5 dB with the engine's own
-// answer and 15.4 dB at far left (Research/room/train/bold_test.py; it differs from sound to sound, and under the
-// sound itself less can be taken: there the sound loses 1.6 and 5.3 dB). Right of the middle: plain level.
-constexpr double roomDownOwn = 7.5, roomDownDeep = 15.4;
-inline double roomAmountDb (double s)
-{
-    if (s >= 1.0) return 20.0 * std::log10 (s);
-    return s >= roomHalf ? -roomDownOwn * (1.0 - s) / (1.0 - roomHalf) : -(roomDownOwn + (roomDownDeep - roomDownOwn) * (roomHalf - s) / roomHalf);
-}
+// answer (Research/room/train/bold_test.py; it differs from sound to sound, and under the sound itself less can be
+// taken: there the sound loses 1.6 dB). Right of the middle: plain level.
+constexpr double roomDownOwn = 7.5;
+inline double roomAmountDb (double s) { return s >= 1.0 ? 20.0 * std::log10 (s) : -roomDownOwn * (1.0 - s); }
 inline Stereo roomFader (const Stereo& y, const room::Found& f, double s, double length, double bright, double width, const room::Stop& stop = {})
 {
-    if (s >= 1.0) return room::oneSound (y, f, s, length, bright, width, stop);
-    if (s >= roomHalf) return room::oneSound (y, f, (s - roomHalf) / (1.0 - roomHalf), length, bright, width, stop);
-    room::Found d; d.picture.frames = f.picture.frames; d.picture.LE = f.picture.LE; d.gains = f.gains; d.found = f.found; d.kdb = f.kdb; d.t60 = f.t60; d.ev = f.ev; d.width = f.width;
-    const double b = roomDeep * (roomHalf - s) / roomHalf;
-    for (float& g : d.gains) { const double p = std::clamp (-(double) g / 30.0, 1e-6, 1.0 - 1e-6); g = (float) (-30.0 / (1.0 + std::exp (-(std::log (p / (1.0 - p)) + b)))); }
-    return room::oneSound (y, d, 0.0, length, bright, width, stop);
+    return room::oneSound (y, f, s, length, bright, width, stop);
 }
 // What Export IR writes: the found room alone (no direct sound; the tail starts 10.7 ms after where the direct sound
 // would be), shaped by the Length, Brightness and Width faders, brought to unity level (a sound run through it
@@ -1130,6 +1123,9 @@ inline Stereo reshape (const Stereo& src, const std::vector<FoundFx>& found, con
 // reverb the REVERB groups made by the effect go from 50 to 26 (Haas 12 -> 4, delay 15 -> 8, auto pan 6 -> 3); of 340
 // sounds with a real reverb that is shown, 78 are looked at again and one loses its group. On the scoreboard's 136
 // cases the false REVERB groups go from 16 to 13.
+// With the room model of 0.4.6 (which reads fewer rooms into such sounds to begin with): on the 912 sounds REVERB
+// shows on 96 before this look and on 82 after it (0.4.5: 119 and 93; Haas 9 -> 3, delay 11 -> 8); of 334 sounds
+// with a real reverb that is shown, 85 are looked at again and two lose their group; scoreboard: 9.
 // (Since 0.4.2 this was done for echoes alone: on the scoreboard's 16 sounds with a delay the room engine showed a
 // REVERB group on 5, only one of which has a room of its own, and the look without the echoes took 3 of the 4 away
 // and added none; Research/echo/roomcheck.py, roomcheck2.py.)

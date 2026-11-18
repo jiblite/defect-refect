@@ -78,6 +78,23 @@ BUILD_UP_DB = 2.3      # a real room builds up before it decays: a plain exponen
 MID = (cm.FC41 > 450) & (cm.FC41 < 7000)
 CAP_T = np.where(cm.FC41 < 450, 5.0, np.where(cm.FC41 <= 7000, 2.5, 1.6))      # decay time: at most this many times the mid-band median
 CAP_K = np.where(cm.FC41 < 450, 12.0, np.where(cm.FC41 <= 7000, 6.0, 4.0))     # strength: at most this many dB above the mid-band median
+# The guard on the second pass. The second look may refine the first answer, and where the room's numbers are sound it
+# may go a good deal deeper. But its extra knowledge is those numbers, and where they rest on little (few mid bands gave a
+# free decay of their own: often a recording whose own low end sinks slowly, read as a long room) it digs into the sound
+# itself. So the average excess (how much deeper the second answer is than the first, over the cells within 50 dB of the
+# loudest) is held to HOLD_THIN dB when at most HOLD_FEW mid bands gave a decay, HOLD_RICH dB from HOLD_MANY bands on,
+# a straight line between; beyond that the answer is pulled back towards the first one until the excess is that much.
+# (Research/room/train/guard_bands2.py, guard_test.py: acts on 2 of 120 scoreboard reverbs and on 52 of 3233 pictures.)
+HOLD_THIN, HOLD_RICH, HOLD_FEW, HOLD_MANY = 2.0, 8.0, 2, 6
+def hold_weight(LE, g1, g2):
+    """(how much of the second answer's step away from the first is kept, 1 = all of it; the average excess in dB; the limit it is held to)."""
+    live = LE > LE.max() - 50.0
+    if not live.any(): return 1.0, 0.0, HOLD_RICH
+    e = float((g1 - g2)[live].mean()); T60, ev = decay_times(LE, g1); m = int(np.isfinite(T60[MID]).sum())
+    D = HOLD_THIN if m <= HOLD_FEW else HOLD_RICH if m >= HOLD_MANY else HOLD_THIN + (HOLD_RICH - HOLD_THIN) * (m - HOLD_FEW) / (HOLD_MANY - HOLD_FEW)
+    return (1.0 if e <= D else D / e), e, D
+def hold_back(LE, g1, g2):
+    w = hold_weight(LE, g1, g2)[0]; return g2 if w >= 1.0 else g1 + w * (g2 - g1)
 def _mid(v, ev):
     """The median over the mid bands (450 Hz .. 7 kHz) that have evidence of their own; if none has, over all bands that have."""
     s = MID & (ev > 0)

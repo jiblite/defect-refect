@@ -14,7 +14,7 @@ def sc(direct, wet, y): s = score.Scorer(direct); return 100.0 * (1.0 - s(y) / m
 def one(d):
     c = truth.load(d, 'A'); direct, rev = truth.parts(c); wet = c['wet']; m = c['meta']; r = dict(name=c['name'], split=m['split'], drr=float(10 * np.log10(max((direct ** 2).sum(), 1e-20) / max((rev ** 2).sum(), 1e-20))))
     for tag, lo, hi in (('whole', 0, len(wet)), ('cut', 0, CUT), ('excerpt', E0, E1)):
-        w, dd = wet[lo:hi], direct[lo:hi]; an = engine.analyse(w, MODEL); y = engine.one_sound(w, an, 0.0); yb = engine.fader(w, an, 0.0)
+        w, dd = wet[lo:hi], direct[lo:hi]; an = engine.analyse(w, MODEL); y = engine.one_sound(w, an, 0.0); yb = engine.fader_bold(w, an, 0.0)
         r[tag] = dict(found=bool(an['found']), out=sc(dd, w, y), bold=sc(dd, w, yb))
         if tag == 'whole': r['whole6'] = dict(found=bool(an['found']), out=sc(dd[:CUT], w[:CUT], y[:CUT]), bold=sc(dd[:CUT], w[:CUT], yb[:CUT])); r['wholeE'] = dict(found=bool(an['found']), out=sc(dd[E0:E1], w[E0:E1], y[E0:E1]), bold=sc(dd[E0:E1], w[E0:E1], yb[E0:E1]))
     return r

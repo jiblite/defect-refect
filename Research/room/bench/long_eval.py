@@ -4,7 +4,7 @@
 import sys, os, json, collections, numpy as np
 sys.path.insert(0, '/tmp/claude-0/v2/roomsure'); import look2
 D = '/tmp/claude-0/v2/roomsure/'; TAG = sys.argv[1] if len(sys.argv) > 1 else 'x45f'; CUT = 0.65
-A0, AD, AB, NONE = 1.902, 0.847, 2.649, 0.22
+A0, AD, AB, NONE = (1.902, 0.847, 2.649, 0.22) if os.environ.get('RULE') == '045' else (1.892, 0.758, 2.875, 0.25)        # Estimate.h roomSure0, roomSureDeep, roomSureBands, roomNone: since 0.4.6, and (RULE=045 in the environment) those of 0.4.5
 def rule(deep, bands): return NONE if bands < 1 else 1.0 / (1.0 + np.exp(-(A0 + AD * np.log10(deep + 0.003) + AB * bands / 41.0)))
 def wq(v, w, q):
     """Weighted quantile: in rising order, the first value at which the weight so far reaches q of all."""

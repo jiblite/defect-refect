@@ -70,7 +70,9 @@ def main():
         """Python's input planes and answer: the first model's, and with a second model its planes (the first four and the three made from the first answer) and its answer; the first answer."""
         planes = planes_of(ft); g1 = answer(model, planes)
         if model2 is None: return planes, g1, g1
-        planes = np.concatenate([planes, roomnum.second_look(ft['LE'], g1.astype(np.float64))]); return planes, answer(model2, planes), g1
+        planes = np.concatenate([planes, roomnum.second_look(ft['LE'], g1.astype(np.float64))]); return planes, held(ft['LE'], g1, answer(model2, planes)), g1      # the second answer as the engine uses it: after the guard
+    def held(LE, g1, g2): return roomnum.hold_back(np.asarray(LE, np.float64), np.asarray(g1, np.float64), np.asarray(g2, np.float64))        # the guard on the second pass
+    def kept(LE, g1, g2): return roomnum.hold_weight(np.asarray(LE, np.float64), np.asarray(g1, np.float64), np.asarray(g2, np.float64))
     def analysed(x, g):
         """The prototype's analyse() with these gains in the place of its own model's."""
         predict.gains = lambda ft, name=None: np.asarray(g, np.float64); return engine.analyse(x)
@@ -93,7 +95,7 @@ def main():
     AMOUNTS = (0.0, 0.5, 1.0, 2.0)
     CASES = [('one_sound', a, f) for f in (MIDDLE,) + MOVED for a in AMOUNTS] + [('onto', a, MIDDLE) for a in AMOUNTS] + [('onto', a, f) for f in MOVED for a in (0.5, 2.0)]
     def label(f): return 'faders in the middle' if f == MIDDLE else ', '.join('%s %g' % (n, v) for n, v in zip(('length', 'brightness', 'width'), f) if v != 1.0)
-    feat = {}; gain = {}; nums = {}; snd = {}; times = {}; flags = []; notes = []
+    feat = {}; gain = {}; nums = {}; snd = {}; times = {}; flags = []; notes = []; guard = []
     def add(d, key, v): d.setdefault(key, []).append(v)
     def timed(out):
         for key in ('find', 'impulse response', 'onto', 'one sound', 'render'):
@@ -107,7 +109,9 @@ def main():
             add(feat, '%s (dB), cells above -100 dB' % k, np.abs(c[k] - ft[k])[live]); add(feat, '%s (dB), all cells' % k, np.abs(c[k] - ft[k]).ravel())
         add(feat, 'the model\'s input planes (-1.75 .. 1.75)', np.abs(c['IN'] - planes).ravel())
         if model2 is not None: add(gain, 'gains of the first model (dB)', np.abs(raw('G1.f32', (T, B)) - g1).ravel())
-        add(gain, 'gains (dB)', np.abs(c['G'] - g).ravel()); add(gain, 'gains (dB), Python\'s model on the tool\'s input (model alone)', np.abs(c['G'] - answer(model if model2 is None else model2, c['IN'])).ravel())
+        alone = answer(model, c['IN']) if model2 is None else held(c['LE'], raw('G1.f32', (T, B)), answer(model2, c['IN']))        # with a second model: its answer after the guard, from the tool's own pictures and first answer
+        add(gain, 'gains (dB)', np.abs(c['G'] - g).ravel()); add(gain, 'gains (dB), Python\'s model on the tool\'s input (model alone)', np.abs(c['G'] - alone).ravel())
+        if model2 is not None: w, e, lim = kept(ft['LE'], g1, answer(model2, planes)); guard.append(w); notes.append('sound %d: the second answer goes %.2f dB deeper than the first on average (limit %.1f dB)%s' % (si + 1, e, lim, '' if w >= 1.0 else ': HELD BACK, %.0f %% of its step kept' % (100 * w)))
         own = analysed(x, g); same = analysed(x, c['G']); flags.append((own['found'], same['found'], c['found']))
         line = '%2d  %5.1f s | gains %.6f dB | room: Python %s, Python on the tool\'s gains %s, tool %s' % (si + 1, n / cm.SR, np.abs(c['G'] - g).max(), own['found'], same['found'], c['found'])
         for ref, an in (('end to end', own), ('same gains', same)):
@@ -199,10 +203,11 @@ def main():
     ex.export(dict(cfg=m2.cfg, state=m2.state_dict()), P('second.bin'), net.GMIN); g2 = answer(m2, np.concatenate([planes_of(ft), look]))
     for piece in (4096, step):
         run(P('room.bin'), P('in.wav'), '--dump', P('d'), 'second=' + P('second.bin'), 'piece=%d' % piece); c = dumped(T, 7); t1 = raw('G1.f32', (T, B)); same = analysed(x, c['G'])
-        d = (np.abs(c['IN'][4:] - roomnum.second_look(ft['LE'], t1.astype(np.float64))).max(), np.abs(c['G'] - answer(m2, c['IN'])).max(), np.abs(c['IN'][4:] - look).max(), np.abs(c['G'] - g2).max())
+        d = (np.abs(c['IN'][4:] - roomnum.second_look(ft['LE'], t1.astype(np.float64))).max(), np.abs(c['G'] - held(c['LE'], t1, answer(m2, c['IN']))).max(), np.abs(c['IN'][4:] - look).max(), np.abs(c['G'] - held(ft['LE'], g1, g2)).max())
         nd = numbers_apart(same, c) if same['found'] and c['found'] else None
         print('second pass, pieces of %d frames: the three extra planes from the same first answer %.2g (planes run -1 .. 1.5; a room was %s), the second model alone %.6f dB | end to end: planes %.2g, gains %.6f dB (from %.1f to %.1f)  %s' % (
             piece, d[0], 'found' if look.max() > -1 else 'not found', d[1], d[2], d[3], c['G'].min(), c['G'].max(), ok(d[0] <= 1e-5 and d[1] <= 0.02 and d[3] <= 0.02)))
+        print('    the guard on this second answer: %.0f %% of its step away from the first kept (it goes %.2f dB deeper on average, limit %.1f dB)' % ((100 * kept(ft['LE'], g1, g2)[0],) + kept(ft['LE'], g1, g2)[1:]))
         print('    numbers read from the second answer, same gains: %s' % ('room %s / %s' % (same['found'], c['found']) if nd is None else 'strength %.2g dB, decay time %.2g %%, width %.2g  %s' % (nd['kdb'].max(), nd['T60'].max(), nd['width'].max(), ok(nd['kdb'].max() <= 0.05 and nd['T60'].max() <= 0.5 and nd['width'].max() <= 0.005))))
     if made and not keep: shutil.rmtree(tmp)
     elif not keep:

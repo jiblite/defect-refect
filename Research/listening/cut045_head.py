@@ -31,6 +31,7 @@ print('scoreboard false REVERB %d -> %d, of them on a clip that shows REVERB cle
 num = {1: 'one', 2: 'two', 3: 'three', 4: 'four', 5: 'five', 6: 'six', 7: 'seven', 8: 'eight', 9: 'nine', 10: 'ten', 11: 'eleven', 12: 'twelve'}
 c0, c1 = T['cut']; e0, e1 = T['excerpt']; w0, w1 = T['whole']
 html = ('<section id="cut045"><h2>Files that stop while the sound plays: new in build 0.4.5</h2>'
+ '<p>A note from build 0.4.6: the Amount positions in this section are those of build 0.4.5. The fader has changed since. Its far left is now what this section calls half way left, and what this section calls far left is gone (next section).</p>'
  '<p>The reverb engine\'s model had only ever learned from sounds that ring out inside the file. A file that stops while the sound still plays, or an excerpt cut at both ends, gives it no tail to read, and there it did as much harm as good: '
  'on 40 test reverbs cut off at 6 seconds its own answer made %d of 100 worse than leaving them alone. Build 0.4.4 kept most of that off the screen, because its look with silence after the sound hid the REVERB group on about half of such files.</p>'
  '<p>The model has now learned again, from %s new examples. Each one is there in three forms: ringing out, cut off at 6 seconds, and as a 4.5 second excerpt. Over half of them have another effect on the sound before the reverb, '

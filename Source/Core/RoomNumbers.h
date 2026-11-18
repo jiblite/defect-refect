@@ -219,5 +219,28 @@ inline std::vector<float> secondLook (const Vec& LE, const std::vector<float>& g
     return x;
 }
 
+// The guard on the second pass. The second look may refine the first answer, and where the room's numbers are sound
+// it may go a good deal deeper. But its extra knowledge is those numbers, and where they rest on little (few mid
+// bands gave a free decay of their own: often a recording whose own low end sinks slowly, read as a long room) it
+// digs into the sound itself. So the average excess (how much deeper the second answer g is than the first, over
+// the cells within 50 dB of the loudest) is held to HOLD_THIN dB when at most HOLD_FEW mid bands gave a decay, to
+// HOLD_RICH dB from HOLD_MANY bands on, a straight line between; beyond that g is pulled back towards the first
+// answer until the excess is that much. Port of roomnum.hold_back (Research/room/README.md, section 0.4.6).
+constexpr double HOLD_THIN = 2.0, HOLD_RICH = 8.0; constexpr int HOLD_FEW = 2, HOLD_MANY = 6;
+inline void holdBack (const Vec& LE, const std::vector<float>& first, std::vector<float>& g, int T)
+{
+    const size_t n = (size_t) (T > 0 ? T : 0) * NB; if (n == 0 || LE.size() != n || first.size() != n || g.size() != n) return;
+    const double top = *std::max_element (LE.begin(), LE.end()); double sum = 0.0; size_t live = 0;
+    for (size_t i = 0; i < n; ++i) if (LE[i] > top - 50.0) { sum += (double) first[i] - (double) g[i]; ++live; }
+    if (live == 0) return;
+    const Bands B; Band t60, ev; decayTimes (LE, first, T, top, t60, ev); int mid = 0;
+    for (size_t b = 0; b < NB; ++b) if (midBand (B.fc[b]) && std::isfinite (t60[b])) ++mid;
+    const double excess = sum / (double) live;
+    const double limit = mid <= HOLD_FEW ? HOLD_THIN : mid >= HOLD_MANY ? HOLD_RICH : HOLD_THIN + (HOLD_RICH - HOLD_THIN) * (double) (mid - HOLD_FEW) / (double) (HOLD_MANY - HOLD_FEW);
+    if (excess <= limit) return;
+    const double w = limit / excess;
+    for (size_t i = 0; i < n; ++i) g[i] = (float) ((double) first[i] + w * ((double) g[i] - (double) first[i]));
+}
+
 } // namespace room
 } // namespace dr

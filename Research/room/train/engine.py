@@ -81,15 +81,20 @@ def one_sound(x, an, amount=1.0, length=1.0, bright=1.0, width=1.0):
     if not an['found'] or (abs(length - 1.0) < 1e-9 and abs(bright - 1.0) < 1e-9 and abs(width - 1.0) < 1e-9): return render.render(x, an['g'], amount)
     oct_ = np.log2(cm.FC41 / 1000.0); tilt = bright - 1.0; T1 = np.clip(an['T60'] * max(length, 0.02) * 2.0 ** (0.35 * tilt * oct_), 0.03, 20.0)
     return render.reshaped(x, an['g'], amount, reshape_factor(an, T1, 3.0 * tilt * oct_), float(np.clip(width, 0.0, 2.0)))
-HALF, DEEP = 0.5, 1.5      # the app's Amount fader on the sound itself (see fader)
+def fader(x, an, s, length=1.0, bright=1.0, width=1.0):
+    """The Amount fader as the app has it on the sound itself, s 0..2: middle (1) = untouched; left of it the model's own
+    answer comes in along a straight line in dB, and at far left (0) it is in full; right of the middle = more reverb.
+    (= one_sound. Up to 0.4.5 the answer was in full at half way left and made bolder from there: fader_bold.)"""
+    return one_sound(x, an, s, length, bright, width)
+HALF, DEEP = 0.5, 1.5      # the Amount fader of 0.4.1 to 0.4.5 (see fader_bold)
 def deeper(g, b):
     """The model's answer made bolder (b > 0) or gentler (b < 0): the same answer with its "how sure" shifted, so cells it
     is sure about stay where they are and the doubtful ones move most."""
     p = np.clip(-g / 30.0, 1e-6, 1.0 - 1e-6); return -30.0 / (1.0 + np.exp(-(np.log(p / (1.0 - p)) + b)))
-def fader(x, an, s, length=1.0, bright=1.0, width=1.0):
-    """The Amount fader as the app has it on the sound itself, s 0..2: middle (1) = untouched; from the middle to HALF way
-    left the model's own answer comes in (at HALF it is in full); from there to far left it is made bolder, up to depth
-    DEEP at 0 (how deep is right depends on the sound: the ear picks); right of the middle = more reverb (one_sound)."""
+def fader_bold(x, an, s, length=1.0, bright=1.0, width=1.0):
+    """The Amount fader of 0.4.1 to 0.4.5, kept for the comparisons: from the middle to HALF way left the model's own
+    answer came in (at HALF it was in full); from there to far left it was made bolder, up to depth DEEP at 0. Dropped in
+    0.4.6: the bolder end was worse than the plain answer on four cases in five (depth2_test.py)."""
     if s >= 1.0: return one_sound(x, an, s, length, bright, width)
     if s >= HALF: return one_sound(x, an, (s - HALF) / (1.0 - HALF), length, bright, width)
     a2 = dict(an); a2['g'] = deeper(an['g'], DEEP * (HALF - s) / HALF); return one_sound(x, a2, 0.0, length, bright, width)

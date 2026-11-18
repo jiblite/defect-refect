@@ -4,7 +4,7 @@
 import os, sys, pickle
 sys.path.insert(0, '/tmp/claude-0/v2/train')
 import numpy as np
-NAME = os.environ.get('MODEL', 'unet_b'); _M = {}
+NAME = os.environ.get('MODEL', 'unet_b'); _M = {}; GUARD = os.environ.get('GUARD', '1') != '0'
 def _load(nm):
     if nm not in _M:
         if nm.endswith('.pkl'): _M[nm] = ('gb', pickle.load(open('/tmp/claude-0/v2/train/' + nm, 'rb')))
@@ -16,7 +16,8 @@ def gains(ft, name=None):
     if '+' in nm:
         import torch, net, roomnum; a, b = nm.split('+'); g1 = gains(ft, a); m = _load(b)[1]; LE = ft['LE'].astype(np.float32)
         x = np.concatenate([net.inputs(LE, ft['U64'].astype(np.float32), ft['U256'].astype(np.float32)), roomnum.second_look(ft['LE'].astype(np.float64), g1.astype(np.float64))])
-        with torch.no_grad(): return m(torch.from_numpy(x.astype(np.float32))[None])[0].numpy().astype(np.float64)
+        with torch.no_grad(): g2 = m(torch.from_numpy(x.astype(np.float32))[None])[0].numpy().astype(np.float64)
+        return roomnum.hold_back(ft['LE'].astype(np.float64), g1.astype(np.float64), g2) if GUARD else g2        # the guard on the second pass (roomnum.hold_back); GUARD=0 in the environment: the second answer as it comes
     kind, m = _load(nm)
     if kind == 'gb':
         import gbfeat; X = gbfeat.features(ft['LE'], ft['U64'], ft['U256']); return np.clip(m.predict(X.reshape(-1, X.shape[-1])).reshape(ft['LE'].shape), -30.0, 0.0)

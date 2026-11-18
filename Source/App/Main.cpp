@@ -343,7 +343,7 @@ public:
                 if (amount) tip = match ? "How far the second sound takes the tone of the first. Left = not at all, middle = matched, right = the curve twice."
                                 : twoSounds ? "How much of this effect goes onto the second sound. Middle = as found on the first sound. Left = not applied. Right = double."
                                 : fxName == "comb" ? "Middle = as found. Left = take the reflection out. Right = once more, up to double."
-                                            : F.room != nullptr ? "Middle = as found. Left = take the reverb out: half way left is the app's own best answer, further left digs deeper and can start to take some of the sound with it. Go by ear. Right = more reverb, up to double."
+                                            : F.room != nullptr ? "Middle = as found. Left = take the reverb out, far left = as much as the app can tell apart from the sound. Right = more reverb, up to double."
                                             : (dr::canRemove (F) ? "Middle = as found. Left = take it out (best effort). Right = double."
                                                                       : "Middle = as found. Right = double. Taking this one out is not possible yet, so the left half leaves it as found.");
                 else tip += k.ownTip ? " Double-click for the middle." : " Middle = as found. Left = none. Right = double. Double-click for the middle.";

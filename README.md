@@ -13,8 +13,9 @@ Standalone app. Drop a sound: the effects found on it become faders, grouped by 
 **Reverb (new engine in 0.4.0, second model in 0.4.1):** a small model looks at the sound twice and says, band by
 band and moment by moment, what is room and what is the sound itself. From that the app reads the room (decay time
 and level per band, width) and the REVERB group works on it:
-- one sound: Amount takes the reverb out (half way left = the engine's own answer, far left = bolder) or adds
-  more of it; Length, Brightness and Width reshape the sound's own reverb;
+- one sound: Amount takes the reverb out (far left = the engine's own answer in full; up to 0.4.5 that sat at
+  half way left, with a bolder end beyond it) or adds more of it; Length, Brightness and Width reshape the
+  sound's own reverb;
 - two sounds: the found room, rebuilt from its numbers, goes onto the second sound;
 - the display shows how the room dies away (lows, mids, highs); **Export IR** saves it as an impulse response.
 
@@ -49,7 +50,8 @@ takes out what it shows and can remove cleanly, and the room engine looks again;
 REVERB (50 to 26); of 340 real reverbs one loses its group. On sounds the model never met, REVERB now shows on
 9 % of those without a reverb (0.4.4: 14 %) and on 85 % of those with one (0.4.4: 79 %; cut-off files 71 % against
 60 %). Known limits: on cut-off files and excerpts about a quarter of the real reverbs are still not seen, light
-ones most; with Amount at far left a fifth to a quarter of the cases come out worse than untouched; effects the
+ones most; with Amount at far left a fifth to a quarter of the cases came out worse than untouched (repaired in
+0.4.6, below); effects the
 app cannot take out yet (widening, distortion, ring modulation) can still make a false REVERB. Method and
 numbers: `Research/room/README.md`.
 
@@ -68,8 +70,33 @@ sound 5 dB and more over the reverb) is the weak case: Amount half way left scor
 come out worse than untouched (9 s test sounds: 1 of 16); at far left 17 of the 32 (5 of 16). Length is not the
 main reason. On a light reverb the engine can take more out of the sound itself than the reverb put in, and it
 gains most where the sound rings out, which is a third of a 9 s test sound and little of a long file, so the scores
-of short sounds that ring out flatter it. Until the engine is better there, half way left is the safer setting for
-a light reverb and far left is not. Method, numbers and what was tried: `Research/room/README.md`.
+of short sounds that ring out flatter it. In 0.4.5 half way left was therefore the safer setting for a light reverb
+and far left was not. Method, numbers and what was tried: `Research/room/README.md`.
+
+**The Amount fader (0.4.6).** Up to 0.4.5 the engine's own answer sat at half way left, and the fader went on to a
+bolder end at far left. Scored on the 120 test reverbs in 28 shapes, that end was the worst of them: under the
+sound it left 40 of the 120 further from the true dry sound than they were by 0.5 dB or more, the plain answer 3.
+Now the fader runs straight from untouched (middle) to the answer in full (far left), and half way left is half of
+it in dB.
+
+**The engine under the sound (0.4.6).** The same work gave the scoreboard a score for the sound without its
+ring-out. There the answer of 0.4.5 gets 11 of 100, against 26 with the ring-out, and the best possible answer
+rendered this way gets 48. The model was as weak under the sound on its own training material, so the limit was
+the model and the rule it was trained by, not what it had seen: it takes a sound's own ring for a room, and it
+turns doubtful cells down by 1 to 3 dB. Both looks were trained on with a loss that does not reward that hedge and
+counts a cell taken too deep 1.5 times. And the second look is held back where it goes much deeper than the first
+without evidence for the room in the mid bands (`RoomNumbers.h`, `holdBack`): the worst cases of both pairs were
+rooms on recordings whose slow low end read as a decay of 5 to 6 s. The engine alone on the 120: whole file 33
+(0.4.5: 26), the sound itself 14 (11), ring-out 83 (75); worse than untouched 8 % (14 %), under the sound 21 %
+(28 %); the worst harm under the sound 0.7 dB (1.7 dB). The app with Amount at far left: of the 40 test reverbs
+1, 2 and 2 come out worse than untouched (ringing out, cut off, excerpt; the far left of 0.4.5: 11, 9 and 7), the
+typical score where REVERB is shown is 33, 27 and 30 (the answer of 0.4.5: 26, 24 and 24), and of the 53 long ones
+4 come out worse (0.4.5: 23 at far left, 6 with its answer). The price: the new pair is more careful about calling
+something a room, and on excerpts REVERB shows on 20 of the 40 instead of 24. In return it shows where there is no
+reverb on 113 of 1,238 short test sounds instead of 126, on 12 % of the long ones instead of 17 %, and on 9 of the
+scoreboard's 136 other cases instead of 13; the other effects' own groups and scores are unchanged. Known limits:
+under the sound the engine is still weak (14 where 48 is possible), and a recording that carries a room of its
+own loses it with the reverb that was added. `Research/room/README.md`, section 0.4.6.
 
 **Tone (new engine in 0.4.1):**
 - **Tone Match** (two sounds, the Tone Match button): the second sound takes the long-term tone of the first.

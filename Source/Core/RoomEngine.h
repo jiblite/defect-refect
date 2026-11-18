@@ -35,7 +35,8 @@ struct Found
 };
 
 // Everything that is worked out once per sound. `second` is a model for a second pass (7 input planes: the 4 of
-// the first pass and the 3 that secondLook() makes from the first answer); its answer then replaces the first.
+// the first pass and the 3 that secondLook() makes from the first answer); its answer then replaces the first,
+// after holdBack() has looked at how far it goes beyond it.
 // `piece`: see Net::run. Meant for a worker thread: `stop` is asked every few hundred frames of the analysis and
 // before every level of the model. Throws std::runtime_error (as Net::run does) when a model is not loaded or is
 // made for another number of input planes.
@@ -49,8 +50,9 @@ inline Found find (const Stereo& y, const Net& net, const Net* second = nullptr,
     f.gains = net.run (x, T, piece, stop, part (share[0], share[1]));
     if (second != nullptr && ! f.gains.empty())
     {
-        const std::vector<float> more = secondLook (f.picture.LE, f.gains, T); x.insert (x.end(), more.begin(), more.end());
+        const std::vector<float> first = f.gains, more = secondLook (f.picture.LE, first, T); x.insert (x.end(), more.begin(), more.end());
         f.gains = second->run (x, T, piece, stop, part (share[0] + share[1], share[2]));
+        if (! f.gains.empty()) holdBack (f.picture.LE, first, f.gains, T);      // the second answer, held back where it digs far deeper than the first on thin evidence
     }
     if (f.gains.empty()) { f.stopped = true; return f; }
 
