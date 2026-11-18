@@ -10,7 +10,9 @@ def one(f):
     global M
     if M is None:
         torch.set_num_threads(1); ck = torch.load('/tmp/claude-0/v2/train/%s.pt' % MODEL, map_location='cpu', weights_only=False); M = net.UNet(ch=tuple(ck['cfg']['ch'])); M.load_state_dict(ck['state']); M.eval()
-    z = np.load(f); LE = z['LE'].astype(np.float32)
+    z = np.load(f)
+    if 'LE' not in z.files: return 0.0          # an excerpt with no sound in it
+    LE = z['LE'].astype(np.float32)
     with torch.no_grad(): g = M(torch.from_numpy(net.inputs(LE, z['U64'].astype(np.float32), z['U256'].astype(np.float32)))[None])[0].numpy()
     X = roomnum.second_look(LE.astype(np.float64), g.astype(np.float64)); d, n = os.path.split(f); out = os.path.join(os.path.dirname(d), 'pass2_' + os.path.basename(d), n); np.savez_compressed(out, X=X.astype(np.float16), g1=g.astype(np.float16)); return float(X[0].mean() > -0.99)
 if __name__ == '__main__':
