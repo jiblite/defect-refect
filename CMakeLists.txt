@@ -80,3 +80,7 @@ target_link_libraries(drsweep PRIVATE Threads::Threads)       # left and right a
 # The moving-tone engine (phaser, filter sweep) without the UI (no JUCE): Tests/moving.cpp
 add_executable(drmoving Tests/moving.cpp)
 target_link_libraries(drmoving PRIVATE Threads::Threads)      # left and right are read at the same time
+
+# The chorus engine without the UI (no JUCE): Tests/chorus.cpp
+add_executable(drchorus Tests/chorus.cpp)
+target_link_libraries(drchorus PRIVATE Threads::Threads)       # the frames are read on all cores

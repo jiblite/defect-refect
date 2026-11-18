@@ -7,6 +7,7 @@
 //   The tone engine and the echo engine always run (the DELAY group's faders: delay.amount, delay.time, delay.feedback, delay.bright).
 //   The level engine always runs: a found movement is the TREMOLO, AUTO PAN or GATED RHYTHM group (faders: <group>.amount, <group>.speed).
 //   The flanger engine always runs: a found moving copy is the FLANGER group (faders: flanger.amount, flanger.speed, flanger.sweep, flanger.feedback).
+//   The chorus engine always runs: found voices are the CHORUS group (faders: chorus.amount, chorus.speed, chorus.depth).
 //   The moving-tone engine runs when ResourcesDir holds moving.bin (as in the app): a found moving filter is the PHASER or FILTER SWEEP
 //   group (faders: <group>.amount, <group>.speed).
 //   The verifier's models are read from ResourcesDir/verify.bin (Source/Core/Verify.h): the scores are its scores, as in the app.
@@ -101,11 +102,20 @@ int main (int argc, char** argv)
             std::cout << "\n";
         }
     }
+    const auto cf = std::make_shared<const dr::chorus::Found> (dr::chorus::find (src)); dr::mergeChorus (I, *cf, wf.get());
+    std::cout << "chorus: found=" << cf->found;
+    if (cf->found)
+    {
+        const dr::chorus::Piece* pc = cf->best(); std::cout << " sure=" << cf->sure << " voices=" << pc->voices[0].size() << "+" << pc->voices[1].size();
+        for (int c = 0; c < 2; ++c) for (auto& v : pc->voices[c]) std::cout << " [" << (c ? "R " : "L ") << (v.kind ? "tri " : "sin ") << v.rate << " Hz " << v.mid / dr::chorus::FS * 1e3 << "+-" << std::abs (v.half) / dr::chorus::FS * 1e3 << " ms loud " << v.loud << "]";
+        std::cout << " there_s="; const auto sp = dr::chorus::where (*cf); for (size_t i = 0; i < sp.size(); ++i) std::cout << (i ? "," : "") << (double) sp[i].first / 48000.0 << ".." << (double) sp[i].second / 48000.0;
+    }
+    std::cout << "\n";
     auto t1 = clk::now();
     if (only) { for (auto& [f, p] : I.prob) std::cout << f << "=" << p << " "; std::cout << "\n"; return 0; }
-    const auto found0 = dr::estimate (I, src, cut, nullptr, rf, tf, ef, lf, wf, mf);
+    const auto found0 = dr::estimate (I, src, cut, nullptr, rf, tf, ef, lf, wf, mf, cf);
     auto t2 = clk::now();
-    for (auto& F : found0) { std::cout << F.name << " p=" << F.prob << (F.room ? " (room engine)" : F.tone ? " (tone engine)" : F.echo ? " (echo engine)" : F.level ? " (level engine)" : F.sweep ? " (flanger engine)" : F.moving ? " (moving-tone engine)" : ""); for (auto& [k, v] : F.est) std::cout << " " << k << "=" << v; std::cout << "\n"; }
+    for (auto& F : found0) { std::cout << F.name << " p=" << F.prob << (F.room ? " (room engine)" : F.tone ? " (tone engine)" : F.echo ? " (echo engine)" : F.level ? " (level engine)" : F.sweep ? " (flanger engine)" : F.moving ? " (moving-tone engine)" : F.chorus ? " (chorus engine)" : ""); for (auto& [k, v] : F.est) std::cout << " " << k << "=" << v; std::cout << "\n"; }
     for (auto& B : blocks)
     {
         const bool two = B.tgt != "-"; dr::Stereo tgt; if (two) dr::readWav (B.tgt, tgt, sr);

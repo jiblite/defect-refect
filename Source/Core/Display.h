@@ -275,6 +275,51 @@ inline Plot flangerPlot (const FoundFx& F, const Params& p, double s, bool onSec
     P.caption = c; return P;
 }
 
+// The chorus engine's group: every voice's delay over time as the faders have it (teal left, orange right).
+inline Plot chorusPlot (const FoundFx& F, const Params& p, double s, bool onSecond)
+{
+    using namespace disp;
+    Plot P; P.title = F.title; if (F.chorus == nullptr || ! F.chorus->found) return P;
+    const chorus::Found& C = *F.chorus; const chorus::Piece* pc = C.best(); if (pc == nullptr) return P;
+    const double speed = chorusSpeed (p), depth = chorusDepth (p), amount = std::max (s, 0.0);
+    double slow = 1e9, fast = 0, loud = 0; int count = 0;
+    for (int c = 0; c < 2; ++c) for (const auto& v : pc->voices[c]) { slow = std::min (slow, v.rate * speed); fast = std::max (fast, v.rate * speed); loud += v.ahead ? 1.0 / std::max (v.loud, 0.25) : v.loud; ++count; }      // a copy louder than the sound: its loudness holds the sound's level against the copy
+    if (count == 0) return P;
+    loud /= count;
+    auto alike = [] (const chorus::Voice& a, const chorus::Voice& b) { return a.kind == b.kind && a.rate == b.rate && a.phase == b.phase && a.mid == b.mid && a.half == b.half; };
+    bool same = pc->voices[0].size() == pc->voices[1].size(); for (size_t i = 0; same && i < pc->voices[0].size(); ++i) same = alike (pc->voices[0][i], pc->voices[1][i]);
+    // two rounds of the slowest voice (half a second at least, twelve at most), from the start of the stretch the voices were read on
+    const double span = std::clamp (2.0 / std::max (slow, 1e-3), 0.5, 12.0), start = (double) pc->a / SR, pivot = 0.5 * (double) C.n - (double) pc->a; const int n = 240; double lo = 1e9, hi = 0;
+    for (int c = 0; c < 2; ++c)
+    {
+        if (c == 1 && same) continue;
+        for (const auto& v : pc->voices[c])
+        {
+            chorus::Voice q = v; q.half = v.half * depth; q.rate = v.rate * speed; q.phase = v.phase + v.rate * (pivot / (chorus::HOP * chorus::DEC)) / chorus::FPS * (1.0 - speed);
+            Curve cv; cv.colour = c;
+            for (int i = 0; i < n; ++i) { const double sec = span * i / (n - 1); double d, r; chorus::at (q, sec * chorus::FPS, d, r); const double ms = std::max (d * chorus::DEC, 8.0) / SR * 1e3; cv.pts.push_back ({ start + sec, ms }); lo = std::min (lo, ms); hi = std::max (hi, ms); }
+            P.curves.push_back (cv);
+        }
+    }
+    P.x0 = start; P.x1 = start + span; P.y0 = 0; P.y1 = std::max (1.0, hi * 1.2); P.xLabel = "s"; P.yLabel = "ms"; P.xTicks = ticks (P.x0, P.x1); P.yTicks = ticks (P.y0, P.y1);
+    const size_t nl = pc->voices[0].size(), nr = pc->voices[1].size(); const double level = std::clamp (amount * loud, 0.0, 4.0) * 100;
+    std::string c;
+    if (nl == nr || nl == 0 || nr == 0) { const size_t k = std::max (nl, nr); c = k == 1 ? "A copy of the sound" : std::to_string (k) + " copies of the sound"; if (nl == nr && ! same) c += " a side"; else if (nl == 0) c += " on the right"; else if (nr == 0) c += " on the left"; }
+    else c = std::to_string (nl) + (nl == 1 ? " copy" : " copies") + " of the sound on the left and " + std::to_string (nr) + " on the right";
+    c += std::string (count == 1 || (same && nl == 1) ? ", at about " : ", each at about ") + num (level, 0) + "% of its level, " + (count == 1 || (same && nl == 1) ? "its delay" : "their delays") + " moving between " + num (lo, 1) + " and " + num (hi, 1) + " ms, ";
+    c += fast - slow < 0.02 * fast ? num (fast, 2) + " times a second" : num (slow, 2) + " to " + num (fast, 2) + " times a second";
+    c += ! same && nl > 0 && nr > 0 ? " (teal left, orange right)." : ".";
+    const auto spans = chorus::where (C); double in = 0; for (const auto& sp : spans) in += (double) (sp.second - sp.first) / SR;
+    if (! spans.empty() && in < 0.97 * (double) C.n / SR)      // a chorus on a part of the first sound: taken out there only
+    {
+        const std::string where = onSecond ? "On the first sound they are there " : "They are there ", rest = onSecond ? "; onto the second sound they go at the same times." : "; the rest of the sound is left alone.";
+        if (spans.size() == 1) c += " " + where + "from " + timeText ((double) spans[0].first / SR) + " to " + timeText ((double) spans[0].second / SR) + rest;
+        else c += " " + where + "on " + num (in, 0) + " of " + num ((double) C.n / SR, 0) + " s, in " + std::to_string (spans.size()) + " stretches" + rest;
+    }
+    if (amount < 1e-3) c = onSecond ? "Amount at zero: not put on the second sound." : "Amount at zero: the copies are taken out.";
+    P.caption = c; return P;
+}
+
 // The moving-tone engine's groups (PHASER, FILTER SWEEP): the found tone curve at three moments of its movement, where
 // it sits lowest on the frequency axis, in the middle (the strong line) and highest, as the Amount fader has it. Where the
 // curve sits at a moment: the middle of what it changes there, on the band axis.
@@ -330,6 +375,7 @@ inline Plot makePlot (const FoundFx& F, const Params& scaledP, double s, bool on
     if (F.level != nullptr) return levelPlot (F, scaledP, s, onSecond);
     if (F.sweep != nullptr) return flangerPlot (F, scaledP, s, onSecond);
     if (F.moving != nullptr) return movingPlot (F, scaledP, s, onSecond);
+    if (F.chorus != nullptr) return chorusPlot (F, scaledP, s, onSecond);
     const std::string& f = F.name; Plot P; P.title = F.title;
     bool fade = false; const Params e = mapAmount (f, scaledP, std::max (s, 0.0), fade); const double w = fade ? std::min (1.0, s) : 1.0;
     auto g = [&] (const char* k, double d) { return get (e, k, d); };
