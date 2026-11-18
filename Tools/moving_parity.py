@@ -3,7 +3,7 @@
 #   python3 Tools/moving_parity.py path/to/drmoving model.pt a.wav [b.wav ...]      every sound: find, take off, put onto the next sound in the list
 #   python3 Tools/moving_parity.py path/to/drmoving model.pt --list file.txt         the same, one path per line
 # model.pt is the trainer's checkpoint; it is written out for the C++ side with Tools/export_moving_model.py first.
-# Prints one line per sound and a summary; exit code 1 if an answer (found, kind, stretches) differs.
+# Prints one line per sound and a summary; exit code 1 if an answer (found, kind, stretches, how often the curve was read) differs.
 import sys, os, json, subprocess, tempfile, numpy as np, soundfile as sf, torch
 HERE = os.path.dirname(os.path.abspath(__file__)); sys.path[:0] = [os.path.join(HERE, '..', 'Research', 'moving'), HERE]
 import moving, pic, export_moving_model
@@ -23,11 +23,11 @@ def main():
         pb = paths[(i + 1) % len(paths)]; a = rd(p); b = rd(pb); pre = os.path.join(tmp, 'o')
         r = subprocess.run([exe, binp, p, pb, pre], capture_output=True, text=True, check=True)
         C = json.loads([l for l in r.stdout.split('\n') if l.startswith('{')][0]); tm = ' '.join(l.strip() for l in r.stdout.split('\n') if l.startswith('  '))
-        F = moving.find(model, a); T = F['T']; same = C['found'] == F['found'] and C['kind'] == F['kind'] and [tuple(s) for s in C['spans']] == [tuple(s) for s in F['spans']]; agree += int(same)
+        F = moving.find(model, a); T = F['T']; same = C['found'] == F['found'] and C['kind'] == F['kind'] and [tuple(s) for s in C['spans']] == [tuple(s) for s in F['spans']] and C['reads'] == F['reads']; agree += int(same)
         g = np.fromfile(pre + '.g.f64').reshape(2, T, pic.NB); on = np.fromfile(pre + '.on.f64'); dg = float(np.abs(g - F['raw']).max()); do = float(np.abs(on - F['on']).max()); worst_g = max(worst_g, dg); worst_on = max(worst_on, do)
-        s = '%-40s found: C++ %d %s Python %d %s%s | curve differs by at most %.1e dB, say-so by %.1e' % (os.path.basename(p)[:40], C['found'], C['kind'], F['found'], F['kind'], '' if same else '  DIFFERENT (stretches %s and %s)' % (C['spans'], F['spans']), dg, do)
+        s = '%-40s found: C++ %d %s Python %d %s%s | curve differs by at most %.1e dB, say-so by %.1e' % (os.path.basename(p)[:40], C['found'], C['kind'], F['found'], F['kind'], '' if same else '  DIFFERENT (stretches %s and %s, read %d and %d times)' % (C['spans'], F['spans'], C['reads'], F['reads']), dg, do)
         if C['found'] and F['found'] and same:
-            nfound += 1; ds = abs(C['sure'] - F['sure']); dp = abs(C['period'] - F['period']); worst_sure = max(worst_sure, ds, dp); snd = {}
+            nfound += 1; ds = max(abs(C['sure'] - F['sure']), abs(C['say'] - F['say']), abs(C['size'] - F['size'])); dp = abs(C['period'] - F['period']); worst_sure = max(worst_sure, ds, dp); snd = {}
             for tag, ref in (('out', moving.apply(a, F, -1.0)), ('half', moving.apply(a, F, -0.5)), ('onto', moving.apply(b, F, 1.0, own=False)), ('onto2', moving.apply(b, F, 2.0, own=False)), ('fast', moving.apply(b, F, 1.0, speed=1.5, own=False)), ('slow', moving.apply(a, F, 0.0, speed=0.5, own=True))):
                 snd[tag] = rel_db(np.fromfile(pre + '.%s.f64' % tag).reshape(2, -1).T, ref)
             worst_snd = max(worst_snd, max(snd.values())); s += ' | sureness %.1e, period %.1e frames | sounds %.0f dB (%s)' % (ds, dp, max(snd.values()), max(snd, key=snd.get))

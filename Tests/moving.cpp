@@ -44,8 +44,10 @@ static dr::moving::Net model (const std::string& path)
 }
 static void say (const dr::moving::Found& F, double took)
 {
-    std::printf ("{\"took\": %.3f, \"found\": %s, \"kind\": \"%s\", \"sure\": %.6f, \"period\": %.4f, \"frames\": %d, \"spans\": [", took, F.found ? "true" : "false", F.kind.c_str(), F.sure, F.period, F.T);
+    std::printf ("{\"took\": %.3f, \"found\": %s, \"kind\": \"%s\", \"sure\": %.6f, \"say\": %.6f, \"size\": %.6f, \"reads\": %d, \"period\": %.4f, \"frames\": %d, \"spans\": [", took, F.found ? "true" : "false", F.kind.c_str(), F.sure, F.say, F.size, F.reads, F.period, F.T);
     for (size_t i = 0; i < F.spans.size(); ++i) std::printf ("%s[%d, %d]", i ? ", " : "", F.spans[i].first, F.spans[i].second);
+    std::printf ("], \"named\": [");
+    for (size_t i = 0; i < F.all.size(); ++i) std::printf ("%s[%d, %d, \"%s\", %.4f, %.4f, %.4f]", i ? ", " : "", F.all[i].a, F.all[i].b, F.all[i].phaser ? "phaser" : "filtersweep", F.all[i].say, F.all[i].size, F.all[i].sure);
     std::printf ("]}\n");
 }
 int main (int argc, char** argv)

@@ -5,12 +5,23 @@
 #                         same times; anything between and up to +2: scaled (in dB)
 # The curve comes from the model (net.py) that reads the band picture (pic.py). A sound longer than 6 s is read in blocks of
 # 6 s, every 3 s, each block on its own (as the model was fitted), and the answers are faded into one another.
+# How sure: what the model says is not enough by itself (it says "moving filter" with 0.65 to 0.9 on one clean sound in
+# seven). A filter sweep counts when its curve is also big; a phaser, whose curve is as small as a sound's own movement,
+# only when the model is very sure. And the model reads a curve too small, so where it is sure the curve is taken off, what
+# is left is read again and added (rule.py, rule2.py, feat.py, iter.py).
 import numpy as np, torch
 import pic, net
 BLOCK = 282; BHOP = 141                    # frames: 6 s, 3 s
 ON = 0.5; GAP = 24; SHORT = 47; RAMP = 5    # a frame counts from this probability; holes under 0.5 s are closed, stretches under 1 s dropped; 0.1 s fades at the ends
 SMOOTH = 15                                # the per-frame say-so is averaged over 0.3 s first
 PERIODIC = 0.8                             # the curve repeats if it is this like itself one period on
+CUT = 0.65                                 # the app's default Sureness: what `sure` is scaled to
+PHASER = 0.93                              # the say-so a phaser needs to be shown at that default
+SWEEP = 0.81; BIG = 7.4                    # the say-so and the curve's size (dB, inside the stretch) a filter sweep needs
+FULL = 94                                  # frames (2 s): a shorter stretch is trusted less, in proportion
+KEEP = 0.5                                 # a stretch counts if it is at least this sure against the surest
+AGAIN = 0.9; LEFT = 0.87                   # where the say-so was this high the curve is taken off and what is left is read and added: a filter sweep once; a phaser up to
+                                           # twice, each time only if the model still says 'moving filter' this clearly of what is left
 
 def model_of(path):
     st = torch.load(path, map_location='cpu', weights_only=False); m = net.UNet(cin=st['cfg']['cin'], ch=tuple(st['cfg']['ch']), bpool=st['cfg']['bpool']); m.load_state_dict(st['state']); m.eval(); return m
@@ -61,18 +72,43 @@ def gate(a, n, T):
     if a + n < T: m = np.minimum(m, (n - i) / RAMP)
     return np.clip(m, 0.0, 1.0)
 
+def scale(v, zero, at, full):
+    """0 at `zero`, CUT at `at`, 1 at `full`, straight lines between."""
+    return CUT + (1.0 - CUT) * min(1.0, (v - at) / (full - at)) if v >= at else CUT * max(0.0, (v - zero) / (at - zero))
+
+def sureness(kind, say, size, frames):
+    """How sure a stretch is, on the app's scale (shown at the default when over CUT)."""
+    s = scale(say, ON, PHASER, 1.0) if kind == 'phaser' else min(scale(say, ON, SWEEP, 1.0), scale(size, 0.0, BIG, 2.0 * BIG))
+    return s * min(1.0, frames / FULL)
+
+def reading(model, x):
+    """Both sides -> (curves (2, T, NB), probabilities (2, T, 3))."""
+    same = np.array_equal(x[:, 0], x[:, 1]); r = [read(model, x[:, 0])]; r.append(r[0] if same else read(model, x[:, 1]))
+    return np.stack([g for g, _ in r]), np.stack([p for _, p in r])
+
 def find(model, x):
-    """x (n, 2). Returns dict: found, kind ('filtersweep' or 'phaser'), sure (0 .. 1), spans [(first frame, end frame)], raw (2, T, NB)
-    the model's curve per side, gate (T,) 1 inside the stretches, G = raw * gate, on (T,) the say-so per frame, period (frames
-    of the longest stretch, 0 = the curve does not repeat)."""
-    same = np.array_equal(x[:, 0], x[:, 1]); r = [read(model, x[:, 0])]; r.append(r[0] if same else read(model, x[:, 1])); T = len(r[0][0])
-    on = np.maximum(1.0 - r[0][1][:, 0], 1.0 - r[1][1][:, 0]); k = min(SMOOTH, T); sm = np.convolve(np.pad(on, (k // 2, k - 1 - k // 2), mode='edge'), np.ones(k) / k, mode='valid')
-    sp = stretches(sm >= ON); raw = np.stack([g for g, _ in r]); m = np.zeros(T)
-    for a, b in sp: m[a:b] = gate(a, b - a, T)
-    F = dict(found=bool(sp), spans=sp, on=on, n=len(x), T=T, kind='', sure=0.0, period=0.0, raw=raw, gate=m, G=raw * m[None, :, None])
+    """x (n, 2). Returns dict: found, kind ('filtersweep' or 'phaser'), sure (0 .. 1, on the app's scale), say (the model's
+    say-so inside the stretches), size (the curve's size there, dB), spans [(first frame, end frame)], raw (2, T, NB) the
+    curve per side, gate (T,) 1 inside the stretches, G = raw * gate, on (T,) the say-so per frame, period (frames of the
+    longest stretch, 0 = the curve does not repeat), reads (how often the curve was read), all (every stretch the model
+    named: first, end, kind, say, size, sure)."""
+    raw, P = reading(model, x); T = raw.shape[1]
+    on = np.maximum(1.0 - P[0][:, 0], 1.0 - P[1][:, 0]); k = min(SMOOTH, T); sm = np.convolve(np.pad(on, (k // 2, k - 1 - k // 2), mode='edge'), np.ones(k) / k, mode='valid')
+    sp = stretches(sm >= ON)
+    F = dict(found=False, spans=[], on=on, n=len(x), T=T, kind='', sure=0.0, say=0.0, size=0.0, period=0.0, raw=raw, gate=np.zeros(T), G=raw * 0.0, reads=1, all=[])
     if not sp: return F
-    inside = m > 0; F['sure'] = float(on[inside].mean()); ps = sum(p[inside, 1].sum() for _, p in r); pp = sum(p[inside, 2].sum() for _, p in r); F['kind'] = 'filtersweep' if ps >= pp else 'phaser'
-    a, b = max(sp, key=lambda q: q[1] - q[0]); F['period'] = float(period(raw[0][a:b] + raw[1][a:b]))
+    for a, b in sp:                                                       # every stretch for itself: which kind, how sure
+        kind = 'filtersweep' if P[:, a:b, 1].sum() >= P[:, a:b, 2].sum() else 'phaser'; say = float(on[a:b].mean()); size = float(np.sqrt((raw[:, a:b] ** 2).mean()))
+        F['all'].append((a, b, kind, say, size, sureness(kind, say, size, b - a)))
+    top = max(F['all'], key=lambda q: q[5]); keep = [q for q in F['all'] if q[2] == top[2] and q[5] >= KEEP * top[5]]       # the surest stretch says which kind; much less sure ones are left alone
+    m = np.zeros(T)
+    for a, b, *_ in keep: m[a:b] = gate(a, b - a, T)
+    inside = m > 0; F.update(found=True, kind=top[2], sure=float(top[5]), spans=[(q[0], q[1]) for q in keep], gate=m, G=raw * m[None, :, None], say=float(on[inside].mean()), size=float(np.sqrt((raw[:, inside] ** 2).mean())))
+    while F['say'] >= AGAIN and F['reads'] < (3 if F['kind'] == 'phaser' else 2):   # the model reads the curve too small: take it off, read what is left, add it
+        r2, P2 = reading(model, apply(x, F, -1.0)); T2 = min(T, r2.shape[1]); left = float(np.maximum(1.0 - P2[0][:T2, 0], 1.0 - P2[1][:T2, 0])[inside[:T2]].mean())
+        if F['kind'] == 'phaser' and left < LEFT: break                          # a phaser's rest is added only while the model is sure there is one
+        F['raw'] = F['raw'].copy(); F['raw'][:, :T2] += r2[:, :T2]; F['G'] = F['raw'] * m[None, :, None]; F['reads'] += 1
+    a, b = max(F['spans'], key=lambda q: q[1] - q[0]); F['period'] = float(period(F['raw'][0][a:b] + F['raw'][1][a:b]))
     return F
 
 def curve(F, c, T2, speed=1.0):

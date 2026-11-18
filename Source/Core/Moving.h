@@ -11,7 +11,13 @@
 // halved in time five times and across the bands three times on the way down and brought back up with the finer levels
 // joined in) was fitted on sounds put through moving filters whose true curve was read with a steady probe signal through
 // the same filter (Research/moving). It answers two things: the curve per band and moment, and per moment whether a filter
-// sweep or a phaser is at work. Stretches where it says so for a second or more are the effect; the curve works there only.
+// sweep or a phaser is at work. Stretches where it says so for a second or more are candidates; the curve works there only.
+// How sure: what the model says is not enough by itself: it says "moving filter" with 0.65 to 0.9 on one clean sound in
+// seven, because a sound's own tone moves too. So a filter sweep counts when its curve is also big (a real one cuts by
+// 8 dB and more, the made-up ones by 2 to 7), and a phaser, whose curve is as small as a sound's own movement, only when
+// the model is very sure (sureness()). And the model reads a curve too small. Where it is sure, the curve is taken off,
+// what is left is read again and added to the curve (a filter sweep once; a phaser up to twice, while the model still
+// says "moving filter" of what is left).
 // A sound longer than 6 s is read in blocks of 6 s, one every 3 s, each on its own (as the model was fitted), and the
 // answers are faded into one another. The curve is put on and taken off in a short-time transform (2048 points, four
 // windows over every sample): each bin is turned up or down by the curve at its frequency, never lifted by more than
@@ -46,6 +52,13 @@ constexpr int GAP = 24, SHORT = 47, RAMP = 5, SMOOTH = 15;          // frames: h
 constexpr double PERIODIC = 0.8;                        // the curve repeats if it is this like itself one period on
 constexpr double GS = 10.0;                             // the model's unit for the curve: 10 dB
 constexpr double LIFT = 24.0, CUT = 60.0;               // the most a bin is turned up or down
+constexpr double SHOWN = 0.65;                          // the app's default Sureness: `sure` is scaled so that a find shows at the default when it is over this
+constexpr double SAY_PHASER = 0.93;                     // the say-so a phaser needs for that
+constexpr double SAY_SWEEP = 0.81, BIG = 7.4;           // the say-so and the curve's size (dB inside the stretch) a filter sweep needs
+constexpr int WHOLE = 94;                               // frames (2 s): a shorter stretch is trusted less, in proportion
+constexpr double KEEP = 0.5;                            // a stretch counts if it is at least this sure against the surest
+constexpr double AGAIN = 0.9, STILL = 0.87;             // where the say-so was AGAIN the curve is taken off and what is left is read and added: a filter sweep
+                                                        // once; a phaser up to twice, each time only if the model says 'moving filter' of what is left with STILL or more
 
 inline int frames (size_t n) { return (int) (n / (size_t) HOP) + 1; }
 
@@ -296,15 +309,19 @@ inline Read read (const Net& net, const Vec& x, const Stop& stop = {})
 }
 
 // ---------------------------------------------------------------- a whole sound
+struct Stretch { int a = 0, b = 0; bool phaser = false; double say = 0, size = 0, sure = 0; };       // first frame, end frame; which kind; the model's say-so, the curve's size (dB) and the sureness there
 struct Found
 {
     bool found = false; std::string kind;           // "filtersweep" or "phaser"
-    double sure = 0;                                // 0 .. 1: the model's say-so over the stretches
+    double sure = 0;                                // 0 .. 1 on the app's scale: its surest stretch (sureness())
+    double say = 0, size = 0;                       // the model's say-so over the stretches, and the size of the curve it read there the first time (dB)
+    int reads = 1;                                  // how often the curve was read (what was left after taking it off is added)
     double period = 0;                              // frames: how long the curve of the longest stretch takes to repeat (0 = it does not)
     int T = 0; size_t n = 0;                        // frames and samples of the sound it was found on
     std::vector<std::pair<int, int>> spans;         // the stretches that have the filter: first frame, end frame
+    std::vector<Stretch> all;                       // every stretch the model named (those of the other kind and the far less sure ones are not in `spans`)
     Vec on, gate;                                   // per frame: the say-so; 1 inside the stretches (0.1 s fades at ends inside the sound)
-    std::vector<float> raw[2];                      // the model's curve per side, [frame * NB + band] dB
+    std::vector<float> raw[2];                      // the curve per side, [frame * NB + band] dB
 };
 
 // Frames with a moving filter -> stretches: holes shorter than GAP closed, stretches shorter than SHORT dropped.
@@ -350,34 +367,6 @@ inline double periodOf (const Vec& G, int T)
             return L + (d < 0 ? 0.5 * (r[(size_t) L - 1] - r[(size_t) L + 1]) / d : 0.0);
         }
     return 0.0;
-}
-
-// What is on a sound. The two sides are read at the same time (once if they are the same). Stopped on the way: nothing found.
-inline Found find (const Net& net, const Stereo& y, const Stop& stop = {})
-{
-    Found F; F.n = y.size(); F.T = frames (y.size()); const int T = F.T;
-    const bool same = y.l == y.r; Read rl, rr;
-    if (same) { rl = read (net, y.l, stop); rr = rl; }
-    else { auto job = std::async (std::launch::async, [&] { return read (net, y.r, stop); }); rl = read (net, y.l, stop); rr = job.get(); }
-    if (! rl.ok || ! rr.ok) return F;
-    F.on.resize ((size_t) T); for (int t = 0; t < T; ++t) F.on[(size_t) t] = std::max (1.0 - rl.p[(size_t) t * 3], 1.0 - rr.p[(size_t) t * 3]);
-    const int k = std::min (SMOOTH, T); std::vector<char> yes ((size_t) T);
-    for (int t = 0; t < T; ++t)
-    {
-        double s = 0; for (int i = 0; i < k; ++i) s += F.on[(size_t) std::clamp (t - k / 2 + i, 0, T - 1)];
-        yes[(size_t) t] = s / k >= ON;
-    }
-    F.spans = stretches (yes); F.gate.assign ((size_t) T, 0.0); F.raw[0] = std::move (rl.g); F.raw[1] = same ? F.raw[0] : std::move (rr.g);
-    if (F.spans.empty()) return F;
-    for (const auto& s : F.spans) { const Vec m = fades (s.first, s.second - s.first, T); for (int t = s.first; t < s.second; ++t) F.gate[(size_t) t] = m[(size_t) (t - s.first)]; }
-    double sum = 0, ps = 0, pp = 0; int cnt = 0;
-    for (int t = 0; t < T; ++t) if (F.gate[(size_t) t] > 0) { sum += F.on[(size_t) t]; ++cnt; ps += rl.p[(size_t) t * 3 + 1] + rr.p[(size_t) t * 3 + 1]; pp += rl.p[(size_t) t * 3 + 2] + rr.p[(size_t) t * 3 + 2]; }
-    F.found = true; F.sure = sum / cnt; F.kind = ps >= pp ? "filtersweep" : "phaser";
-    std::pair<int, int> lg = F.spans[0]; for (const auto& s : F.spans) if (s.second - s.first > lg.second - lg.first) lg = s;
-    const int n = lg.second - lg.first; Vec G ((size_t) n * NB);
-    for (int t = 0; t < n; ++t) for (int b = 0; b < NB; ++b) { const size_t i = (size_t) (lg.first + t) * NB + (size_t) b; G[(size_t) t * NB + (size_t) b] = (double) F.raw[0][i] + (double) F.raw[1][i]; }
-    F.period = periodOf (G, n);
-    return F;
 }
 
 // The stretches of the sound that have the moving filter, in samples.
@@ -469,6 +458,75 @@ inline Stereo apply (const Stereo& y, const Found& F, double s, double speed = 1
     auto job = std::async (std::launch::async, [&] { return side (y.r, 1); });
     out.l = side (y.l, 0); out.r = job.get();
     return out;
+}
+
+// ---------------------------------------------------------------- what is on a sound
+// 0 at `zero`, SHOWN at `at`, 1 at `full`, straight lines between.
+inline double scaleTo (double v, double zero, double at, double full) { return v >= at ? SHOWN + (1.0 - SHOWN) * std::min (1.0, (v - at) / (full - at)) : SHOWN * std::max (0.0, (v - zero) / (at - zero)); }
+// How sure a stretch is, on the app's scale (it shows at the default Sureness when this is over SHOWN).
+inline double sureness (bool phaser, double say, double size, int count)
+{
+    const double s = phaser ? scaleTo (say, ON, SAY_PHASER, 1.0) : std::min (scaleTo (say, ON, SAY_SWEEP, 1.0), scaleTo (size, 0.0, BIG, 2.0 * BIG));
+    return s * std::min (1.0, (double) count / WHOLE);
+}
+
+// The two sides are read at the same time (once if they are the same). Stopped on the way: nothing found.
+inline Found find (const Net& net, const Stereo& y, const Stop& stop = {})
+{
+    Found F; F.n = y.size(); F.T = frames (y.size()); const int T = F.T;
+    auto both = [&] (const Stereo& x, Read& rl, Read& rr)
+    {
+        if (x.l == x.r) { rl = read (net, x.l, stop); rr = rl; }
+        else { auto job = std::async (std::launch::async, [&] { return read (net, x.r, stop); }); rl = read (net, x.l, stop); rr = job.get(); }
+        return rl.ok && rr.ok;
+    };
+    Read rl, rr; if (! both (y, rl, rr)) return F;
+    F.on.resize ((size_t) T); for (int t = 0; t < T; ++t) F.on[(size_t) t] = std::max (1.0 - rl.p[(size_t) t * 3], 1.0 - rr.p[(size_t) t * 3]);
+    const int k = std::min (SMOOTH, T); std::vector<char> yes ((size_t) T);
+    for (int t = 0; t < T; ++t)
+    {
+        double s = 0; for (int i = 0; i < k; ++i) s += F.on[(size_t) std::clamp (t - k / 2 + i, 0, T - 1)];
+        yes[(size_t) t] = s / k >= ON;
+    }
+    F.gate.assign ((size_t) T, 0.0); F.raw[0] = std::move (rl.g); F.raw[1] = std::move (rr.g);
+    const auto named = stretches (yes); if (named.empty()) return F;
+    for (const auto& sp : named)                    // every stretch for itself: which kind, how sure
+    {
+        Stretch st; st.a = sp.first; st.b = sp.second; double ps = 0, pp = 0, sum = 0, sq = 0;
+        for (int t = st.a; t < st.b; ++t)
+        {
+            ps += rl.p[(size_t) t * 3 + 1] + rr.p[(size_t) t * 3 + 1]; pp += rl.p[(size_t) t * 3 + 2] + rr.p[(size_t) t * 3 + 2]; sum += F.on[(size_t) t];
+            for (int c = 0; c < 2; ++c) { const float* g = &F.raw[c][(size_t) t * NB]; for (int b = 0; b < NB; ++b) sq += (double) g[b] * (double) g[b]; }
+        }
+        const int count = st.b - st.a; st.phaser = ! (ps >= pp); st.say = sum / count; st.size = std::sqrt (sq / (2.0 * count * NB)); st.sure = sureness (st.phaser, st.say, st.size, count);
+        F.all.push_back (st);
+    }
+    const Stretch* top = &F.all[0]; for (const auto& st : F.all) if (st.sure > top->sure) top = &st;        // the surest stretch says which kind; much less sure ones are left alone
+    double sum = 0, sq = 0; int cnt = 0;
+    for (const auto& st : F.all)
+    {
+        if (st.phaser != top->phaser || st.sure < KEEP * top->sure) continue;
+        F.spans.push_back ({ st.a, st.b }); const Vec m = fades (st.a, st.b - st.a, T);
+        for (int t = st.a; t < st.b; ++t)
+        {
+            F.gate[(size_t) t] = m[(size_t) (t - st.a)]; sum += F.on[(size_t) t]; ++cnt;
+            for (int c = 0; c < 2; ++c) { const float* g = &F.raw[c][(size_t) t * NB]; for (int b = 0; b < NB; ++b) sq += (double) g[b] * (double) g[b]; }
+        }
+    }
+    F.found = true; F.kind = top->phaser ? "phaser" : "filtersweep"; F.sure = top->sure; F.say = sum / cnt; F.size = std::sqrt (sq / (2.0 * cnt * NB));
+    while (F.say >= AGAIN && F.reads < (top->phaser ? 3 : 2))       // the model reads the curve too small: take it off, read what is left, add it
+    {
+        Read l2, r2; if (! both (apply (y, F, -1.0), l2, r2)) break;
+        double left = 0; for (int t = 0; t < T; ++t) if (F.gate[(size_t) t] > 0) left += std::max (1.0 - l2.p[(size_t) t * 3], 1.0 - r2.p[(size_t) t * 3]);
+        if (top->phaser && left / cnt < STILL) break;               // a phaser's rest is added only while the model is sure there is one
+        for (size_t i = 0; i < F.raw[0].size(); ++i) { F.raw[0][i] += l2.g[i]; F.raw[1][i] += r2.g[i]; }
+        ++F.reads;
+    }
+    std::pair<int, int> lg = F.spans[0]; for (const auto& s : F.spans) if (s.second - s.first > lg.second - lg.first) lg = s;
+    const int n = lg.second - lg.first; Vec G ((size_t) n * NB);
+    for (int t = 0; t < n; ++t) for (int b = 0; b < NB; ++b) { const size_t i = (size_t) (lg.first + t) * NB + (size_t) b; G[(size_t) t * NB + (size_t) b] = (double) F.raw[0][i] + (double) F.raw[1][i]; }
+    F.period = periodOf (G, n);
+    return F;
 }
 
 } // namespace moving
