@@ -214,6 +214,11 @@ Working in the same 6 s pieces as the verdict (each piece's answer, cross-faded 
 the long reverbs and dropped: 28, -53, -13, 46 and -18 at half way left, against 36, -64, -16, 49 and -35 for the
 whole sound. What is bad stays bad, so 0.4.5 works on the whole sound as before.
 
+Build 0.4.4 on the same 53 long sounds (its own tool and models, `long_score.py`): REVERB shown on 46, half way left
+19 where shown with 10 worse than untouched (down to -329), far left 1 where shown with 22 worse (down to -667).
+So 0.4.5 is no step back on long sounds: better at half way left (22, 6 worse, down to -64), level at far left
+(-3, 23 worse, down to -244). Of the four it no longer shows, three came out worse than untouched in 0.4.4.
+
 **Tried on the way and dropped.** A look at left and right summed to mono (a real room survives the sum; a room
 read from the two sides differing does not): it takes away a quarter of the false REVERB on effect sounds, and
 15 to 19 % of the real ones on cut-off files, so inside the rule it buys nothing. More evidence numbers in the rule
