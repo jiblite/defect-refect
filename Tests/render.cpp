@@ -62,10 +62,17 @@ int main (int argc, char** argv)
             std::ifstream f2 (dir + "/room2.bin", std::ios::binary);        // the model for the second look, when there is one
             if (f2) { const std::vector<char> b2 ((std::istreambuf_iterator<char> (f2)), {}); net2.load (b2.data(), b2.size()); }
             auto r = std::make_shared<dr::room::Found> (dr::room::find (src, net, net2.ready() ? &net2 : nullptr));
-            const dr::RoomEvidence ev = dr::roomEvidence (*r);
-            std::cout << "room: found=" << r->found << " detector=" << (I.prob.count ("reverb") ? I.prob.at ("reverb") : 0.0) << " sureness=" << dr::roomSureness (*r)
+            const dr::RoomEvidence ev = dr::roomEvidence (*r); std::vector<dr::RoomPiece> pieces;
+            const double sure = dr::roomVerdict (src, *r, net, net2.ready() ? &net2 : nullptr, {}, &pieces);       // a sound of more than 9 s is judged in pieces
+            std::cout << "room: found=" << r->found << " detector=" << (I.prob.count ("reverb") ? I.prob.at ("reverb") : 0.0) << " sureness=" << sure
                       << " share=" << ev.share << " deep=" << ev.deep << " bands=" << ev.bands << " moments=" << ev.moments << " decay=" << ev.decay << " strength=" << ev.strength << " own=" << ev.own << "\n";
-            if (dr::mergeRoom (I, *r)) rf = r;
+            if (! pieces.empty())
+            {
+                std::cout << "room in pieces: whole=" << dr::roomSureness (*r) << " pieces_at_s:sureness:weight=";
+                for (size_t i = 0; i < pieces.size(); ++i) std::cout << (i ? "," : "") << (double) pieces[i].from / 48000.0 << ":" << pieces[i].sure << ":" << pieces[i].weight;
+                std::cout << "\n";
+            }
+            if (dr::mergeRoom (I, sure)) rf = r;
         }
     }
     const auto tf = std::make_shared<const dr::tone::Found> (dr::tone::analyse (src)); dr::mergeTone (I, *tf);

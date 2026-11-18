@@ -53,6 +53,24 @@ ones most; with Amount at far left a fifth to a quarter of the cases come out wo
 app cannot take out yet (widening, distortion, ring modulation) can still make a false REVERB. Method and
 numbers: `Research/room/README.md`.
 
+**Long sounds (0.4.5).** All of the above is measured on sounds of 6 and 9 s, which is also what the model has
+learned from. On longer sounds every build so far read a room far too easily: of 121 test sounds of 18 to 48 s
+without a reverb (a clean clip looped, different clips in a row, the same with a sweep, a phaser or a chorus) the
+look at the whole sound showed REVERB on 40 %, where the looped clips show it on 10 % by themselves. A sound of
+more than 9 s is now judged in pieces of 6 s, each looked at as a sound of its own: it counts as having a room when
+the pieces say so on average, or when the last piece does, which is where a sound rings out. That shows REVERB on
+17 % of those sounds, and on 74 % of 144 long sounds with a reverb (before: 76 %). Sounds of up to 9 s are judged
+exactly as before. Known limit: a row of different sounds that ends on one that rings by itself is still shown.
+
+How well a reverb comes out of a long sound was scored for the first time (53 long sounds with a reverb, 33 to
+51 s; REVERB shown on 43). A heavy reverb comes out about as it does out of a 9 s test sound. A light one (direct
+sound 5 dB and more over the reverb) is the weak case: Amount half way left scores 20 where shown, and 6 of the 32
+come out worse than untouched (9 s test sounds: 1 of 16); at far left 17 of the 32 (5 of 16). Length is not the
+main reason. On a light reverb the engine can take more out of the sound itself than the reverb put in, and it
+gains most where the sound rings out, which is a third of a 9 s test sound and little of a long file, so the scores
+of short sounds that ring out flatter it. Until the engine is better there, half way left is the safer setting for
+a light reverb and far left is not. Method, numbers and what was tried: `Research/room/README.md`.
+
 **Tone (new engine in 0.4.1):**
 - **Tone Match** (two sounds, the Tone Match button): the second sound takes the long-term tone of the first.
   Amount and Detail faders, the curve as a picture, and **Export IR** saves it as an impulse response. It comes

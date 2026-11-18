@@ -9,7 +9,10 @@ S = dict(engine_cut_worse=48,                     # cut_eval.py, the 0.4.4 pair 
          renders=3615, looks=2470,                # mkcases_x.py; fit_sure.py
          neg_n=577, neg_old=14.0, neg_new=8.7,    # sounds without reverb, unseen half, REVERB shown at 65 %: look2.py 044; recheck_eval.py --show b
          fx_n=912, fx_old=(134, 86, 48), fx_new=(93, 67, 26),      # effect alone: shown, of them on a clip that shows it clean, made by the effect
-         pos_shown=340, pos_again=78, pos_lost=1) # recheck_eval.py: sounds with a real reverb
+         pos_shown=340, pos_again=78, pos_lost=1, # recheck_eval.py: sounds with a real reverb
+         long_n=134, long_neg=(121, 40, 17), long_pos=(144, 76, 74),     # long_eval3.py: long test sounds; looks without reverb: how many, shown of 100 by the look at the whole sound and now; the same with reverb
+         long_clean=(12, 9, 10, 3),               # the twelve clean rows of clips: shown by build 0.4.4 (the app itself), by the look at the whole sound, and now
+         long_out=(53, 43, 32, 6, 17, 16, 1, 5))  # long_score.py: long sounds with a reverb, shown; of them light (direct 5 dB and more over the reverb), worse than untouched half way left and far left; the 9 s test sounds: light, worse half way left, far left
 def rows(tag): return [json.loads(l) for f in sorted(glob.glob('/tmp/claude-0/v2/train/cut_app_%s_*.jsonl' % tag)) for l in open(f)]
 def r0(v): return '%.0f' % (round(v) + 0.0)
 old, new = rows(sys.argv[1]), rows(sys.argv[2]); assert len(old) == 40 and len(new) == 40 and {r['name'] for r in old} == {r['name'] for r in new}
@@ -44,13 +47,29 @@ html = ('<section id="cut045"><h2>Files that stop while the sound plays: new in 
  'Of %d sounds with a real reverb, %d were looked at again and %s lost its REVERB group.</p>'
  '<p>All told, on %d test sounds without reverb that neither the model nor the Sureness figure was fitted on, REVERB is shown on %s of 100, where build 0.4.4 showed it on %s. '
  'On the 136 scoreboard cases it is shown where there is none on %d instead of %d, and %s of those %d are sounds that show it with no effect on them.</p>'
+ '<h2>Long files</h2>'
+ '<p>Everything above is measured on sounds of 6 and 9 seconds, which is also what the reverb model learned from. Most real files are longer, so I made %d long test sounds of 18 to 48 seconds, with and without reverb, '
+ 'and found a fault that every build so far has had: when the app looks at a whole long sound, it reads a room into it far too easily. Before the repair this build showed REVERB on %d of 100 long sounds without any reverb. '
+ '%s of them are plain clean clips in a row, and on those build 0.4.4 showed it on %s and this build at first on %s.</p>'
+ '<p>A sound of more than 9 seconds is now judged in pieces of 6 seconds, each looked at as a sound of its own. It counts as having a room when the pieces say so on average, or when the last piece does, because the end is where a sound rings out. '
+ 'That brings the false REVERB on the long sounds from %d to %d of 100, and on the %s clean ones to %s, each of which ends on a sound that rings by itself. Of 100 long sounds with a real reverb %d are shown, where it was %d. '
+ 'Sounds of up to 9 seconds are judged exactly as before, so nothing else on this page changes.</p>'
+ '<p>I also scored for the first time how well the reverb comes out of a long file, on %d long sounds with a reverb, of which %d get a REVERB group. A heavy reverb comes out about as well as on the short test sounds. '
+ 'A light reverb, where the sound itself is 5 dB or more above its reverb, does not. Of %d long sounds with a light reverb, %s come out worse than untouched with Amount half way left, and %d with Amount at far left; on the short test sounds that was %s of %d and %s of %d. '
+ 'Length is not the main reason. With a light reverb the engine can take more out of the sound itself than the reverb put in, and it gains most where the sound rings out at the end. '
+ 'A short test sound is one third ring-out and a long file is nearly all sound, so the scores of short sounds on this page flatter the engine there. '
+ 'Working through a long file in pieces was tried and does not repair it. Until the engine is better there, half way left is the safer setting for a light reverb, and far left is not.</p>'
  '<p>What is not good yet. On cut-off files and excerpts the engine still does not see the room on about a third of the real reverbs, light ones most; those files stay as they are. '
  'Amount at far left is still a risk on every kind of file and makes about a fifth to a quarter of the cases worse than untouched, where half way left makes one or two of 40 worse. '
- 'Sounds that ring by themselves still read as rooms. And widening, distortion and ring modulation, which have no engine of their own yet, can still make a REVERB that is not there. A larger model is the next lever for the first two.</p>'
+ 'Sounds that ring by themselves still read as rooms. And widening, distortion and ring modulation, which have no engine of their own yet, can still make a REVERB that is not there. A larger model is the next lever for the first two. '
+ 'And light reverbs, as described under long files, are now the weakest spot of the reverb engine.</p>'
  '<p>The five examples below were picked by a fixed rule from the 40 test reverbs, not by ear: of the cut-off files that both builds show, the third largest change and the middle one (24, 25), '
  'the middle one of those that only build 0.4.5 shows (26), the one that only build 0.4.4 showed (27), and of the excerpts that both show, the middle one (28). Each has the app\'s output of both builds.</p></section>'
  % (S['engine_cut_worse'], '{:,}'.format(S['renders']), '{:,}'.format(S['looks']), ''.join(trs),
     c1['shown'], c0['shown'], r0(c1['med']), r0(c0['med']), e1['shown'], e0['shown'], r0(e1['med']), r0(e0['med']),
     S['fx_n'], S['fx_old'][0], S['fx_old'][1], S['fx_old'][2], S['fx_old'][2], S['fx_new'][2], S['fx_old'][1], S['fx_new'][1], S['pos_shown'], S['pos_again'], num[S['pos_lost']],
-    S['neg_n'], r0(S['neg_new']), r0(S['neg_old']), sn['reverb'], so['reverb'], num.get(len(own), str(len(own))), sn['reverb']))
+    S['neg_n'], r0(S['neg_new']), r0(S['neg_old']), sn['reverb'], so['reverb'], num.get(len(own), str(len(own))), sn['reverb'],
+    S['long_n'], S['long_neg'][1], num[S['long_clean'][0]].capitalize(), S['long_clean'][1], S['long_clean'][2],
+    S['long_neg'][1], S['long_neg'][2], num[S['long_clean'][0]], num[S['long_clean'][3]], S['long_pos'][2], S['long_pos'][1],
+    S['long_out'][0], S['long_out'][1], S['long_out'][2], num[S['long_out'][3]], S['long_out'][4], num[S['long_out'][6]], S['long_out'][5], num[S['long_out'][7]], S['long_out'][5]))
 open(os.path.join(HERE, 'cut045_head.html'), 'w').write(html); print(html.replace('</p>', '</p>\n'))

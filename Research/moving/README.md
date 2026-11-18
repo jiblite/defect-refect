@@ -7,7 +7,8 @@ read), the curve agrees to 5e-5 dB and the rendered sounds to -125 dB or better,
 second reading in which a cell at the edge of silence fell on the other side). `memcheck.py` runs the app's whole
 processing built with the compiler's memory and arithmetic checks (`-fsanitize=address,undefined`) over every
 engine's group, alone and with a shorter, an equal and a longer second sound, the faders in the middle and at both
-ends. The scripts are a record of how the
+ends (`memcheck.py room`: a room next to each of the other effects; `memcheck.py long`: sounds of more than 9 s,
+which the room engine judges in pieces, with silence around them, gaps, and short bursts). The scripts are a record of how the
 engine was built and judged, as they were run: paths point to the working folder they ran in, and no audio is in
 the repo.
 

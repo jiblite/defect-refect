@@ -413,6 +413,78 @@ inline double roomSureness (const room::Found& f)
     const RoomEvidence e = roomEvidence (f);
     return 1.0 / (1.0 + std::exp (-(roomSure0 + roomSureDeep * std::log10 (e.deep + 0.003) + roomSureBands * (double) e.bands / (double) room::NB)));
 }
+// ---------------------------------------------------------------- a long sound
+// The model has learned from sounds of 4.5 to 9 s, and the rule above is fitted on sounds of 6 and 9 s. A look at the
+// whole of a longer sound reads a room into it far too easily: on 121 sounds of 18 to 48 s without reverb (clean clips
+// played three and six times over, and five to eight different clips in a row, clean or with a sweep, a phaser or a
+// chorus) the rule showed REVERB on 40 % (on 10 of the 12 clean rows of clips; build 0.4.4 on 9 of them); the clips
+// of the loops show it on 10 % when each is looked at alone. Told about a room it believes to be there somewhere,
+// the model finds some of it everywhere.
+// So a sound of more than 9 s is judged in pieces of 6 s, each looked at as a sound of its own, as the model has
+// learned it: a new piece every 3 s at most (at most roomPiecesMost in all, spread evenly, the last one ending where
+// the sound ends; silence of more than 60 dB under the loudest sample before and after the sound is left out). The
+// verdict is the larger of two: the average of the pieces' sureness (each piece counting by how much of it sounds:
+// its cells within 50 dB of the sound's loudest), which asks whether the room shows along the sound, and the
+// sureness of the last piece, which asks whether the sound rings out at its end: a room on a dense sound may show
+// nowhere else. (The last piece is only asked when it holds at least a fifth of what the fullest piece holds.)
+// The room that is shown and worked with is still the one found on the whole sound; if none is found there, there
+// is nothing to show.
+// Measured on those 121 sounds and on 144 looks at sounds of 18 to 48 s with a reverb (Research/room/bench/
+// prep_long.py, long_eval3.py; shown at 65 %): without reverb 40 % -> 17 % (clean clips looped 24 -> 10 %, which is
+// what those clips show alone; rows of clips 73 -> 32 %, 11 of the 13 by a last clip that reads as a room by
+// itself); with reverb 76 -> 74 % (ringing out 85 -> 81 %, cut off 71 -> 70 %). The average alone would show 5 % and
+// 69 %, and miss the reverbs that only their tail gives away (ringing out: 68 %). Taking the whole sound's evidence
+// stretch by stretch instead (long_eval3.py) leaves 22 % and 74 %. The pieces take about twice as long as the look at
+// the whole sound, which adds about a fifth to the analysis time of a long sound.
+// A piece's own verdict can depend a good deal on where exactly it starts (on one looped clip with a light reverb,
+// pieces that start within 50 ms of each other read between 22 and 97 %): the average evens that out, the last
+// piece does not.
+constexpr int roomWholeFrames = 852;            // a sound of up to this many frames (9.02 s) is judged whole, as above
+constexpr double roomPieceSec = 6.0, roomPieceStepSec = 3.0; constexpr int roomPiecesMost = 24;
+struct RoomPiece { size_t from = 0; double sure = 0, weight = 0; };     // where it starts (samples), its sureness, how much of it sounds
+// The verdict on a long sound from its pieces (see above); -1 when stopped on the way. each: the pieces, if asked for.
+inline double roomInPieces (const Stereo& y, const room::Net& net, const room::Net* second, const room::Stop& stop = {}, std::vector<RoomPiece>* each = nullptr)
+{
+    if (each != nullptr) each->clear();
+    const size_t n = y.size(); const double quiet = y.peak() * 1e-3; if (n == 0 || ! (quiet > 0.0)) return roomNone;
+    size_t a = 0, b = n;        // the sound without the silence around it
+    while (a < n && std::abs (y.l[a]) <= quiet && std::abs (y.r[a]) <= quiet) ++a;
+    while (b > a && std::abs (y.l[b - 1]) <= quiet && std::abs (y.r[b - 1]) <= quiet) --b;
+    const size_t len = std::min ((size_t) (roomPieceSec * SR), n), step = (size_t) (roomPieceStepSec * SR);
+    if (b - a < len) { a = std::min (a, n - len); b = a + len; }
+    const size_t way = b - a - len;         // from the first piece's start to the last one's
+    const int count = (int) std::min ((way + step - 1) / step + 1, (size_t) roomPiecesMost);
+    std::vector<RoomPiece> P; std::vector<Vec> LE; double top = -std::numeric_limits<double>::infinity();
+    for (int k = 0; k < count; ++k)
+    {
+        RoomPiece p; p.from = a + (count > 1 ? (size_t) std::llround ((double) way * (double) k / (double) (count - 1)) : 0); p.sure = roomNone;
+        const Stereo z = y.slice (p.from, len);
+        if (z.peak() > quiet)       // a piece of silence holds nothing to look at
+        {
+            room::Found f = room::find (z, net, second, stop); if (f.stopped) return -1.0;
+            p.sure = roomSureness (f); top = std::max (top, f.picture.top()); LE.push_back (std::move (f.picture.LE));
+        }
+        else LE.emplace_back();
+        P.push_back (p);
+    }
+    double sum = 0.0, all = 0.0, most = 0.0;
+    for (size_t k = 0; k < P.size(); ++k)
+    {
+        size_t live = 0; for (double v : LE[k]) live += v > top - 50.0 ? 1u : 0u;
+        P[k].weight = (double) live; sum += P[k].sure * P[k].weight; all += P[k].weight; most = std::max (most, P[k].weight);
+    }
+    if (each != nullptr) *each = P;
+    if (! (all > 0.0)) return roomNone;
+    return std::max (sum / all, P.back().weight >= 0.2 * most ? P.back().sure : 0.0);
+}
+// How sure it is that there is a room on the sound y, of which f is what the room engine found: a sound of up to 9 s
+// by the rule on the whole sound, a longer one in pieces.
+inline double roomVerdict (const Stereo& y, const room::Found& f, const room::Net& net, const room::Net* second, const room::Stop& stop = {}, std::vector<RoomPiece>* each = nullptr)
+{
+    if (each != nullptr) each->clear();
+    if (! f.found || f.picture.frames <= roomWholeFrames) return roomSureness (f);
+    const double s = roomInPieces (y, net, second, stop, each); return s < 0.0 ? roomSureness (f) : s;
+}
 // The REVERB group of a found room: Amount, Length, Brightness and Width, each 0 .. 2 with 1 = as found (the
 // settings are the fader values themselves, so scaled() hands them through).
 inline FoundFx roomFx (std::shared_ptr<const room::Found> found, double prob)
@@ -478,9 +550,10 @@ inline RoomIr exportIr (const room::Found& f, double length = 1.0, double bright
 // 8, where the first model showed it on about 4 in 10 (Research/room/train/narrow_test.py). The first model's
 // exception (no room found on a nearly mono file: the detector's guess stays) is gone with it; the function still
 // answers whether the engine's verdict was taken, which is now always.
-inline bool mergeRoom (Inspection& I, const room::Found& f)
+// sure: roomVerdict() of the sound.
+inline bool mergeRoom (Inspection& I, double sure)
 {
-    I.prob["reverb"] = roomSureness (f); return true;
+    I.prob["reverb"] = sure; return true;
 }
 
 // A sound that is cut off while it is still playing has no ending. The models up to 0.4.4 had learned from sounds
@@ -1051,7 +1124,8 @@ inline Stereo reshape (const Stereo& src, const std::vector<FoundFx>& found, con
 // the room engine looks at that sound as well, and the less sure of its two verdicts counts (returned: the second
 // one, or -1 when there was nothing to look at; what: the groups that were taken out). The room that is shown and
 // worked with is still the one found on the sound as it is. Costs one render of those groups and one more look of
-// the room engine, and only when a room and one of those effects are both found.
+// the room engine (on a sound of more than 9 s: the look in pieces, roomInPieces), and only when a room and one of
+// those effects are both found.
 // Measured with the app's own code (Research/room/bench/recheck_eval.py): on 912 sounds with one other effect and no
 // reverb the REVERB groups made by the effect go from 50 to 26 (Haas 12 -> 4, delay 15 -> 8, auto pan 6 -> 3); of 340
 // sounds with a real reverb that is shown, 78 are looked at again and one loses its group. On the scoreboard's 136
@@ -1078,8 +1152,10 @@ inline double recheckRoomWithout (Inspection& I, const Stereo& y, const std::sha
         }
     if (out.empty()) return -1.0;
     const Stereo dry = reshape (y, out, faders, stop); if (dry.size() != y.size() || (stop && stop())) return -1.0;
-    const room::Found f = room::find (dry, net, second, stop); if (f.stopped) return -1.0;
-    const double s = roomSureness (f); r->second = std::min (r->second, s); return s;
+    double s;
+    if (room::frames (dry.size()) > roomWholeFrames) { s = roomInPieces (dry, net, second, stop); if (s < 0.0) return -1.0; }     // a long sound: in pieces, as its first verdict
+    else { const room::Found f = room::find (dry, net, second, stop); if (f.stopped) return -1.0; s = roomSureness (f); }
+    r->second = std::min (r->second, s); return s;
 }
 
 } // namespace dr

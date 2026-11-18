@@ -660,11 +660,16 @@ private:
                          if (RN != nullptr && RN->ready())       // the room engine: is there a room on the sound, and which
                          {
                              const dr::room::Net* second = RN2 != nullptr && RN2->ready() ? RN2.get() : nullptr;
-                             std::shared_ptr<dr::room::Found> f;
-                             try { f = std::make_shared<dr::room::Found> (dr::room::find (*src, *RN, second, [this, gen] { return generation.load() != gen; })); }
+                             std::shared_ptr<dr::room::Found> f; double sure = -1.0;
+                             try
+                             {
+                                 const dr::room::Stop stop = [this, gen] { return generation.load() != gen; };
+                                 f = std::make_shared<dr::room::Found> (dr::room::find (*src, *RN, second, stop));
+                                 if (! f->stopped) sure = dr::roomVerdict (*src, *f, *RN, second, stop);        // a sound of more than 9 s is judged in pieces
+                             }
                              catch (const std::exception&) { f.reset(); }        // the room engine failed: the detector's verdict and the old reverb handling stay
                              if (generation.load() != gen) return;
-                             if (f != nullptr && ! f->stopped && dr::mergeRoom (I, *f)) *roomOut = f;
+                             if (f != nullptr && ! f->stopped && dr::mergeRoom (I, sure)) *roomOut = f;
                          }
                          {       // the tone engine: the sound's long-term spectra (for Tone Match) and short reflections on it
                              std::shared_ptr<dr::tone::Found> t;

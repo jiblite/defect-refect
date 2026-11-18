@@ -152,21 +152,25 @@ inline Vec smear (const Vec& LE, const std::vector<float>& g, int T, double top,
 // Per band: the strength (reverb energy per unit of direct energy, for a plain exponential decay with decay time
 // t60) and the evidence (how many "all room" moments the band had). In those moments the level is the strength
 // times the direct sound smeared with that decay: the middle of that ratio, the outermost tenths left out.
-inline void strengths (const Vec& LE, const std::vector<float>& g, int T, double top, const Band& t60, Band& kap, Band& ev)
+// `where`, if asked for: [frame * NB + band], 1 at every moment that a band's strength was read from (so each band's
+// ones add up to its evidence), for a study of where along a sound the room shows (Research/room/bench/rsure.cpp).
+inline void strengths (const Vec& LE, const std::vector<float>& g, int T, double top, const Band& t60, Band& kap, Band& ev, std::vector<unsigned char>* where = nullptr)
 {
-    const Vec P = smear (LE, g, T, top, t60); const double fl = top - FLOOR_DB; Vec q;
+    const Vec P = smear (LE, g, T, top, t60); const double fl = top - FLOOR_DB; Vec q; std::vector<int> at;
+    if (where != nullptr) where->assign ((size_t) T * NB, 0);
     for (int b = 0; b < NB; ++b)
     {
         kap[(size_t) b] = std::numeric_limits<double>::quiet_NaN(); ev[(size_t) b] = 0.0;
         double most = 0.0; for (int t = 0; t < T; ++t) most = std::max (most, P[(size_t) t * NB + (size_t) b]);
         if (! (most > 0.0)) continue;
-        q.clear();
+        q.clear(); at.clear();
         for (int t = 0; t < T; ++t)
         {
             const size_t i = (size_t) t * NB + (size_t) b;
-            if ((double) g[i] < ALL_ROOM_DB && LE[i] > fl && P[i] > 1e-4 * most) q.push_back (std::log (std::pow (10.0, LE[i] / 10.0) / P[i]));
+            if ((double) g[i] < ALL_ROOM_DB && LE[i] > fl && P[i] > 1e-4 * most) { q.push_back (std::log (std::pow (10.0, LE[i] / 10.0) / P[i])); at.push_back (t); }
         }
         if (q.size() < 8) continue;
+        if (where != nullptr) for (int t : at) (*where)[(size_t) t * NB + (size_t) b] = 1;
         std::sort (q.begin(), q.end());
         const size_t k = (size_t) ((double) q.size() * 0.1), from = q.size() - 2 * k >= 4 ? k : 0, to = q.size() - from;
         double sum = 0.0; for (size_t i = from; i < to; ++i) sum += q[i];
@@ -176,15 +180,16 @@ inline void strengths (const Vec& LE, const std::vector<float>& g, int T, double
 
 // (strength in dB, decay time in s, evidence) per band, smoothed over neighbouring bands, filled and capped; found =
 // false if no room shows. The strength is that of the whole response (the tail level minus the build-up allowance).
-struct Numbers { bool found = false; Band kdb {}, t60 {}, ev {}; };
-inline Numbers roomNumbers (const Vec& LE, const std::vector<float>& g, int T)
+// `moments`, if asked for (where = true): see strengths().
+struct Numbers { bool found = false; Band kdb {}, t60 {}, ev {}; std::vector<unsigned char> moments; };
+inline Numbers roomNumbers (const Vec& LE, const std::vector<float>& g, int T, bool where = false)
 {
     Numbers N; if (T < 1 || LE.size() != (size_t) T * NB || g.size() != LE.size()) return N;
     const double top = *std::max_element (LE.begin(), LE.end()); const Bands B; Band raw, ev, kap;
     decayTimes (LE, g, T, top, raw, ev); if (! any (raw)) return N;
     Band t60 = smoothFill (raw, ev); const double midT = mid (t60, ev, B);
     for (size_t b = 0; b < NB; ++b) t60[b] = std::min (t60[b], midT * capT (B.fc[b]));
-    strengths (LE, g, T, top, t60, kap, ev); if (! any (kap)) return N;
+    strengths (LE, g, T, top, t60, kap, ev, where ? &N.moments : nullptr); if (! any (kap)) return N;
     Band kdb = smoothFill (kap, ev); for (double& k : kdb) k = 10.0 * std::log10 (k) - BUILD_UP_DB;
     const double midK = mid (kdb, ev, B);
     for (size_t b = 0; b < NB; ++b) N.kdb[b] = std::min (kdb[b], midK + capK (B.fc[b]));
