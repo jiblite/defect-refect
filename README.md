@@ -25,13 +25,33 @@ sounds under the reverb: on narrow and mono recordings it now finds the room abo
 takes out about twice as much as before. Known limits: with a wide stereo sound under the reverb it still takes
 less out and errs more often than with a mono or narrow one, and a light reverb is the hardest case.
 
-Since 0.4.2 a found room is looked at a second time with three seconds of silence after the sound, and the less
-sure verdict counts. The model learned from sounds that end inside the file, where a room shows as the tail after
-the last note; on a sound that is cut off while it is still playing it read a room into 45 % of dry sounds (15 %
-when the sound ends inside the file). With the second look that is 15 % for both. Sounds with a natural ending
-lose nothing; sounds with a real reverb that are cut off pay for it (the room shows on 57 % of them instead of
-73 %; with the tail ringing out 87 %). What it still shows on dry sounds is mostly sample loops, many of which
-carry a room of their own.
+**Files that stop while the sound plays (model trained again in 0.4.5).** Most files do not end with the sound
+ringing out: they stop while it plays, or they are a piece from the middle of something longer. Up to 0.4.4 the
+model had learned only from sounds that end inside the file, where a room shows as the tail after the last note.
+On a file that is cut off it read a room into nearly half of the dry sounds, which 0.4.2 patched with a second
+look with silence after the sound, and on a real reverb it did as much harm as good (40 test reverbs cut off after
+6 s, the engine alone: typical score 1.5, 48 % of the cases worse than untouched; whole files 23 and 12 %). The
+model of 0.4.5 is the same pair trained on with files that stop, with excerpts cut at both ends, and with sounds
+that carry one of the other effects before the reverb or no reverb at all. The engine alone on the same cases: cut
+off 11 and 18 %, excerpts 11 and 15 % (before 9.5 and 45 %), whole files 25 and 8 %. The app as a whole, at the
+default Sureness: on cut-off files the REVERB group shows on 68 % of the real reverbs instead of 48 % and the mean
+score is 17 instead of 9; on excerpts 60 % instead of 45 % and 14 instead of 6; on whole files 90 % instead of
+82 % and 27 instead of 23. The look with silence is gone: for this model it changes nothing where there is no
+reverb and costs real ones.
+
+**A room that is not there (0.4.5).** Two kinds of false REVERB were told apart. Most sit on the sound itself:
+recorded loops and recordings, which may carry a room of their own, and sampled instruments that ring by
+themselves. The new training halves these on sample loops and leaves the sampled instruments. The others are made
+by another effect: echoes, the copies of a chorus or flanger, a sweeping filter, one side a few milliseconds
+behind the other. For those a found room must now still be there with the other found effects taken out (the app
+takes out what it shows and can remove cleanly, and the room engine looks again; `Estimate.h`,
+`recheckRoomWithout`). On 912 sounds with one of 17 other effects and no reverb that halves the effect-made false
+REVERB (50 to 26); of 340 real reverbs one loses its group. On sounds the model never met, REVERB now shows on
+9 % of those without a reverb (0.4.4: 14 %) and on 85 % of those with one (0.4.4: 79 %; cut-off files 71 % against
+60 %). Known limits: on cut-off files and excerpts about a quarter of the real reverbs are still not seen, light
+ones most; with Amount at far left a fifth to a quarter of the cases come out worse than untouched; effects the
+app cannot take out yet (widening, distortion, ring modulation) can still make a false REVERB. Method and
+numbers: `Research/room/README.md`.
 
 **Tone (new engine in 0.4.1):**
 - **Tone Match** (two sounds, the Tone Match button): the second sound takes the long-term tone of the first.
@@ -68,7 +88,8 @@ with another effect, and finds 84 % of the echoes put on (79 % of those that fal
 rhythm).
 
 When echoes and a room are both found, the room is looked at again on the sound with the echoes taken out and
-the less sure verdict counts, because a train of echoes dies away as a room does (`Estimate.h`, `recheckRoom`).
+the less sure verdict counts, because a train of echoes dies away as a room does (since 0.4.5 together with the
+other found effects: `Estimate.h`, `recheckRoomWithout`).
 Known limits: one echo time per side; under 30 ms a copy belongs to the comb filter (which looks up to 15 ms;
 between 15 and 30 ms nothing looks); a quiet echo (a fifth of the sound's level or less) on a busy sound is
 often not shown at the default Sureness and comes up when Sureness is lowered; an echo that crosses sides on a
@@ -223,17 +244,18 @@ two detectors computed over the sound together with 55 physical measurements. On
 | effects found (17 effects from outside tools) | 50 %        | 46 %  |
 | other effects shown per sound with an effect  | 1.07        | 0.09  |
 
-And the whole app on the scoreboard (`Research/room/bench/famboard.py`; the drop in REVERB is the second look
-described above):
+And the whole app on the scoreboard (`Research/room/bench/famboard.py`, `famsum.py`; the drop in REVERB in 0.4.2
+was the look with silence after the sound, the drop in 0.4.5 is the room model trained again and the look without
+the other effects, both described above):
 
-| 136 cases, 17 effects from outside tools                        | 0.4.1    | 0.4.2   | 0.4.3   | 0.4.4  |
-|------------------------------------------------------------------|----------|---------|---------|--------|
-| the case's own effect shown                                      | 77       | 75      | 79      | 89     |
-| other groups shown: REVERB / the rest                            | 63 / 156 | 19 / 12 | 19 / 10 | 19 / 7 |
-| cases with no other group shown                                  | 16       | 107     | 109     | 112    |
-| own group far left: cases made worse than doing nothing          | 12 %     | 3 %     | 3 %     | 1 %    |
-| every shown group far left: cases made worse than doing nothing  | 78 %     | 19 %    | 19 %    | 15 %   |
-| everything shown put onto a second sound: cases made worse       | 71 %     | 36 %    | 30 %    | 27 %   |
+| 136 cases, 17 effects from outside tools                        | 0.4.1    | 0.4.2   | 0.4.3   | 0.4.4  | 0.4.5  |
+|------------------------------------------------------------------|----------|---------|---------|--------|--------|
+| the case's own effect shown                                      | 77       | 75      | 79      | 89     | 89     |
+| other groups shown: REVERB / the rest                            | 63 / 156 | 19 / 12 | 19 / 10 | 19 / 7 | 13 / 7 |
+| cases with no other group shown                                  | 16       | 107     | 109     | 112    | 116    |
+| own group far left: cases made worse than doing nothing          | 12 %     | 3 %     | 3 %     | 1 %    | 1 %    |
+| every shown group far left: cases made worse than doing nothing  | 78 %     | 19 %    | 19 %    | 15 %   | 9 %    |
+| everything shown put onto a second sound: cases made worse       | 71 %     | 36 %    | 30 %    | 27 %   | 24 %   |
 
 What changed from 0.4.2 to 0.4.3 besides the scores of the four reworked groups: four flangers are found; a
 tremolo that 0.4.2 took for a gate is shown as a tremolo; another tremolo, which 0.4.2 showed and took out at 24
@@ -245,6 +267,13 @@ What changed from 0.4.3 to 0.4.4: the three new groups. CHORUS is shown on 8 of 
 of 8 (5), PHASER on 3 of 8 (2, both of which went onto a second sound far worse than nothing); two false FILTER SWEEPs (on a Haas widener and on a
 stutter) are gone. Every other case is as it was. Still open: a false REVERB on some chorus, phaser and flanger
 sounds, which is most of what the last two rows have left.
+
+What changed from 0.4.4 to 0.4.5: only REVERB. Every case's own group is shown as before, with the same scores.
+Of the 19 REVERB groups on cases without a reverb, ten are gone and four are new. Ten of the 13 that are left sit
+on sounds that show REVERB with no effect on them (recorded loops, recordings, sampled plucked strings): the ring
+is in the sound, and no look at the effect can take it away. Three are made by the effect: a chorus that comes
+out only in part, a delay whose echoes are taken out and a room is still read, and a delay whose echo is not
+found. With fewer false rooms to pull out, the last two rows move as well.
 
 The price is in the third row of the first table, and it is uneven: flanger, phaser, filter sweep and a fixed filter are found less
 often than before (9, 39, 39 and 9 % against 36, 73, 61 and 34 %), because most of their earlier finds came with

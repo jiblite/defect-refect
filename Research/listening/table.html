@@ -1,0 +1,13 @@
+<section class="panel"><h2>By the numbers</h2>
+<p>40 test cases, each scored against the true answer. 100 = identical to it, 0 = no better than leaving the sound alone, below 0 = worse than doing nothing.</p>
+<div class="tablewrap"><table>
+<tr><th></th><th class="n">Typical case</th><th class="n">Average</th><th class="n">Made worse</th></tr>
+<tr><td>Reverb taken out of a sound (Amount half way left)</td><td class="n">23</td><td class="n">23</td><td class="n">12 %</td></tr>
+<tr><td>The same with a perfect room-or-sound decision</td><td class="n">61</td><td class="n">57</td><td class="n">0 %</td></tr>
+<tr><td>Found room put on a second sound</td><td class="n">19</td><td class="n">22</td><td class="n">20 %</td></tr>
+<tr><td>The same with a perfect decision</td><td class="n">23</td><td class="n">24</td><td class="n">20 %</td></tr>
+</table></div>
+<p>In plain terms: with Amount half way left, the room comes down by about 5 dB where it is on its own (tails and gaps), and the sound loses about 1.6 dB where it is on top. That is the engine's own answer. Further left it digs deeper: at far left the room comes down by about 12 dB and the sound loses about 5 dB. How deep is right depends on the sound, so the fader leaves it to your ear. The old app could not take reverb out at all, and my best hand-made rule scored 12.</p>
+<p>The second pair of lines shows where the limits are. Taking reverb out is held back by the decision, and that is where the next gains are. The room on a second sound is a copy by numbers (decay time, level, tone, width), not a recording of the real room, so it cannot reach 100: with the true numbers it scores about 32.</p>
+<p>The weak spot of the first model (build 0.4.0): it told room from sound largely by what left and right do not share. The model in this build was also trained on sounds where that cue is missing. With a mono or narrow sound under the reverb it does well (typical score 27, 4 % of cases made worse). With a wide stereo sound under it, it still takes parts of the sound for room more often (average 13, 24 % made worse). The clear gain is on recordings that are narrow or mono as a whole, room included: there it now finds the room on about 19 in 20 sounds (before: 8 in 10) and takes out about twice as much as before.</p>
+<p>The six examples are places 3, 10, 17, 24, 31 and 38 of the 40 cases ranked by the first line: the whole range from good to bad, not my favourites.</p></section>

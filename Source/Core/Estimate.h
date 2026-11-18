@@ -396,7 +396,15 @@ inline RoomEvidence roomEvidence (const room::Found& f)
 // cases (Research/room/bench/prep_sb.py, prep_nw.py, fit_sure.py): every reverb tool on a clean clip and after
 // another effect, ringing out and cut off at 6 s, against clean clips, the other 17 effect families alone and tone
 // effects alone. The rule is fitted on the half made with the tools and clips that training used and checked on the
-// other half, which the model never saw. NUMBERS_HERE
+// other half, which the model never saw. There the engine finds a room on 96 % of the reverbs that ring out, on
+// 77 % of those that are cut off and on 18 % of the sounds without one; at the slider's 65 % the reverb shows on
+// 95 %, on 71 % and on 11 % (clean clips 8 %, another effect alone 13 %, a tone effect alone none; with the look
+// without the other effects at the end of this file: another effect alone 10 %, all sounds without reverb 9 %), and
+// what the number says holds: of the sounds it calls 65 to 80 % sure 74 % have a reverb, 80 to 90: 83 %, over 90:
+// 96 %. The sounds without reverb it still shows on are mostly recorded loops and recordings, which may carry a
+// room of their own, and sampled instruments that ring by themselves or carry the hall they were recorded in. More
+// evidence (the room part's share, strength, decay time, the levels at the file's two ends, a look with silence
+// after the sound, a look at left and right summed to mono) was tried and did not help on the unseen half.
 // roomNone: what is left when the engine finds no room (then about 4 in 5 sounds have none).
 constexpr double roomSure0 = 1.902, roomSureDeep = 0.847, roomSureBands = 2.649, roomNone = 0.22;
 inline double roomSureness (const room::Found& f)
@@ -429,9 +437,10 @@ inline FoundFx roomFx (std::shared_ptr<const room::Found> found, double prob)
 // picks. Right of the middle: more reverb. (The prototype's engine.fader.)
 constexpr double roomHalf = 0.5, roomDeep = 1.5;
 // What that fader does to the room's level, for the display (dB): how far the room comes down where it is on its own
-// is the typical value over the scoreboard's reverb cases, 4.5 dB with the engine's own answer and 10.6 dB at far
-// left (it differs from sound to sound; under the sound itself less can be taken). Right of the middle: plain level.
-constexpr double roomDownOwn = 4.5, roomDownDeep = 10.6;
+// is the typical value over the scoreboard's 120 reverb cases with the model of 0.4.5, 7.5 dB with the engine's own
+// answer and 15.4 dB at far left (Research/room/train/bold_test.py; it differs from sound to sound, and under the
+// sound itself less can be taken: there the sound loses 1.6 and 5.3 dB). Right of the middle: plain level.
+constexpr double roomDownOwn = 7.5, roomDownDeep = 15.4;
 inline double roomAmountDb (double s)
 {
     if (s >= 1.0) return 20.0 * std::log10 (s);
@@ -592,21 +601,6 @@ inline echo::Shape echoShape (const Params& p, double s)
 // The echo engine's verdict goes into the inspection and the detector's own guess about delay goes out (it showed
 // a delay on 6 of the scoreboard's 8 delay cases and on about one clean sound in ten).
 inline void mergeEcho (Inspection& I, const echo::Found& f) { I.prob["delay"] = f.any() ? f.sure : echo::sureNone; }
-
-// A train of echoes dies away as a room does, and the room engine can take it for one: on the scoreboard's 16 sounds
-// with a delay it showed a REVERB group (rule above 65 %) on 5, and only one of those sounds has a room of its own.
-// So when the echo engine finds echoes and the room engine a room, the room must still be there with the echoes
-// taken out: the room engine looks at that sound as well, and the less sure of its two verdicts counts (returned:
-// the second one, or -1 when there was nothing to look at). On the 16 sounds that takes 3 of the 4 away and adds
-// none (Research/echo/roomcheck.py; that rooms with echoes on top keep their group: roomcheck2.py). The room that
-// is shown and worked with is still the one found on the sound as it is. Costs about a second.
-inline double recheckRoom (Inspection& I, const Stereo& y, const echo::Found& e, const room::Net& net, const room::Net* second, const room::Stop& stop = {})
-{
-    auto r = I.prob.find ("reverb"); if (! e.any() || r == I.prob.end() || ! (r->second > roomNone)) return -1.0;
-    echo::Shape sh; sh.amount = 0.0; const Stereo dry = echo::render (y, e, sh, true, stop); if (dry.size() != y.size()) return -1.0;
-    const room::Found f = room::find (dry, net, second, stop); if (f.stopped) return -1.0;
-    const double s = roomSureness (f); r->second = std::min (r->second, s); return s;
-}
 
 // What Export IR writes for the DELAY group: the echoes alone, without the sound itself (the file starts with the
 // silence before the first echo), left and right, as the Time, Feedback and Brightness faders have them and with
@@ -1047,6 +1041,45 @@ inline Stereo reshape (const Stereo& src, const std::vector<FoundFx>& found, con
     }
     limit (y);
     return y;
+}
+
+// A room found on a sound that shows other effects as well. A train of echoes dies away as a room does; the copies
+// of a flanger or a chorus, a filter that sweeps, one side a few milliseconds behind the other: each of them can look
+// like a room to the room engine. So the room must still be there with those effects taken out. Echoes the echo
+// engine finds, and what the app shows at the default Sureness and can take out cleanly (level movement, flanger,
+// phaser, filter sweep, chorus, each by its engine, and the Haas delay by moving the late side back) are taken out,
+// the room engine looks at that sound as well, and the less sure of its two verdicts counts (returned: the second
+// one, or -1 when there was nothing to look at; what: the groups that were taken out). The room that is shown and
+// worked with is still the one found on the sound as it is. Costs one render of those groups and one more look of
+// the room engine, and only when a room and one of those effects are both found.
+// Measured with the app's own code (Research/room/bench/recheck_eval.py): on 912 sounds with one other effect and no
+// reverb the REVERB groups made by the effect go from 50 to 26 (Haas 12 -> 4, delay 15 -> 8, auto pan 6 -> 3); of 340
+// sounds with a real reverb that is shown, 78 are looked at again and one loses its group. On the scoreboard's 136
+// cases the false REVERB groups go from 16 to 13.
+// (Since 0.4.2 this was done for echoes alone: on the scoreboard's 16 sounds with a delay the room engine showed a
+// REVERB group on 5, only one of which has a room of its own, and the look without the echoes took 3 of the 4 away
+// and added none; Research/echo/roomcheck.py, roomcheck2.py.)
+constexpr double roomWithoutCut = 0.65;
+inline double recheckRoomWithout (Inspection& I, const Stereo& y, const std::shared_ptr<const echo::Found>& echo, const std::shared_ptr<const level::Movement>& lvl,
+                                  const std::shared_ptr<const sweep::Result>& swp, const std::shared_ptr<const moving::Found>& mov, const std::shared_ptr<const chorus::Found>& cho,
+                                  const room::Net& net, const room::Net* second, const room::Stop& stop = {}, std::string* what = nullptr)
+{
+    auto r = I.prob.find ("reverb"); if (r == I.prob.end() || ! (r->second > roomNone)) return -1.0;
+    std::set<std::string> only;
+    for (const char* f : { "tremolo", "autopan", "gatedrhythm", "flanger", "phaser", "filtersweep", "chorus", "haas" }) { auto p = I.prob.find (f); if (p != I.prob.end() && p->second > roomWithoutCut) only.insert (f); }
+    if (echo != nullptr && echo->any() && I.prob.count ("delay")) only.insert ("delay");      // echoes: whenever the echo engine finds any
+    if (only.empty()) return -1.0;
+    std::vector<FoundFx> out; std::map<std::string, double> faders;
+    for (FoundFx& F : estimate (I, y, roomWithoutCut, &only, {}, {}, echo, lvl, swp, mov, cho))
+        if (F.echo != nullptr || F.level != nullptr || F.sweep != nullptr || F.moving != nullptr || F.chorus != nullptr || F.name == "haas")
+        {
+            faders[F.name + ".amount"] = 0.0; if (what != nullptr) *what += (what->empty() ? "" : ",") + F.name;
+            out.push_back (std::move (F));
+        }
+    if (out.empty()) return -1.0;
+    const Stereo dry = reshape (y, out, faders, stop); if (dry.size() != y.size() || (stop && stop())) return -1.0;
+    const room::Found f = room::find (dry, net, second, stop); if (f.stopped) return -1.0;
+    const double s = roomSureness (f); r->second = std::min (r->second, s); return s;
 }
 
 } // namespace dr

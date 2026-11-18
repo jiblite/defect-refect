@@ -72,11 +72,6 @@ int main (int argc, char** argv)
     std::cout << "tone: reflections=" << tf->echoes.size(); for (auto& e : tf->echoes) std::cout << " delay_ms=" << e.delay / 48.0 << " gain=" << e.gain; std::cout << "\n";
     const auto ef = std::make_shared<const dr::echo::Found> (dr::echo::analyse (src)); dr::mergeEcho (I, *ef);
     std::cout << "echo: sure=" << ef->sure; for (int c = 0; c < 2; ++c) if (ef->ch[c].found) std::cout << (c ? " right" : " left") << "_ms=" << ef->ch[c].rec.q / 48.0 << " p=" << ef->ch[c].rec.p; std::cout << "\n";
-    if (rf != nullptr && net.ready())        // a room on a sound with echoes: is it still there without them?
-    {
-        const double s = dr::recheckRoom (I, src, *ef, net, net2.ready() ? &net2 : nullptr);
-        if (s >= 0) std::cout << "room without the echoes: sureness=" << s << " counts=" << I.prob.at ("reverb") << "\n";
-    }
     const auto lf = std::make_shared<const dr::level::Movement> (dr::level::analyse (src)); dr::mergeLevel (I, *lf);
     std::cout << "level: found=" << lf->found; if (lf->found) std::cout << " kind=" << dr::levelName (*lf) << " sure=" << lf->sure << " rate_hz=" << lf->rate << " depth_db=" << lf->depth << " pieces=" << lf->carrying << "/" << lf->sounding;
     if (lf->found) { std::cout << " there_s="; for (size_t i = 0; i < lf->spans.size(); ++i) std::cout << (i ? "," : "") << (double) lf->spans[i].a / 48000.0 << ".." << (double) lf->spans[i].b / 48000.0; }       // where along the sound the movement is
@@ -106,6 +101,11 @@ int main (int argc, char** argv)
         std::cout << " there_s="; const auto sp = dr::chorus::where (*cf); for (size_t i = 0; i < sp.size(); ++i) std::cout << (i ? "," : "") << (double) sp[i].first / 48000.0 << ".." << (double) sp[i].second / 48000.0;
     }
     std::cout << "\n";
+    if (rf != nullptr && rf->found && net.ready())      // a room on a sound that shows other effects: is it still there with those taken out?
+    {
+        std::string what; const double s = dr::recheckRoomWithout (I, src, ef, lf, wf, mf, cf, net, net2.ready() ? &net2 : nullptr, {}, &what);
+        if (s >= 0) std::cout << "room without the other effects (" << what << "): sureness=" << s << " counts=" << I.prob.at ("reverb") << "\n";
+    }
     auto t1 = clk::now();
     if (only) { for (auto& [f, p] : I.prob) std::cout << f << "=" << p << " "; std::cout << "\n"; return 0; }
     const auto found0 = dr::estimate (I, src, cut, nullptr, rf, tf, ef, lf, wf, mf, cf);

@@ -1,6 +1,7 @@
 // What the room engine says about each sound of a list, for a study of its sureness: one JSON line per sound.
 //   build (from this folder): g++ -O2 -std=c++17 -pthread -o rsure rsure.cpp
-//   rsure ResourcesDir list.txt      (list: one WAV path per line; a tab and a number after the path: only the first so many seconds)
+//   rsure ResourcesDir list.txt [looks]      (list: one WAV path per line; a tab and a number after the path: only the first so many seconds;
+//                                         looks: which looks besides the sound as it is, "end", "mono" or "end,mono"; default "end")
 // Per sound: the engine's answer on the sound as it is and with 3 s of silence after it (the app's two looks): found,
 // the app's sureness, its evidence, and per band strength, decay time, evidence, width; plus how the model's answer is
 // spread (shares of the live cells under -3, -6, -12, -20 dB; the room part's share of the energy per third of the bands).
@@ -47,7 +48,7 @@ int main (int argc, char** argv)
     const std::string dir = argv[1]; dr::room::Net net, net2;
     { std::ifstream f (dir + "/room.bin", std::ios::binary); const std::vector<char> b ((std::istreambuf_iterator<char> (f)), {}); net.load (b.data(), b.size()); }
     { std::ifstream f (dir + "/room2.bin", std::ios::binary); if (f) { const std::vector<char> b ((std::istreambuf_iterator<char> (f)), {}); net2.load (b.data(), b.size()); } }
-    std::ifstream L (argv[2]); std::string p;
+    std::ifstream L (argv[2]); std::string p; const std::string looks = argc > 3 ? argv[3] : "end";
     while (std::getline (L, p))
     {
         if (p.empty()) continue;
@@ -55,8 +56,17 @@ int main (int argc, char** argv)
         dr::Stereo y; double sr = 0; if (! dr::readWav (p, y, sr)) { std::cerr << "cannot read " << p << "\n"; continue; }
         if (cut > 0 && (size_t) (cut * 48000.0) < y.size()) { y.l.resize ((size_t) (cut * 48000.0)); y.r.resize ((size_t) (cut * 48000.0)); }
         std::cout << "{\"path\": \"" << p << "\", \"cut\": " << cut << ", \"sec\": " << (double) y.size() / 48000.0 << ", "; look (y, net, net2.ready() ? &net2 : nullptr, "as");
-        dr::Stereo z = y; const size_t n = y.size() + (size_t) (3.0 * dr::SR);       // 3 s of silence after the sound, as the app's end look had it up to 0.4.4 z.l.resize (n, 0.0); z.r.resize (n, 0.0);
-        std::cout << ", "; look (z, net, net2.ready() ? &net2 : nullptr, "end"); std::cout << "}" << std::endl;
+        if (looks.find ("end") != std::string::npos)        // 3 s of silence after the sound, as the app's end look had it up to 0.4.4
+        {
+            dr::Stereo z = y; const size_t n = y.size() + (size_t) (3.0 * dr::SR); z.l.resize (n, 0.0); z.r.resize (n, 0.0);
+            std::cout << ", "; look (z, net, net2.ready() ? &net2 : nullptr, "end");
+        }
+        if (looks.find ("mono") != std::string::npos)       // left and right summed: what is left of the room when the two sides are one
+        {
+            dr::Stereo z = y; for (size_t i = 0; i < z.size(); ++i) z.l[i] = z.r[i] = 0.5 * (y.l[i] + y.r[i]);
+            std::cout << ", "; look (z, net, net2.ready() ? &net2 : nullptr, "mono");
+        }
+        std::cout << "}" << std::endl;
     }
     return 0;
 }

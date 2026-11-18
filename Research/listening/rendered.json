@@ -1,0 +1,248 @@
+[
+ {
+  "ex": {
+   "case": "rev_pedalboard_01",
+   "rank": 3,
+   "of": 40,
+   "title": "Computer speech through a classic studio-style reverb",
+   "second": "one of your recordings",
+   "wet": "medium reverb",
+   "drr": 4.954946963173644,
+   "s_out": 60.9057082179583,
+   "s_bold": 54.364111900653555,
+   "s_more": 44.30935646252054,
+   "s_onto": 68.62592118343417,
+   "rev_cut": 8.386968276649647,
+   "dir_cut": 2.9663460127987213
+  },
+  "files": {
+   "wet": "audio/ex01_a_wet.mp3",
+   "out": "audio/ex01_a_out.mp3",
+   "bold": "audio/ex01_a_bold.mp3",
+   "more": "audio/ex01_a_more.mp3",
+   "ref": "audio/ex01_a_ref.mp3",
+   "shorter": "audio/ex01_a_shorter.mp3",
+   "longer": "audio/ex01_a_longer.mp3",
+   "b_dry": "audio/ex01_b_dry.mp3",
+   "b_onto": "audio/ex01_b_onto.mp3",
+   "b_real": "audio/ex01_b_real.mp3",
+   "b_short": "audio/ex01_b_short.mp3",
+   "b_long": "audio/ex01_b_long.mp3"
+  },
+  "num": {
+   "found": true,
+   "true_t60": 1.804622963473371,
+   "true_kdb": -5.582665631692116,
+   "t60": 1.7155086680631677,
+   "t60_low": 1.9808727456985682,
+   "t60_high": 0.6824329204268559,
+   "kdb": -4.086734528850481,
+   "width": 0.6384937387610502
+  }
+ },
+ {
+  "ex": {
+   "case": "rev_calf_06",
+   "rank": 10,
+   "of": 40,
+   "title": "One of your recordings through a room and hall reverb plugin",
+   "second": "single notes (church organ)",
+   "wet": "heavy reverb (the reverb is louder than the sound itself)",
+   "drr": -7.397606931919267,
+   "s_out": 43.479264687234334,
+   "s_bold": 28.119973203155336,
+   "s_more": 54.07742202647017,
+   "s_onto": 54.08395605145038,
+   "rev_cut": 6.604609502752855,
+   "dir_cut": 5.846132938773325
+  },
+  "files": {
+   "wet": "audio/ex02_a_wet.mp3",
+   "out": "audio/ex02_a_out.mp3",
+   "bold": "audio/ex02_a_bold.mp3",
+   "more": "audio/ex02_a_more.mp3",
+   "ref": "audio/ex02_a_ref.mp3",
+   "shorter": "audio/ex02_a_shorter.mp3",
+   "longer": "audio/ex02_a_longer.mp3",
+   "b_dry": "audio/ex02_b_dry.mp3",
+   "b_onto": "audio/ex02_b_onto.mp3",
+   "b_real": "audio/ex02_b_real.mp3",
+   "b_short": "audio/ex02_b_short.mp3",
+   "b_long": "audio/ex02_b_long.mp3"
+  },
+  "num": {
+   "found": true,
+   "true_t60": 1.7664184575558435,
+   "true_kdb": 1.2016633198190556,
+   "t60": 1.7911752126507048,
+   "t60_low": 11.37711877718461,
+   "t60_high": 0.6780856423714933,
+   "kdb": 0.7105113064754458,
+   "width": 0.7176507240569951
+  }
+ },
+ {
+  "ex": {
+   "case": "rev_gverb_05",
+   "rank": 17,
+   "of": 40,
+   "title": "A full band (drums, bass, chords, melody) through an older algorithmic reverb",
+   "second": "one of your recordings",
+   "wet": "heavy reverb (the reverb is louder than the sound itself)",
+   "drr": -2.680959903326316,
+   "s_out": 25.285811806506466,
+   "s_bold": -19.236876093772672,
+   "s_more": 24.754875416485646,
+   "s_onto": 36.60340767903054,
+   "rev_cut": 7.201776641355266,
+   "dir_cut": 5.215331893396302
+  },
+  "files": {
+   "wet": "audio/ex03_a_wet.mp3",
+   "out": "audio/ex03_a_out.mp3",
+   "bold": "audio/ex03_a_bold.mp3",
+   "more": "audio/ex03_a_more.mp3",
+   "ref": "audio/ex03_a_ref.mp3",
+   "shorter": "audio/ex03_a_shorter.mp3",
+   "longer": "audio/ex03_a_longer.mp3",
+   "b_dry": "audio/ex03_b_dry.mp3",
+   "b_onto": "audio/ex03_b_onto.mp3",
+   "b_real": "audio/ex03_b_real.mp3",
+   "b_short": "audio/ex03_b_short.mp3",
+   "b_long": "audio/ex03_b_long.mp3"
+  },
+  "num": {
+   "found": true,
+   "true_t60": 0.7306891569028968,
+   "true_kdb": -7.26483366284553,
+   "t60": 0.9477948500813391,
+   "t60_low": 2.2132749453953946,
+   "t60_high": 0.5844295190682677,
+   "kdb": -0.7342819183971683,
+   "width": 0.5572388575512189
+  }
+ },
+ {
+  "ex": {
+   "case": "rev_room_small_07",
+   "rank": 24,
+   "of": 40,
+   "title": "A clarinet melody through a simulated small room",
+   "second": "noise bursts",
+   "wet": "medium reverb",
+   "drr": 7.5829726422153065,
+   "s_out": 18.249927351998974,
+   "s_bold": 16.027257543005803,
+   "s_more": 16.271119360437382,
+   "s_onto": 45.903788269194465,
+   "rev_cut": 1.2181115222174626,
+   "dir_cut": 1.0597175820722302
+  },
+  "files": {
+   "wet": "audio/ex04_a_wet.mp3",
+   "out": "audio/ex04_a_out.mp3",
+   "bold": "audio/ex04_a_bold.mp3",
+   "more": "audio/ex04_a_more.mp3",
+   "ref": "audio/ex04_a_ref.mp3",
+   "shorter": "audio/ex04_a_shorter.mp3",
+   "longer": "audio/ex04_a_longer.mp3",
+   "b_dry": "audio/ex04_b_dry.mp3",
+   "b_onto": "audio/ex04_b_onto.mp3",
+   "b_real": "audio/ex04_b_real.mp3",
+   "b_short": "audio/ex04_b_short.mp3",
+   "b_long": "audio/ex04_b_long.mp3"
+  },
+  "num": {
+   "found": true,
+   "true_t60": 0.31144796712636436,
+   "true_kdb": -7.213050177712477,
+   "t60": 0.41815806492757396,
+   "t60_low": 0.5509269775053935,
+   "t60_high": 0.5040767145403614,
+   "kdb": -11.512070049223588,
+   "width": 0.04924393253616503
+  }
+ },
+ {
+  "ex": {
+   "case": "rev_mda_ambience_00",
+   "rank": 31,
+   "of": 40,
+   "title": "Single notes (church organ) through a short ambience plugin",
+   "second": "a electric bass melody",
+   "wet": "medium reverb",
+   "drr": 6.9768380095144575,
+   "s_out": 8.89890958678512,
+   "s_bold": 3.4188907533022395,
+   "s_more": 14.490257225346648,
+   "s_onto": 5.984279493247213,
+   "rev_cut": 0.6297155615432858,
+   "dir_cut": 0.6037980160788716
+  },
+  "files": {
+   "wet": "audio/ex05_a_wet.mp3",
+   "out": "audio/ex05_a_out.mp3",
+   "bold": "audio/ex05_a_bold.mp3",
+   "more": "audio/ex05_a_more.mp3",
+   "ref": "audio/ex05_a_ref.mp3",
+   "shorter": "audio/ex05_a_shorter.mp3",
+   "longer": "audio/ex05_a_longer.mp3",
+   "b_dry": "audio/ex05_b_dry.mp3",
+   "b_onto": "audio/ex05_b_onto.mp3",
+   "b_real": "audio/ex05_b_real.mp3",
+   "b_short": "audio/ex05_b_short.mp3",
+   "b_long": "audio/ex05_b_long.mp3"
+  },
+  "num": {
+   "found": true,
+   "true_t60": 0.43301366285539356,
+   "true_kdb": -8.879114094622844,
+   "t60": 0.46832284748730796,
+   "t60_low": 0.3702000199662717,
+   "t60_high": 0.5046661226180659,
+   "kdb": -14.45481606346183,
+   "width": 0.0041795691408512275
+  }
+ },
+ {
+  "ex": {
+   "case": "rev_swh_plate_00",
+   "rank": 38,
+   "of": 40,
+   "title": "A saw lead melody through a plate reverb plugin",
+   "second": "a bass loop",
+   "wet": "light reverb",
+   "drr": 12.734270817033448,
+   "s_out": -15.538628328193616,
+   "s_bold": -95.29314962959799,
+   "s_more": -2.7061465310170174,
+   "s_onto": -17.529950347372704,
+   "rev_cut": 1.5451637061697123,
+   "dir_cut": 1.3627985412337627
+  },
+  "files": {
+   "wet": "audio/ex06_a_wet.mp3",
+   "out": "audio/ex06_a_out.mp3",
+   "bold": "audio/ex06_a_bold.mp3",
+   "more": "audio/ex06_a_more.mp3",
+   "ref": "audio/ex06_a_ref.mp3",
+   "shorter": "audio/ex06_a_shorter.mp3",
+   "longer": "audio/ex06_a_longer.mp3",
+   "b_dry": "audio/ex06_b_dry.mp3",
+   "b_onto": "audio/ex06_b_onto.mp3",
+   "b_real": "audio/ex06_b_real.mp3",
+   "b_short": "audio/ex06_b_short.mp3",
+   "b_long": "audio/ex06_b_long.mp3"
+  },
+  "num": {
+   "found": true,
+   "true_t60": 0.20365025511392365,
+   "true_kdb": -12.120122398016996,
+   "t60": 0.17567758714901108,
+   "t60_low": 0.22764141825272333,
+   "t60_high": 0.17567758714901108,
+   "kdb": -0.06420641439136388,
+   "width": 0.01249917285310147
+  }
+ }
+]

@@ -1,7 +1,7 @@
 # Memory check of the app's whole processing (drrender built with -fsanitize=address,undefined): every engine's group on
 # short and long first sounds, alone and with a second sound that is shorter, as long and longer, the faders in the middle
 # and at both ends.
-#   python3 memcheck.py [jobs] [rest]         writes /dev/shm/mc/<name>.log, prints one line per run
+#   python3 memcheck.py [jobs] [rest|room]    writes /dev/shm/mc/<name>.log, prints one line per run
 import sys, os, json, subprocess, numpy as np, soundfile as sf
 from concurrent.futures import ThreadPoolExecutor
 sys.path[:0] = ['/tmp/claude-0/v2/sweep']; from lab import load
@@ -33,5 +33,8 @@ if 'rest' in sys.argv:           # the effect types without an engine of their o
     import glob
     rest = [(fam + '6', w(fam + '6', load(sorted(glob.glob(SETS + fam + '/*/'))[0], 'A')['wet'])) for fam in ('reverb', 'tone', 'distortion', 'bitcrush', 'ringmod', 'stutter', 'exciter', 'saturation', 'filter')]
     jobs = [(n, p, None) for n, p in rest] + [(n + '_s5', p, 5) for n, p in rest]
+if 'room' in sys.argv:           # sounds on which a room is found next to other effects, so that the look without those effects runs (Estimate.h, recheckRoomWithout): one for each combination of groups taken out
+    W = '/tmp/claude-0/v2/roomsure/wav/nw/'; seconds = [seconds[0], seconds[2]]; sets = [sets[0], sets[3], sets[4]]
+    jobs = [('room_' + n.replace('__', '_'), W + n + '.wav', None) for n in 'fxr__pan_mda__01 fx__cho_tap__03 fx__cho_pedalboard__03 rev__rev_dragonfly_hall__09 fxr__pan_sox__00 fxr__swp_pb_bandpass__00 fx__fil_sox__04 fx__swp_mda__03 fxr__cho_tap__01 fxr__gat_ffmpeg_keyed__00 fxr__haas_calf_stereotools__01 fx__haas_ffmpeg__04 fxr__haas_ffmpeg__02 fx__pha_calf__06 fx__rng_swh__08'.split()]
 with ThreadPoolExecutor(int(sys.argv[1]) if len(sys.argv) > 1 else 3) as ex:
     for line in ex.map(one, jobs): print(line, flush=True)

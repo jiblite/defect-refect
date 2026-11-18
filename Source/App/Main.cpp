@@ -680,12 +680,6 @@ private:
                              if (generation.load() != gen) return;
                              if (e != nullptr) { dr::mergeEcho (I, *e); *echoOut = e; } else I.prob["delay"] = dr::echo::sureNone;
                          }
-                         if (*echoOut != nullptr && *roomOut != nullptr && RN != nullptr && RN->ready())     // a room on a sound with echoes: is it still there without them?
-                         {
-                             try { dr::recheckRoom (I, *src, **echoOut, *RN, RN2 != nullptr && RN2->ready() ? RN2.get() : nullptr, [this, gen] { return generation.load() != gen; }); }
-                             catch (const std::exception&) {}
-                             if (generation.load() != gen) return;
-                         }
                          {       // the level engine: a gain that moves and repeats (its verdict replaces the detectors' about tremolo, auto pan and gated rhythm)
                              const std::shared_ptr<dr::level::Movement> m = levelJob.get();
                              if (generation.load() != gen) return;
@@ -705,6 +699,12 @@ private:
                              const std::shared_ptr<dr::chorus::Found> f = chorusJob.get();
                              if (generation.load() != gen) return;
                              if (f != nullptr) { dr::mergeChorus (I, *f, sweepOut->get()); *chorusOut = f; }
+                         }
+                         if (*roomOut != nullptr && (*roomOut)->found && RN != nullptr && RN->ready())      // a room on a sound that shows other effects: is it still there with those taken out?
+                         {
+                             try { dr::recheckRoomWithout (I, *src, *echoOut, *levelOut, *sweepOut, *movingOut, *chorusOut, *RN, RN2 != nullptr && RN2->ready() ? RN2.get() : nullptr, [this, gen] { return generation.load() != gen; }); }
+                             catch (const std::exception&) {}
+                             if (generation.load() != gen) return;
                          }
                          *out = dr::estimate (I, *src, c, nullptr, *roomOut, *toneOut, *echoOut, *levelOut, *sweepOut, *movingOut, *chorusOut); *insp = I;
                      },

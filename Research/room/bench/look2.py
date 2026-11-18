@@ -13,7 +13,7 @@ def load(name, tag):
     for r in rows:
         j = out.get((os.path.basename(r['path']), int(r.get('cut', 0))))
         if j is None: continue
-        r['j'] = j; r['v_as'] = j['as']['sure'] if j['as']['found'] else 0.09; r['v'] = min(j['as']['sure'], j['end']['sure']) if j['as']['found'] else 0.09; r['v_end'] = j['end']['sure'] if j['end']['found'] else 0.09
+        r['j'] = j; e = j.get('end', j['as']); r['v_as'] = j['as']['sure'] if j['as']['found'] else 0.09; r['v'] = min(j['as']['sure'], e['sure']) if j['as']['found'] else 0.09; r['v_end'] = e['sure'] if e['found'] else 0.09      # (a run without the look with silence: that look = the first)
     return [r for r in rows if 'j' in r]
 def groups(nw, sb):
     G = collections.OrderedDict()
