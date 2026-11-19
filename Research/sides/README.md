@@ -39,6 +39,15 @@ left * b = right * a.
 What the two sides hold beyond a * x and b * x is measured per piece of 5 ms. That says where along the sound
 the effect is, how much of the sound it explains, and which way round is the better one.
 
+**The end of the file.** That formula takes the silence after the last sample for something both sides said.
+Where a tap reaches beyond the end (the sound through a late tap is never heard there) it gets x too small: with
+one side 15 ms late, the last 15 ms at about half. Those pieces then did not obey, the Amount fader left them
+alone, and the sound taken out ended on 15 ms with the late side still in place (on one scoreboard case the room
+engine read a room into that). So x over the last samples is the least-squares fit to what is in the file, the
+samples before them kept (conjugate gradients; one tap a side: two steps), and a side that is moved in time is
+made from x itself. On that case the sides of the sound taken out now differ by -107 dB (before: -57 dB, all of
+it in the last 15 ms).
+
 **The rule.** A pair counts when it has at most 8 taps, reaches at least 1.25 ms, makes a side worth speaking of
 (-20 dB or more of white noise), is obeyed by half of the sound's energy or more, leaves at most -20 dB
 unexplained there, and explains at least 10 dB more than one sound at two levels would (a sound simply panned
@@ -61,7 +70,7 @@ at its sides before is then gone for good.
 
 | effect | found | taken out (median) | best possible |
 |---|---|---|---|
-| haas, four tools | 56 of 56 | 99.4, 99.3, 56.7, 59.4 | 100.0, 99.4, 56.7, 60.0 |
+| haas, four tools | 56 of 56 | 100.0, 99.3, 56.7, 59.5 | 100.0, 99.4, 56.7, 60.0 |
 | width, a copy later on the sides | 14 of 14 | 53.3 | 53.3 |
 | width, a comb between the sides | 13 of 14 | 87.1 | 100.0 |
 | width, the middle through all-pass filters | 10 of 14 | 88.9 | 97.4 |
@@ -73,16 +82,17 @@ rule on the found pairs: taps at most 6 (limit 8), reach at least 110 samples (6
 (-10). Found copies: share at least 0.92 (0.9), side at least -12.2 dB (-15).
 
 **False finds** (`st5.py clean`, `st5.py fams`): on the 198 clean clips (124 with anything at their sides) no
-HAAS and no WIDTH, and none comes within one criterion of the rule (the nearest fails two). On the 400 sounds
+HAAS and no WIDTH. One clip fails a single criterion, and that by far: its pair reaches 2 samples where the rule
+asks for 60 (a difference in tone between the sides); every other clip fails two or more. On the 400 sounds
 of the scoreboard's 18 families: none outside the two stereo families (384 sounds), all 16 HAAS sounds as HAAS,
 12 of the 16 WIDTH sounds as WIDTH (the 4 others are the side simply made louder).
 
 **Scoreboard with the app's code** (`bench/famboard.py`, 8 cases a family; before = build 0.4.6):
 
-| family | found | taken out, median | onto a second sound, median | made worse |
+| family | found | taken out, median | onto a second sound, median | worse than doing nothing |
 |---|---|---|---|---|
-| haas | 8 of 8 (before 6) | 98 (before 33) | 31 (before 16) | 0 of 8 |
-| width | 6 of 8 (before 5) | 77 (before 11) | 45 (before -17) | 0 of 8 (before 4) |
+| haas | 8 of 8 (before 6) | 98 (before 33) | 31 (before 17) | 0 of 8 |
+| width | 6 of 8 (before 5) | 77 (before 11) | 45 (before -17) | 0 of 8 (before 5) |
 
 "Onto a second sound" is scored against the outside tool's own output, and most of these tools fold the second
 sound to mono first. The app does not: each side goes through its own filter and a sound that is wide already
@@ -100,3 +110,5 @@ minutes: the pair is looked for in the 4 minutes with the most energy and checke
 - The dry sound's own stereo, where a tool folded it away, cannot come back: removal gives the one sound behind
   both sides, in the middle.
 - A pair holds for the whole sound: a delay that changes along the sound is not followed.
+- In a file cut from the middle of something longer, the late side begins with sound from before the cut, which
+  nothing in the file explains: those first milliseconds (the delay's length) stay as they are.

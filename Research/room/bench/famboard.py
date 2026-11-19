@@ -8,6 +8,9 @@
 #   out_all    one sound: every shown group at Amount far left
 #   onto       two sounds: only the family's group put on dry B                          (100 = B through the real effect, 0 = dry B)
 #   onto_all   two sounds: everything the app shows put on dry B (what a user gets by default)
+# A STUTTER group at far left closes the sound up (what the repeats covered is gone), and these scores compare at the same
+# times: where that group is shown, out and out_all are not scored (null; the measured numbers are kept as out_measured and
+# out_all_measured). Research/stutter/so1.py scores the far left against the dry sound with the covered parts cut out.
 import sys, os, json, subprocess, tempfile, re
 import numpy as np, soundfile as sf
 HERE = os.path.dirname(os.path.abspath(__file__)); sys.path.insert(0, HERE); sys.path.insert(0, os.path.join(HERE, '..', 'proto'))
@@ -26,7 +29,7 @@ def show(path):
               st([r['onto'] for r in rs]), st([r['onto_all'] for r in rs]), np.mean([len(r['others']) for r in rs])))
         for k in tot: tot[k] += [r[k] for r in rs]
     print('%-12s %2d  %2d/%-2d  %-23s %-23s %-23s %-23s' % ('all', len(rows), sum(r['found'] for r in rows), len(rows), st(tot['out']), st(tot['out_all']), st(tot['onto']), st(tot['onto_all'])))
-    print('columns: median, mean, share of cases made worse than doing nothing, (cases). A case where the group is not shown counts as 0 (nothing done).')
+    print('columns: median, mean, share of cases made worse than doing nothing, (cases). A case where the group is not shown counts as 0 (nothing done); the far left of a STUTTER group is not scored (it closes the sound up).')
 
 if len(sys.argv) > 1 and sys.argv[1] == '--show': show(sys.argv[2] if len(sys.argv) > 2 else os.path.join(HERE, 'famboard.jsonl')); sys.exit(0)
 import truth, score
@@ -61,6 +64,10 @@ for fam in sorted(os.listdir(SETS)):
         row['out_all'] = score.removed(cA['dry'], cA['wet'], rd(po[1], nA))[0] if g else 0.0
         row['onto_all'] = score.removed(cB['wet'], cB['dry'], rd(po[2], nB))[0] if g else 0.0
         row['onto'] = score.removed(cB['wet'], cB['dry'], rd(po[3], nB))[0] if found else 0.0
+        if 'stutter' in g:
+            row['out_all_measured'] = row['out_all']; row['out_all'] = None
+            if fam == 'stutter': row['out_measured'] = row['out']; row['out'] = None
         open(OUT, 'a').write(json.dumps(row) + '\n')
-        print('%-12s %-26s found %d (p %s) out %6.1f out_all %6.1f onto %6.1f onto_all %6.1f others %s' % (fam, name, found, '%.2f' % g[fam] if found else '-', row['out'], row['out_all'], row['onto'], row['onto_all'], ' '.join(others)), flush=True)
+        num = lambda v: '   n/a' if v is None else '%6.1f' % v
+        print('%-12s %-26s found %d (p %s) out %s out_all %s onto %6.1f onto_all %6.1f others %s' % (fam, name, found, '%.2f' % g[fam] if found else '-', num(row['out']), num(row['out_all']), row['onto'], row['onto_all'], ' '.join(others)), flush=True)
 show(OUT)

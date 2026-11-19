@@ -32,7 +32,7 @@ inline bool readWav (const std::string& path, Stereo& out, double& sr)
                     else if (bits == 16) { int16_t x; std::memcpy (&x, s, 2); v = x / 32768.0; }
                     else if (bits == 24) { int32_t x = (s[0] << 8) | (s[1] << 16) | (s[2] << 24); v = (x >> 8) / 8388608.0; }
                     else if (bits == 32) { int32_t x; std::memcpy (&x, s, 4); v = x / 2147483648.0; }
-                    (c == 0 ? out.l : out.r)[i] = v;
+                    (c == 0 ? out.l : out.r)[i] = std::isfinite (v) ? v : 0.0;       // as the app's loader: a value that is not a number counts as silence
                 }
             if (ch == 1) out.r = out.l;
             return true;

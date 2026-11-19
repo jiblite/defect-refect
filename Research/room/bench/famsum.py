@@ -1,4 +1,5 @@
 # The scoreboard's summary lines (the table in the top-level README) from famboard result files.
+# Cases whose far left is not scored (a STUTTER group shown: out, out_all null) are left out of the far-left lines.
 #   python3 famsum.py a.jsonl [b.jsonl ...]
 import sys, json, numpy as np
 def load(p): return [json.loads(l) for l in open(p)]
@@ -7,7 +8,7 @@ def summ(rows):
     def worse(k): v = np.array([r[k] for r in rows if r[k] is not None], float); return 100 * (v < 0).mean()
     return dict(n=len(rows), own=sum(bool(r['found']) for r in rows), reverb=sum('reverb' in r['others'] for r in oth), rest=sum(len([o for o in r['others'] if o != 'reverb']) for r in rows),
                 none=sum(len(r['others']) == 0 for r in rows), own_worse=worse('out'), all_worse=worse('out_all'), onto_worse=worse('onto_all'), onto_own_worse=worse('onto'),
-                out_med=float(np.median([r['out'] for r in rows])), out_mean=float(np.mean([r['out'] for r in rows])), onto_med=float(np.median([r['onto'] for r in rows])), onto_mean=float(np.mean([r['onto'] for r in rows])))
+                out_med=float(np.median([r['out'] for r in rows if r['out'] is not None])), out_mean=float(np.mean([r['out'] for r in rows if r['out'] is not None])), onto_med=float(np.median([r['onto'] for r in rows])), onto_mean=float(np.mean([r['onto'] for r in rows])))
 if __name__ == '__main__':
     S = {}
     for p in sys.argv[1:]:

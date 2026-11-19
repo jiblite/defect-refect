@@ -205,10 +205,41 @@ def sparse_conv(x, v):
     out = np.zeros(len(x))
     for i in np.where(v != 0)[0]: out[i:] += v[i] * x[:len(x) - i]
     return out
+def the_end(y, a, b, x, lam):
+    """The end of the file. The formula of the_one_sound takes the silence after the last sample for something the two
+    sides said, and where a tap reaches beyond the end (x through a late tap is never heard there) it gets x too small:
+    with one side 15 ms late, the last 15 ms of x at about half. There x is the one that explains best what is in the
+    file, with the formula's own small weight lam on x itself and everything before those samples kept: least squares
+    on the last samples by conjugate gradients (one tap a side: two steps)."""
+    n = len(y); ia = np.where(a != 0)[0]; ib = np.where(b != 0)[0]; reach = int(max(ia.max() if len(ia) else 0, ib.max() if len(ib) else 0))
+    if reach == 0 or n < 2: return x
+    M = min(n, 4 * reach + 480); T0 = n - M; x = x.copy(); res = []
+    for v, idx, side in ((a, ia, y[:, 0]), (b, ib, y[:, 1])):
+        r = side[T0:].copy()
+        for lag in idx:
+            k = min(M, int(lag)); u0 = T0 - int(lag); i0 = max(0, -u0)          # r[i] -= v x[T0 + i - lag] for i < lag, where that sample is in the file
+            if k > i0: r[i0:k] -= v[lag] * x[u0 + i0:u0 + k]
+        res.append(r)
+    def fwd(v, idx, z):
+        o = np.zeros(M)
+        for lag in idx: o[lag:] += v[lag] * z[:M - lag]
+        return o
+    def adj(v, idx, r, o):
+        for lag in idx: o[:M - lag] += v[lag] * r[lag:]
+    def op(z):
+        o = lam * z; adj(a, ia, fwd(a, ia, z), o); adj(b, ib, fwd(b, ib, z), o); return o
+    rhs = np.zeros(M); adj(a, ia, res[0], rhs); adj(b, ib, res[1], rhs); z = x[T0:].copy(); r = rhs - op(z); rs = float(r @ r); bb = float(rhs @ rhs); d = r.copy()
+    for _ in range(400):
+        if not (rs > 1e-26 * bb and rs > 0.0): break
+        q = op(d); dq = float(d @ q)
+        if not dq > 0.0: break
+        al = rs / dq; z += al * d; r -= al * q; rs2 = float(r @ r); d = r + (rs2 / rs) * d; rs = rs2
+    x[T0:] = z; return x
 def the_one_sound(y, a, b, eps=1e-4):
-    """The one sound behind both sides: X = (A* L + B* R) / (|A|^2 + |B|^2). With left = a * x, right = b * x it is x itself."""
+    """The one sound behind both sides: X = (A* L + B* R) / (|A|^2 + |B|^2). With left = a * x, right = b * x it is x itself
+    (the file's last samples: see the_end)."""
     A = np.fft.rfft(a, NF); B = np.fft.rfft(b, NF); D = np.abs(A) ** 2 + np.abs(B) ** 2; W = 1.0 / (D + eps * float(D.max()))
-    return filtered([y[:, 0], y[:, 1]], [np.conj(A) * W, np.conj(B) * W])
+    return the_end(y, a, b, filtered([y[:, 0], y[:, 1]], [np.conj(A) * W, np.conj(B) * W]), eps * float(D.max()))
 def pieces(p, u, thr, close=50, least=4, strict=False):
     """Per piece of 5 ms: p its power, u what is unexplained of it. A piece obeys when u <= thr * p. Spans: runs of such
     pieces, holes of up to `close` pieces (quiet or not obeying) closed, runs under `least` pieces dropped.
@@ -352,6 +383,12 @@ def pair_at(a, b, s, c):
         else: w[0] = v[0]
         o.append(w)
     return ('taps',) + tuple(o)
+def moved_conv(x, v, d):
+    """x through the taps v, each of them moved by d samples (any fraction): made from x itself and not by moving x
+    through the taps, which has lost at the file's end what a side that comes nearer needs there."""
+    out = np.zeros(len(x))
+    for i in np.where(v != 0)[0]: out += v[i] * shift(x, float(i) + d)
+    return out
 def level_of(a, b): return float(np.sqrt(0.5 * ((a ** 2).sum() + (b ** 2).sum())))
 def own(y, f, s):
     """The sound itself with the group's Amount at s: 0 = the effect out, 1 = untouched, 2 = twice."""
@@ -361,7 +398,7 @@ def own(y, f, s):
         c = (1.0 - s) * g * f['copy_check']['copy']; return np.stack([y[:, 0] - c, y[:, 1] + c], 1)
     a, b = f['pair']['a'], f['pair']['b']; x = f['pair_check']['x']; kind, pa, pb = pair_at(a, b, s, level_of(a, b)); out = y.copy()
     for ch, (v, pv) in enumerate(((a, pa), (b, pb))):
-        was = sparse_conv(x, v); out[:, ch] += g * ((pv[0] * shift(was, pv[1]) if kind == 'warp' else sparse_conv(x, pv)) - was)
+        was = sparse_conv(x, v); out[:, ch] += g * ((pv[0] * moved_conv(x, v, pv[1]) if kind == 'warp' else sparse_conv(x, pv)) - was)
     return out
 def onto(z, f, s):
     """The found effect on another sound: 0 = none, 1 = as found, 2 = twice. Each side goes through its own filter (a
@@ -370,5 +407,5 @@ def onto(z, f, s):
     if f['mode'] == 'copy':
         m = 0.5 * (z[:, 0] + z[:, 1]); c = s * conv_centered(m, f['copy']['h']); return np.stack([z[:, 0] + c, z[:, 1] - c], 1)
     a, b = f['pair']['a'], f['pair']['b']; c = level_of(a, b); kind, pa, pb = pair_at(a / c, b / c, s, 1.0)
-    if kind == 'warp': return np.stack([pv[0] * shift(sparse_conv(z[:, ch], v / c), pv[1]) for ch, (v, pv) in enumerate(((a, pa), (b, pb)))], 1)
+    if kind == 'warp': return np.stack([pv[0] * moved_conv(z[:, ch], v / c, pv[1]) for ch, (v, pv) in enumerate(((a, pa), (b, pb)))], 1)
     return np.stack([sparse_conv(z[:, 0], pa), sparse_conv(z[:, 1], pb)], 1)

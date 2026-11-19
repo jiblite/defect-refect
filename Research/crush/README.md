@@ -76,6 +76,10 @@ which the crushed sound does not tell: grid and hold are exact and the result st
 **Wrong finds** (`nf2.py`): none on the 198 clean clips, none on the 384 scoreboard sounds of the other
 families; 14 of the 16 sounds of the BITCRUSH family found (the two missing: the crusher with a filter after it).
 
+**Ordinary files** (`pcm16.py`): every clean clip saved as a 16-bit file (plain rounding, with dither, and 30 dB
+quieter) and as a 24-bit file, four forms of 198 clips: no crusher on any of them. A file's own word length is
+a grid of 16 bits or finer against full scale, and a grid counts from 13 bits.
+
 **Scoreboard** (8 pairs, through the app's render test): found 7 of 8. Onto a second sound 91 in the middle case
 (99.8 and 99.4, 86.0 and 100.0, 88.4 and 93.1 for outside 3, 1 and 2; 47.0 and not found for outside 4). Taken
 out: 99.6 and 92.7 for outside 3, the others cannot be. Before the engine: found 7 of 8 by the detector, nothing
@@ -95,8 +99,11 @@ are off the grid) and carries the grid and the hold's length in time over: one c
   sound does not tell. The nearest value and the sample at the boundary are taken.
 - A **bare crusher cannot be taken out**.
 - A crush under another effect is not found: the values are off the grid.
+- A **16-bit file made louder by 18 dB or more** and kept as it is (no dither, nothing else done to it) sits on
+  a grid of 13 bits or coarser against full scale, and is read as a light crusher.
 
 ## Files
 `crush.py` the prototype. `bf7.py` fresh cases (made by `fc7.py`), `bc2.py` the scoreboard pairs (prototype),
-`nf1.py` / `nf2.py` wrong finds (prototype / the app's code), `r44t.py` other sample rates; `fc7.py`, `nf1.py`, `nf2.py` and
-`r44t.py` are in `Research/stutter` (they serve both engines), `st_common.py` in `Research/sides`.
+`nf1.py` / `nf2.py` wrong finds (prototype / the app's code), `pcm16.py` ordinary 16-bit and 24-bit files,
+`r44t.py` other sample rates; `fc7.py`, `nf1.py`, `nf2.py`, `pcm16.py` and `r44t.py` are in `Research/stutter` (they
+serve both engines), `st_common.py` in `Research/sides`.

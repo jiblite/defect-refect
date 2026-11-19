@@ -336,7 +336,7 @@ inline Fit robust (const Sums& U, const std::vector<int>& idx, const std::vector
         {
             if (! k[(size_t) q]) continue;
             yy += U.y[(size_t) q]; for (int i = 0; i < m; ++i) b[(size_t) i] += bs[(size_t) q * m + i];
-            const double* a = &As[(size_t) q * m * m]; for (int i = 0; i < m * m; ++i) A[(size_t) i] += a[i];
+            const double* a = As.data() + (size_t) q * m * m; for (int i = 0; i < m * m; ++i) A[(size_t) i] += a[i];
         }
         double res = 0.0; solve (A, b, yy, m, Ai, w, res); return std::max (res, 0.0) / std::max (yy, 1e-30);
     };
@@ -344,7 +344,7 @@ inline Fit robust (const Sums& U, const std::vector<int>& idx, const std::vector
     {
         for (int q = 0; q < nb; ++q)
         {
-            double lin = 0.0, quad = 0.0; const double* a = m > 0 ? &As[(size_t) q * m * m] : nullptr;
+            double lin = 0.0, quad = 0.0; const double* a = As.data() + (size_t) q * m * m;
             for (int i = 0; i < m; ++i) { lin += bs[(size_t) q * m + i] * w[(size_t) i]; double s = 0.0; for (int j = 0; j < m; ++j) s += a[i * m + j] * w[(size_t) j]; quad += w[(size_t) i] * s; }
             rel[(size_t) q] = (U.y[(size_t) q] - 2.0 * lin + quad) / std::max (U.y[(size_t) q], 1e-9 * ymax);
         }
@@ -451,7 +451,43 @@ inline Vec sparseConv (const std::vector<float>& x, const Taps& v)
     return out;
 }
 inline Taps tapsOf (const Vec& v) { Taps t; for (size_t i = 0; i < v.size(); ++i) if (v[i] != 0.0) t.push_back ({ (int) i, v[i] }); return t; }
-// The one sound behind both sides: X = (A* L + B* R) / (|A|^2 + |B|^2). With left = a * x, right = b * x it is x itself.
+// The end of the file. The formula below takes the silence after the last sample for something the two sides said, and
+// where a tap reaches beyond the end (x through a late tap is never heard there) it gets x too small: with one side
+// 15 ms late, the last 15 ms of x at about half. There x is the one that explains best what is in the file, with the
+// formula's own small weight lam on x itself and everything before those samples kept: least squares on the last
+// samples by conjugate gradients (one tap a side: two steps).
+inline void theEnd (const Stereo& y, const Taps& a, const Taps& b, Vec& x, double lam)
+{
+    const long n = (long) y.size(); int reach = 0; for (const Tap& t : a) reach = std::max (reach, t.lag); for (const Tap& t : b) reach = std::max (reach, t.lag);
+    if (reach == 0 || n < 2 || (long) x.size() != n) return;
+    const long M = std::min (n, 4L * reach + 480), T0 = n - M;       // the unknowns: x[T0 .. n)
+    Vec rl ((size_t) M), rr ((size_t) M);                          // what the file holds there beyond what the samples before T0 put into it
+    for (int ch = 0; ch < 2; ++ch)
+    {
+        const Taps& v = ch == 0 ? a : b; const Vec& side = ch == 0 ? y.l : y.r; Vec& r = ch == 0 ? rl : rr;
+        for (long i = 0; i < M; ++i) r[(size_t) i] = side[(size_t) (T0 + i)];
+        for (const Tap& t : v) for (long i = 0; i < std::min (M, (long) t.lag); ++i) { const long u = T0 + i - t.lag; if (u >= 0) r[(size_t) i] -= t.v * x[(size_t) u]; }
+    }
+    auto fwd = [&] (const Taps& v, const Vec& z, Vec& o) { std::fill (o.begin(), o.end(), 0.0); for (const Tap& t : v) for (long i = t.lag; i < M; ++i) o[(size_t) i] += t.v * z[(size_t) (i - t.lag)]; };
+    auto adj = [&] (const Taps& v, const Vec& r, Vec& o) { for (const Tap& t : v) for (long i = t.lag; i < M; ++i) o[(size_t) (i - t.lag)] += t.v * r[(size_t) i]; };
+    Vec tmp ((size_t) M), q ((size_t) M);
+    auto op = [&] (const Vec& z, Vec& o) { for (long i = 0; i < M; ++i) o[(size_t) i] = lam * z[(size_t) i]; fwd (a, z, tmp); adj (a, tmp, o); fwd (b, z, tmp); adj (b, tmp, o); };
+    Vec rhs ((size_t) M, 0.0), z ((size_t) M), r ((size_t) M), d; adj (a, rl, rhs); adj (b, rr, rhs);
+    for (long i = 0; i < M; ++i) z[(size_t) i] = x[(size_t) (T0 + i)];
+    op (z, q); double rs = 0.0, bb = 0.0; for (long i = 0; i < M; ++i) { r[(size_t) i] = rhs[(size_t) i] - q[(size_t) i]; rs += r[(size_t) i] * r[(size_t) i]; bb += rhs[(size_t) i] * rhs[(size_t) i]; }
+    d = r;
+    for (int it = 0; it < 400 && rs > 1e-26 * bb && rs > 0.0; ++it)
+    {
+        op (d, q); double dq = 0.0; for (long i = 0; i < M; ++i) dq += d[(size_t) i] * q[(size_t) i];
+        if (! (dq > 0.0)) break;
+        const double al = rs / dq; double rs2 = 0.0;
+        for (long i = 0; i < M; ++i) { z[(size_t) i] += al * d[(size_t) i]; r[(size_t) i] -= al * q[(size_t) i]; rs2 += r[(size_t) i] * r[(size_t) i]; }
+        const double be = rs2 / rs; rs = rs2; for (long i = 0; i < M; ++i) d[(size_t) i] = r[(size_t) i] + be * d[(size_t) i];
+    }
+    for (long i = 0; i < M; ++i) x[(size_t) (T0 + i)] = z[(size_t) i];
+}
+// The one sound behind both sides: X = (A* L + B* R) / (|A|^2 + |B|^2). With left = a * x, right = b * x it is x itself
+// (the file's last samples: see theEnd).
 inline bool theOneSound (Work& W, const Stereo& y, const Taps& a, const Taps& b, Vec& x, const Stop& stop, double eps = 1e-4)
 {
     Spec A, B, H0, H1; W.clear(); for (const Tap& t : a) W.re[(size_t) t.lag] = t.v; for (const Tap& t : b) W.im[(size_t) t.lag] = t.v; W.spectra (A, B);
@@ -459,7 +495,8 @@ inline bool theOneSound (Work& W, const Stereo& y, const Taps& a, const Taps& b,
     for (int k = 0; k <= H; ++k) { const size_t c = (size_t) k; D[c] = A.re[c] * A.re[c] + A.im[c] * A.im[c] + B.re[c] * B.re[c] + B.im[c] * B.im[c]; top = std::max (top, D[c]); }
     H0.re.resize ((size_t) H + 1); H0.im.resize ((size_t) H + 1); H1.re.resize ((size_t) H + 1); H1.im.resize ((size_t) H + 1);
     for (int k = 0; k <= H; ++k) { const size_t c = (size_t) k; const double g = 1.0 / (D[c] + eps * top); H0.re[c] = A.re[c] * g; H0.im[c] = -A.im[c] * g; H1.re[c] = B.re[c] * g; H1.im[c] = -B.im[c] * g; }
-    return filtered (W, y.l.data(), y.r.data(), (long) y.size(), H0, H1, x, stop);
+    if (! filtered (W, y.l.data(), y.r.data(), (long) y.size(), H0, H1, x, stop)) return false;
+    theEnd (y, a, b, x, eps * top); return true;
 }
 // Per piece of 5 ms: p its power, u what is unexplained of it. A piece obeys when u <= thr * p. Spans: runs of such
 // pieces, holes of up to `close` pieces (quiet or not obeying) closed, runs under `least` pieces dropped.
@@ -750,6 +787,14 @@ inline At pairAt (const Taps& a, const Taps& b, double s, double c)
     }
     return R;
 }
+// x through the taps v, each of them moved by d samples (any fraction): made from x itself and not by moving x through
+// the taps, which has lost at the file's end what a side that comes nearer needs there.
+inline Vec movedConv (const Vec& x, const Taps& v, double d)
+{
+    Vec out (x.size(), 0.0);
+    for (const Tap& t : v) { if (t.v == 0.0) continue; const Vec m = shift (x, (double) t.lag + d); for (size_t i = 0; i < out.size(); ++i) out[i] += t.v * m[i]; }
+    return out;
+}
 inline double levelOf (const Taps& a, const Taps& b) { double e = 0.0; for (const Tap& t : a) e += t.v * t.v; for (const Tap& t : b) e += t.v * t.v; return std::sqrt (0.5 * e); }
 // The sound itself with the group's Amount at s: 0 = the effect out, 1 = untouched, 2 = twice.
 inline Stereo own (const Stereo& y, const Found& F, double s)
@@ -757,11 +802,11 @@ inline Stereo own (const Stereo& y, const Found& F, double s)
     if (F.mode == 0 || std::abs (s - 1.0) < 1e-12 || F.n != y.size() || F.x.size() != y.size()) return y;
     const long n = (long) y.size(); const Vec g = gate (F.spans, n); Stereo out = y;
     if (F.mode == COPY) { for (long i = 0; i < n; ++i) { const double c = (1.0 - s) * g[(size_t) i] * (double) F.x[(size_t) i]; out.l[(size_t) i] -= c; out.r[(size_t) i] += c; } return out; }
-    const At A = pairAt (F.a, F.b, s, levelOf (F.a, F.b));
+    const At A = pairAt (F.a, F.b, s, levelOf (F.a, F.b)); Vec x; if (A.warp) x.assign (F.x.begin(), F.x.end());
     for (int ch = 0; ch < 2; ++ch)
     {
         const Vec was = sparseConv (F.x, ch == 0 ? F.a : F.b); Vec& o = ch == 0 ? out.l : out.r;
-        if (A.warp) { const Vec now = shift (was, A.move[ch]); for (long i = 0; i < n; ++i) o[(size_t) i] += g[(size_t) i] * (A.factor[ch] * now[(size_t) i] - was[(size_t) i]); }
+        if (A.warp) { const Vec now = movedConv (x, ch == 0 ? F.a : F.b, A.move[ch]); for (long i = 0; i < n; ++i) o[(size_t) i] += g[(size_t) i] * (A.factor[ch] * now[(size_t) i] - was[(size_t) i]); }
         else { const Vec now = sparseConv (F.x, A.taps[ch]); for (long i = 0; i < n; ++i) o[(size_t) i] += g[(size_t) i] * (now[(size_t) i] - was[(size_t) i]); }
     }
     return out;
@@ -784,7 +829,7 @@ inline Stereo onto (const Stereo& z, const Found& F, double s)
     for (int ch = 0; ch < 2; ++ch)
     {
         const Vec& in = ch == 0 ? z.l : z.r; Vec& o = ch == 0 ? out.l : out.r;
-        if (A.warp) { o = shift (sparseConv (in, ch == 0 ? a : b), A.move[ch]); for (double& v : o) v *= A.factor[ch]; }
+        if (A.warp) { o = movedConv (in, ch == 0 ? a : b, A.move[ch]); for (double& v : o) v *= A.factor[ch]; }
         else o = sparseConv (in, A.taps[ch]);
     }
     return out;

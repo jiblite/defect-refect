@@ -276,6 +276,120 @@ candidates, some of which get worse when taken off). A gentle filter sweep (unde
 default. The model is small; a larger one is the next step. Method, numbers and limits:
 `Research/moving/README.md`.
 
+**Haas width and stereo width (new engine in 0.4.7):** both are done between the two sides of a sound. HAAS
+WIDTH: one side arrives later than the other (1.25 to 40 ms). STEREO WIDTH: a sound from the middle is made wide,
+by sending it to the two sides through two short filters that differ, or by putting a filtered copy of the middle
+at the sides. The engine looks for those filters themselves: the few taps with which one side is told from the
+other, fitted on the whole sound, both ways round. With the filters known, the one sound behind both sides can be
+worked out, and what the two sides hold beyond it says where along the sound the effect is. The groups work on
+that:
+- one sound: Amount takes the effect out or makes it stronger. A plain delay: the late side moves in time and the
+  levels come together, so no comb is heard on the way. Anything else: a straight line between the sound as found
+  and the one sound behind both sides;
+- two sounds: each side of the second sound goes through its own filter, so a second sound that is wide already
+  keeps what it has at its sides;
+- the display shows the taps of both sides (or the copy's filter), and says from when to when the effect is there.
+
+On the scoreboard's 16 cases (sounds of 6 s; build 0.4.6 in brackets): HAAS WIDTH is shown on 8 of 8 (6) and taken
+out at 98 of 100 in the median (33); STEREO WIDTH on 6 of 8 (5), taken out at 77 (11) and put onto the case's
+other sound at 45 (-17). None of the 16 is made worse, taken out or put on (0.4.6: five of the width cases went
+onto the other sound worse than nothing). HAAS WIDTH onto a second sound scores 31 in the median (17), and that
+number says little: the outside tools fold the second sound to mono before they work, the app does not, and the
+score counts the difference (the two cases with a mono second sound score 98 and 100, the six with a wide one 5
+to 75). On 112 fresh cases (eight outside effects on any clip of the corpus) all 56 Haas delays are
+found and come out as well as they can (a tool that folded the sound to mono has thrown its sides away for good),
+and 37 of the 42 wideners that can be read at all. No HAAS WIDTH and no STEREO WIDTH on the 198 clean clips, nor
+on the 384 scoreboard sounds of the other effects.
+
+Known limits: a side that was simply made louder is not found (nothing ties it to the middle: two of the
+scoreboard's eight width cases); an effect on less than half of the sound is not found; a delay that changes
+along the sound is not followed; in a file cut from the middle of something longer, the late side's first
+milliseconds stay as they are. Method, numbers and limits: `Research/sides/README.md`.
+
+**Ring modulation (new engine in 0.4.7):** a sound multiplied by a steady tone. Its loudness then rises and falls
+in the tone's cycle whatever the sound itself does, which shows as a line in the spectrum of the sound's power
+over time. The engine reads the tone's pitch (20 to 5000 Hz), its phase and how much plain sound is left beside
+it, and pins them down on the samples themselves: near the zeros of the gain to a thousandth of a sample. The
+RING MOD group works on that:
+- one sound: Amount takes the tone out (the sound divided by the gain; next to the gain's zeros, where a sample
+  says little, the sound's own course fills in) or deepens it; Carrier moves the tone's pitch, an octave each way;
+- two sounds: the second sound is multiplied by the same gain;
+- the display shows the gain over a few of the tone's cycles.
+
+On the scoreboard's eight cases (four outside tools): shown on 8 of 8, taken out at 100 of 100 in the median
+(seven at 99.6 or more, one at 79.5) and put onto the other sound at 98.5 to 100 (0.4.6: shown on 8 by the
+detector, taken out 0, put on at 16). On 80 fresh cases, and on every clip of the corpus with a tone put on twice
+(396 cases), it is found on all but one, the pitch off by 0.0014 Hz at most, and taken out at 99.9 in the median
+(least 79). None on the 198 clean clips, none on the 384 scoreboard sounds of the other effects.
+
+Known limits: where more plain sound is left than tone part (the gain never reaches zero) that share is measured
+less exactly (taken out at 98.7 in the median, least 79); a pure ring modulation may come out with its sign
+turned, since which half of the cycle is "up" cannot be known; a tone on a part of the sound is not found, a tone
+whose pitch moves is not followed, and a tone under an echo or a reverb is found about half the time. Method,
+numbers and limits: `Research/ring/README.md`.
+
+**Bitcrush (new engine in 0.4.7):** a crusher rounds the samples to a grid of values (fewer bits) and holds each
+value for several samples (a lower sample rate). Both can be read off the sound exactly: the grid shows as spikes
+a step apart in the distribution of the sample values, the hold in the places where the sound changes at all. The
+engine reads each side's step and offset and the hold (also one that is not a whole number of samples), and the
+BITCRUSH group works on them:
+- two sounds: the second sound goes through the same crusher, with the same grid of values and the same hold; Bit
+  Depth makes the steps a sixteenth to sixteen times as large, Sample Rate the hold a quarter to four times as
+  long;
+- one sound: a bare crusher cannot be taken out, because what the rounding and the hold threw away is gone. Left
+  of the middle nothing happens; right of it the sound goes through steps twice as large and a hold twice as long;
+- a crusher that mixes plain sound back in (one of the four outside tools does) loses nothing. Its mix and the
+  rounding of its steps are read too, Amount at far left gives the sound before the crusher, and from there every
+  other setting can be had;
+- the display shows a quiet tone before and after the found crusher.
+
+On the scoreboard's eight cases: shown on 7 of 8 (as in 0.4.6, then by the detector) and put onto the case's other
+sound at 91 in the median (0.4.6: 10): 99.8 and 99.4 for the crusher that mixes plain sound in, 86 to 100 for two
+bare ones; the mixing crusher is taken out at 99.6 and 92.7. On 70 fresh cases grid and hold are right on all 42
+with a bare crusher, and the mixing crusher is found on 14 of 14 and undone at 99.7 in the median (least 91.6).
+No BITCRUSH on the 198 clean clips (also not when they are saved as 16-bit files, with or without dither, or as
+24-bit files), none on the 384 scoreboard sounds of the other effects.
+
+Known limits: a crusher with a filter after it is not read (found on 1 of 14 fresh cases and on one of the
+scoreboard's two, and then only its grid); which dry sample a held value was and the crusher's rounding rule
+(nearest, down, towards zero) cannot be told from the sound, so one outside tool that does both its own way goes
+onto a second sound at 80 in the median; a crusher under another effect is not found (the values are off the
+grid); a file that was recorded with 16 bits and made louder by 18 dB or more afterwards lies on a grid of 13
+bits or coarser and reads as a light crusher. Method, numbers and limits: `Research/crush/README.md`.
+
+**Stutter (new engine in 0.4.7):** a slice of the sound played several times over, in place of what came after
+it. A repeat made that way is exact, sample for sample, and nothing a sound does by itself is. The engine finds
+every such stretch with a table of all windows of 64 samples, walks each one out to its first and last equal
+sample, and reads the events: where each slice starts, how long it is (20 ms to 2 s), how many times it is played,
+and whether each play fades in and out. The STUTTER group works on them:
+- two sounds: the second sound's own slices are played again at the same times; Amount makes that fewer or more
+  plays, Slice the slices half to twice as long;
+- one sound: right of the middle each slice is played more often, over what follows it. A stutter cannot be
+  undone, since what the repeats covered is gone: left of the middle each slice is played fewer times and the sound
+  closes up, so far left is the dry sound with the covered parts missing, and it ends early;
+- the display shows the slices and their repeats over the sound's length, and they are marked under the waveform.
+
+On the scoreboard's eight cases: found on 8 of 8 and put onto the case's other sound at 90 in the median (65.5 to
+99.8; 0.4.6: -30, a stutter at made-up places, worse than none on all eight). On every clip of the corpus with a
+stutter put on (198 clips, 1259 repeats) it is found on all, and 1138 of the 1152 repeats read are right to the
+sample; on 48 fresh cases (two outside tools and a plain stutter) 521 are right to the sample, 4 are missed and
+one is read that was not made. Far left against the dry sound with the covered parts cut out: 98 to 99 of 100 in
+the median. No STUTTER on the 198 clean clips (16-bit and 24-bit files included), none on the 384 scoreboard
+sounds of the other effects (0.4.6 showed one on a saturation case).
+
+Known limits: a slice that is silent or stands still is not seen, and where a cut lies inside silence cannot be
+known; a repeat that is not exact is not a repeat here (a stutter under another effect, after a change of the
+sample rate, or saved with dither); with fades, the 2 ms at each slice's edges stay as they are. Method, numbers
+and limits: `Research/stutter/README.md`.
+
+**Where these two sit in the chain, and files that are not at 48 kHz (0.4.7).** A crusher and a stutter can be
+read only when they were the last thing the sound went through. So onto a second sound the crusher goes on after
+the other found effects and the stutter last, after Tone Match; on the sound itself the crusher is worked first
+and the stutter last. A file at another sample rate is read by these two engines at its own rate, because the
+app's change to 48 kHz takes the values off the grid and makes the repeats unequal; what they find is carried
+over to 48 kHz. On 32 test files at 44.1 and 96 kHz grid and hold are right on all of them, and 276 of 277
+stutter events to the sample.
+
 **What is shown (new in 0.4.2):** up to 0.4.1 an effect was shown as soon as one 3 s window of the sound scored
 above the cut. Measured with the app's own code that showed 1.6 effects per sound that are not there. Now every
 effect is checked against the whole sound before it is shown (`Verify.h`): per effect a small model reads what the
@@ -293,14 +407,18 @@ And the whole app on the scoreboard (`Research/room/bench/famboard.py`, `famsum.
 was the look with silence after the sound, the drop in 0.4.5 is the room model trained again and the look without
 the other effects, both described above):
 
-| 136 cases, 17 effects from outside tools                        | 0.4.1    | 0.4.2   | 0.4.3   | 0.4.4  | 0.4.5  |
-|------------------------------------------------------------------|----------|---------|---------|--------|--------|
-| the case's own effect shown                                      | 77       | 75      | 79      | 89     | 89     |
-| other groups shown: REVERB / the rest                            | 63 / 156 | 19 / 12 | 19 / 10 | 19 / 7 | 13 / 7 |
-| cases with no other group shown                                  | 16       | 107     | 109     | 112    | 116    |
-| own group far left: cases made worse than doing nothing          | 12 %     | 3 %     | 3 %     | 1 %    | 1 %    |
-| every shown group far left: cases made worse than doing nothing  | 78 %     | 19 %    | 19 %    | 15 %   | 9 %    |
-| everything shown put onto a second sound: cases made worse       | 71 %     | 36 %    | 30 %    | 27 %   | 24 %   |
+| 136 cases, 17 effects from outside tools                        | 0.4.1    | 0.4.2   | 0.4.3   | 0.4.4  | 0.4.5  | 0.4.6 | 0.4.7 |
+|------------------------------------------------------------------|----------|---------|---------|--------|--------|-------|-------|
+| the case's own effect shown                                      | 77       | 75      | 79      | 89     | 89     | 89    | 92    |
+| other groups shown: REVERB / the rest                            | 63 / 156 | 19 / 12 | 19 / 10 | 19 / 7 | 13 / 7 | 9 / 7 | 9 / 4 |
+| cases with no other group shown                                  | 16       | 107     | 109     | 112    | 116    | 120   | 123   |
+| own group far left: cases made worse than doing nothing          | 12 %     | 3 %     | 3 %     | 1 %    | 1 %    | 1 %   | 1 %   |
+| every shown group far left: cases made worse than doing nothing  | 78 %     | 19 %    | 19 %    | 15 %   | 9 %    | 7 %   | 7 %   |
+| everything shown put onto a second sound: cases made worse       | 71 %     | 36 %    | 30 %    | 27 %   | 24 %   | 23 %  | 9 %   |
+
+(0.4.7: the eight stutter cases are left out of the two far-left rows. A stutter's far left closes the sound up,
+and the scoreboard compares with the dry sound at the same times; `Research/stutter/so1.py` scores it against the
+dry sound with the covered parts cut out.)
 
 What changed from 0.4.2 to 0.4.3 besides the scores of the four reworked groups: four flangers are found; a
 tremolo that 0.4.2 took for a gate is shown as a tremolo; another tremolo, which 0.4.2 showed and took out at 24
@@ -319,6 +437,21 @@ on sounds that show REVERB with no effect on them (recorded loops, recordings, s
 is in the sound, and no look at the effect can take it away. Three are made by the effect: a chorus that comes
 out only in part, a delay whose echoes are taken out and a room is still read, and a delay whose echo is not
 found. With fewer false rooms to pull out, the last two rows move as well.
+
+What changed from 0.4.5 to 0.4.6: only REVERB again (the Amount fader and the model that is careful under the
+sound, both above). Four more false REVERB groups are gone and none is new; every case's own group is shown as
+before, with the same scores.
+
+What changed from 0.4.6 to 0.4.7: the five groups with new engines, and nothing else. The other twelve effect
+types score exactly as before, case by case. HAAS WIDTH is shown on 8 of 8 cases (6) and STEREO WIDTH on 6 of 8
+(5); a crusher with a filter after it is now shown on one of its two cases and not on the other (the detector
+had it the other way round). Three groups that were not there are gone: a DELAY on a ring modulation, a COMB
+FILTER on a widener, a STUTTER on a saturation. The last row falls from 31 cases to 12: the 18 cases that 0.4.6
+made worse in these families (all eight stutters, five wideners, three ring modulations, two crushers) and the
+saturation with the false STUTTER now go onto the second sound better than nothing, most of them far better. In
+the median: HAAS WIDTH 31 (17), STEREO WIDTH 45 (-17), RING MOD 100 (16), BITCRUSH 91 (10), STUTTER 90 (-30). Of
+the 12 that are left, eight carry a false REVERB, three a false EXCITER, and one is an exciter whose own group
+goes on badly; the exciter is one of the effect types that have no engine of their own yet.
 
 The price is in the third row of the first table, and it is uneven: flanger, phaser, filter sweep and a fixed filter are found less
 often than before (9, 39, 39 and 9 % against 36, 73, 61 and 34 %), because most of their earlier finds came with
@@ -352,6 +485,15 @@ filter, stutter, gated rhythm (from a larger 27-effect detector).
   voices taken out, changed or put onto a second sound).
   The moving-tone engine (phaser, filter sweep): `Moving.h` (the band picture, the model, stretches and their
   sureness, the repeated reading, the curve put on and taken off).
+  The sides engine (Haas width, stereo width): `Sides.h` (the taps between the two sides, the copy at the sides,
+  the one sound behind both sides, the rule, the end of the file, the effect taken out, changed or put onto a
+  second sound).
+  The ring engine: `Ring.h` (the lines in the spectrum of the sound's power, the table over the tone's cycle, the
+  fit of pitch, phase and plain share on the samples, the gain taken out, changed or put on).
+  The crush engine: `Crush.h` (the grid from the distribution of the sample values, the hold, the crusher that
+  mixes plain sound in and its undoing, the faders for steps and hold, files at their own sample rate).
+  The stutter engine: `Stutter.h` (the table of windows, stretches, events, what repeats exactly and is no event,
+  the events played on a sound, cut out of it or moved to another sample rate).
   `Verify.h` the check of every effect against the whole sound before it is shown.
 - `Source/App/Main.cpp` the JUCE app.
 - `Resources/models.bin` (12 effects) and `models27.bin` (27 effects, `DR_MODEL27=1`) the trained models, written by `Tools/export_models.py`.
@@ -376,6 +518,10 @@ filter, stutter, gated rhythm (from a larger 27-effect detector).
   (see the top of the file); `Tools/chorus_parity.py` compares it with the prototype.
 - `Tests/moving.cpp` the moving-tone engine alone: `drmoving model.bin a.wav b.wav prefix`, `drmoving both ...`
   (see the top of the file); `Tools/moving_parity.py` compares it with the prototype.
+- `Tests/sides.cpp`, `Tests/ring.cpp`, `Tests/crush.cpp`, `Tests/stutter.cpp` the four engines of 0.4.7 alone:
+  `drsides|drring|drcrush|drstutter a.wav b.wav prefix` and `... find a.wav ...` (see the top of each file);
+  `Tools/sides_parity.py`, `ring_parity.py`, `crush_parity.py` and `stutter_parity.py` compare them with the
+  prototypes.
 - `Research/room/` the Python side of the reverb engine as it was run: the scoreboard, the reference engine the
   C++ matches, training and the experiments (see its README).
 - `Research/tone/` the Python side of the tone engine: the prototype the C++ matches, its scores and the report.
@@ -390,7 +536,16 @@ filter, stutter, gated rhythm (from a larger 27-effect detector).
 - `Research/chorus/` the Python side of the chorus engine: the prototype the C++ matches, the studies behind its
   tests, the scores, the tests on long sounds.
 - `Research/moving/` the Python side of the moving-tone engine: the prototype the C++ matches, the fit data and
-  the training, the rule study, the repeated reading, the tests on long sounds.
+  the training, the rule study, the repeated reading, the tests on long sounds. Also the memory check that is
+  run before every build (`memcheck.py`, with `mklong.py` and `mknew.py` for its sounds).
+- `Research/sides/` the Python side of the sides engine: the prototype the C++ matches, the fresh cases, the
+  false-find checks and their report.
+- `Research/ring/` the Python side of the ring engine: the prototype the C++ matches, the fresh cases, every clip
+  with a tone put on, the false-find checks.
+- `Research/crush/` and `Research/stutter/` the Python side of the crush and the stutter engine: the prototypes
+  the C++ matches, the fresh cases, every clip with a stutter put on, the far left, the false-find checks and
+  the files at other sample rates (several scripts serve both engines and sit in `Research/stutter/`).
+- `Research/listening/` the scripts that make the listening page: its examples are rendered by `drrender`.
 
 ## Build
 `cmake -S . -B build && cmake --build build --config Release --target DefectRefect`

@@ -79,7 +79,8 @@ the cases without fades where every event is right; with fades the 2 ms at each 
 middle case). Where an event was missed everything after it lies later than in that dry sound (least -42.5).
 
 **Wrong finds** (`nf2.py`): none on the 198 clean clips, none on the 384 scoreboard sounds of the other
-families; all 16 of the STUTTER family found.
+families; all 16 of the STUTTER family found. Nor on the 198 clean clips saved as 16-bit files (plain rounding,
+with dither, 30 dB quieter) and as 24-bit files (`pcm16.py`).
 
 **Scoreboard** (8 pairs, through the app's render test): found 8 of 8; onto a second sound 90 in the middle case
 (65.5 to 99.8). Before the engine: found 8 of 8 by the detector, and what it put onto the second sound was worse
@@ -106,4 +107,5 @@ through the render test at 44.1 kHz gives 99.4 onto a second sound and 99.9 at t
 ## Files
 `stutter.py` the prototype. `sk2.py` every clip, `sf7.py` fresh cases (made by `fc7.py`), `so1.py` the far left,
 `su1.py` the scoreboard pairs (prototype), `nf1.py` / `nf2.py` wrong finds (prototype / the app's code),
-`r44t.py` other sample rates; `st_common.py` (in `Research/sides`) is what they share.
+`pcm16.py` ordinary 16-bit and 24-bit files, `r44t.py` other sample rates; `st_common.py` (in `Research/sides`) is
+what they share.

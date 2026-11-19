@@ -8,7 +8,10 @@ second reading in which a cell at the edge of silence fell on the other side). `
 processing built with the compiler's memory and arithmetic checks (`-fsanitize=address,undefined`) over every
 engine's group, alone and with a shorter, an equal and a longer second sound, the faders in the middle and at both
 ends (`memcheck.py room`: a room next to each of the other effects; `memcheck.py long`: sounds of more than 9 s,
-which the room engine judges in pieces, with silence around them, gaps, and short bursts). The scripts are a record of how the
+which the room engine judges in pieces, with silence around them, gaps, and short bursts; `memcheck.py new`: the
+engines of build 0.4.7, on long sounds, mono files, files at 44.1 and 96 kHz and second sounds of another rate or
+of ten samples; `memcheck.py tiny`: files an engine could trip over, from no samples at all to values that are
+not numbers, as first and as second sound; `mknew.py` makes the sounds of these two). The scripts are a record of how the
 engine was built and judged, as they were run: paths point to the working folder they ran in, and no audio is in
 the repo.
 

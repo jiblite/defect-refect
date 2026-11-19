@@ -39,6 +39,7 @@ int main (int argc, char** argv)
     dr::Stereo src; double sr = 0; if (! dr::readWav (argv[2], src, sr) || src.size() == 0) { std::cout << "cannot read " << argv[2] << "\n"; return 1; }
     dr::Stereo raw; const bool other = std::abs (sr - 48000.0) > 0.5;       // a file at another rate: its own samples for the engines that need them exact
     if (other) { raw = src; src = dr::resampled (raw, sr, 48000.0); std::cout << "file at " << sr << " Hz: brought to 48000 Hz\n"; }
+    if (src.size() == 0) { std::cout << "no sound in " << argv[2] << "\n"; return 1; }       // as the app's loader: a few samples at a high rate can come to none
     struct Block { std::string tgt, out, ir, echoIr; std::map<std::string, double> fad; bool match = false; };
     std::vector<Block> blocks; double cut = 0.65;
     for (int i = 3; i + 1 < argc;)
@@ -150,7 +151,7 @@ int main (int argc, char** argv)
         if (other) f = dr::stutter::atRate (std::move (f), 48000.0, src.size());
         const auto st = std::make_shared<const dr::stutter::Found> (std::move (f)); dr::mergeStutter (I, *st); more.stutter = st;
         std::cout << "stutter: found=" << (st->found ? 1 : 0);
-        if (st->found) { std::cout << " events=" << st->events.size() << " slice_ms=" << st->slice() * 1e3 << " plays=" << st->plays() << " fades=" << (st->fades ? 1 : 0) << " share=" << st->share << " at_s="; for (size_t i = 0; i < st->events.size() && i < 12; ++i) std::cout << (i ? "," : "") << (double) st->events[i].s0 / 48000.0 << ".." << (double) st->events[i].end / 48000.0; }
+        if (st->found) { std::cout << " events=" << st->events.size() << " slice_ms=" << st->slice() * 1e3 << " plays=" << st->plays() << " fades=" << (st->fades ? 1 : 0) << " share=" << st->share << " at_s="; for (size_t i = 0; i < st->events.size() && i < 12; ++i) std::cout << (i ? "," : "") << (double) st->events[i].s0 / 48000.0 << ".." << (double) st->events[i].end / 48000.0; std::cout << " each_ms="; for (size_t i = 0; i < st->events.size() && i < 12; ++i) std::cout << (i ? "," : "") << (double) st->events[i].L / 48.0; }
         std::cout << "\n";
     }
     {       // an echo on a sound that is multiplied by a tone: is it still there with the tone taken out?
@@ -169,7 +170,12 @@ int main (int argc, char** argv)
     for (auto& F : found0) { std::cout << F.name << " p=" << F.prob << (F.room ? " (room engine)" : F.tone ? " (tone engine)" : F.echo ? " (echo engine)" : F.level ? " (level engine)" : F.sweep ? " (flanger engine)" : F.moving ? " (moving-tone engine)" : F.chorus ? " (chorus engine)" : F.sides ? " (sides engine)" : F.ring ? " (ring engine)" : F.crush ? " (crush engine)" : F.stutter ? " (stutter engine)" : ""); for (auto& [k, v] : F.est) std::cout << " " << k << "=" << v; std::cout << "\n"; }
     for (auto& B : blocks)
     {
-        const bool two = B.tgt != "-"; dr::Stereo tgt; if (two) { double tsr = 0; dr::readWav (B.tgt, tgt, tsr); if (std::abs (tsr - 48000.0) > 0.5) tgt = dr::resampled (tgt, tsr, 48000.0); }
+        const bool two = B.tgt != "-"; dr::Stereo tgt;
+        if (two)
+        {
+            double tsr = 0; const bool read = dr::readWav (B.tgt, tgt, tsr); if (read && std::abs (tsr - 48000.0) > 0.5) tgt = dr::resampled (tgt, tsr, 48000.0);
+            if (! read || tgt.size() == 0) { std::cout << "cannot read " << B.tgt << "\n"; return 1; }
+        }
         auto found = found0; const auto& fad = B.fad;
         if (two && B.match && ! tf->spec.silent)
         {

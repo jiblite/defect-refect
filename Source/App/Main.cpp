@@ -74,17 +74,20 @@ inline bool loadStereo48k (const juce::File& f, dr::Stereo& out, juce::String& e
     std::unique_ptr<juce::AudioFormatReader> r (fm.createReaderFor (f));
     if (r == nullptr) { err = "Cannot read " + f.getFileName(); return false; }
     if (r->lengthInSamples > (juce::int64) (r->sampleRate * 60 * 20)) { err = "Files up to 20 minutes, please."; return false; }
+    if (r->lengthInSamples <= 0 || ! (r->sampleRate > 0.0)) { err = "No sound in " + f.getFileName(); return false; }
     const int n = (int) r->lengthInSamples; juce::AudioBuffer<float> b ((int) juce::jmax (1u, r->numChannels), n);
     r->read (&b, 0, n, 0, true, true);
     const int c1 = b.getNumChannels() > 1 ? 1 : 0;
     std::vector<double> L ((size_t) n), R ((size_t) n);
-    for (int i = 0; i < n; ++i) { L[(size_t) i] = b.getSample (0, i); R[(size_t) i] = b.getSample (c1, i); }
+    auto number = [] (float v) { return std::isfinite (v) ? (double) v : 0.0; };      // a value that is not a number (a float file from a render that blew up) counts as silence
+    for (int i = 0; i < n; ++i) { L[(size_t) i] = number (b.getSample (0, i)); R[(size_t) i] = number (b.getSample (c1, i)); }
     if (std::abs (r->sampleRate - dr::SR) > 0.5)
     {
         if (raw != nullptr && rate != nullptr && r->lengthInSamples <= (juce::int64) (r->sampleRate * 60 * 10)) { auto own = std::make_shared<dr::Stereo>(); own->l = L; own->r = R; *raw = own; *rate = r->sampleRate; }
         auto rs = [&] (const std::vector<double>& x) { const std::vector<float> o = to48k (std::vector<float> (x.begin(), x.end()), r->sampleRate); return std::vector<double> (o.begin(), o.end()); };
         L = rs (L); R = rs (R);
     }
+    if (L.empty()) { if (raw != nullptr) raw->reset(); if (rate != nullptr) *rate = dr::SR; err = "No sound in " + f.getFileName(); return false; }      // a few samples at a high rate can come to none at 48 kHz
     out.l = std::move (L); out.r = std::move (R);
     return true;
 }
