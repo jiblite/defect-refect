@@ -43,7 +43,8 @@ Three faults, none of them one the sanitizer could see, all mended in 0.4.7:
    (1.04 ms) at 96 kHz before, which is the 100 samples of the file that the old resampler states as its delay;
    0 samples after, and the 96 kHz export then equal to the render test's (-118.0 dB).
 
-The app's exports against the render test's (24-bit files, so -120 dB is the last bit):
+The app's exports against the render test's (24-bit files, so -120 dB is the last bit; 22 comparisons, 12 of them
+with files at 44.1 or 96 kHz):
 
 | sounds | faders | difference |
 |---|---|---|
@@ -59,8 +60,17 @@ The app's exports against the render test's (24-bit files, so -120 dB is the las
 | 96 kHz: stutter, alone | Amount far right; Slice far left | -119.9, -119.6 dB |
 | 96 kHz: crusher onto a 44.1 kHz second sound | all three far right | -121.4 dB |
 | 96 kHz test tones; a 44.1 kHz sound with nothing found | middle | -128.7, -119.1 dB |
+| 96 kHz: noise up to 16 kHz | middle | -118.0 dB |
+| 44.1 and 96 kHz: a mixing crusher that is found (nine tenths crushed, a hold of three samples), alone | Amount far left | -119.3, -118.9 dB |
 
 ## What it does not cover
 Dropping a file onto the window and the Open dialog (the sounds come in on the command line), playback (no sound
 device here), the Export IR dialogs, and anything that only Windows or the Mac does differently. The JUCE objects
 are not instrumented, so a fault inside the library's own code would show only if it reached the app's memory.
+
+The last two rows of the table closed a gap: the sounds with a mixing crusher that the memory check had (seven
+tenths crushed, a hold that is not a whole number) are ones the engine does not find, or finds without the hold, so
+the undoing of such a crusher in a file at another rate (the sound before the crusher is brought to 48 kHz like the
+sound itself) had run nowhere. On the two new sounds the crusher is found with its hold, far left gives the dry sound
+back to -55 dB (44.1 kHz) and -69 dB (96 kHz) where the crushed sound is at -16 and -23 dB, the app's export is
+equal to the render test's, and `memcheck.py soft` runs them and a long one under the sanitizer.

@@ -1,4 +1,4 @@
-# The sounds for memcheck.py's stages "new" and "tiny" (the engines of build 0.4.7: sides, ring, crush, stutter):
+# The sounds for memcheck.py's stages "new", "soft" and "tiny" (the engines of build 0.4.7: sides, ring, crush, stutter):
 # long sounds through a crusher and through a stutter, sounds with both, files at 44.1 and 96 kHz, mono files, second
 # sounds at another rate and of ten samples, and sounds an engine could trip over (no samples at all, one sample, less
 # than a window of the stutter's table, silence, a standing value, two levels, a sound that is one loop all through,
@@ -37,6 +37,11 @@ w('stut96', stutter.play(x96, events(len(x96), 96000, plan6), True), 96000, 'PCM
 w('crush96', crush.through(x96, bare(6, 5.0)), 96000, 'PCM_24')
 w('stutMono', stutter.play(six[:, :1], events(n6, 48000, plan6), False)[:, 0])
 w('crushMono', crush.through(six[:, :1], dict(bare(5, 2.0), step=[2.0 / 2 ** 5], offset=[0.0]))[:, 0], 48000, 'PCM_16')
+
+# a crusher that mixes plain sound in and IS found (the three above with seven tenths crushed and a hold that is not a whole number are
+# not, or without their hold: Research/crush/softsweep.py): at 44.1 and 96 kHz and on a long sound, for memcheck.py's stage "soft"
+softOk = dict(soft, mix=0.9, P=3.0, c=0.0)
+w('softOk44', crush.soft_forward(x44, softOk), 44100); w('softOk96', crush.soft_forward(x96, softOk), 96000); w('softOkLong', crush.soft_forward(long_, softOk))
 
 # second sounds: at another rate, of ten samples, mono
 w('sec44', resample_poly(sixB, 147, 160, axis=0), 44100, 'PCM_24'); w('secTen', sixB[24000:24010]); w('secMono', sixB[:, 0])

@@ -1,7 +1,7 @@
 # Memory check of the app's whole processing (drrender built with -fsanitize=address,undefined): every engine's group on
 # short and long first sounds, alone and with a second sound that is shorter, as long and longer, the faders in the middle
 # and at both ends.
-#   python3 memcheck.py [jobs] [rest|room|long|new|tiny]    writes /dev/shm/mc/<name>.log, prints one line per run
+#   python3 memcheck.py [jobs] [rest|room|long|new|tiny|soft]    writes /dev/shm/mc/<name>.log, prints one line per run
 # Two stages side by side: give each a folder of its own (MC_DIR=/dev/shm/mc2/ in the environment).
 # Another build of the render test: MC_EXE=/path/to/drrender_asan in the environment.
 import sys, os, json, subprocess, numpy as np, soundfile as sf
@@ -54,6 +54,9 @@ if 'new' in sys.argv:            # the engines of build 0.4.7 (sides, ring, crus
                                          ('bitcrush', 'bit_calf_00'), ('bitcrush', 'bit_swh_00'), ('bitcrush', 'bit_pedalboard_01'), ('bitcrush', 'bit_mda_00'), ('stutter', 'stu_ffmpeg_00'), ('stutter', 'stu_sox_02'))]
     new += [(n, N + n + '.wav') for n in 'crushSoftLong crushBareLong stutLong both bothSoft soft44 both44 stut96 crush96 stutMono crushMono'.split()] + [('crush44', '/tmp/claude-0/v2/newfx/r44/crush_a44.wav'), ('stut44', '/tmp/claude-0/v2/newfx/r44/stut_a44.wav')]
     jobs = [(n, p, None) for n, p in new] + [(n + '_s5', p, 5) for n, p in new if n in ('rng_swh_00', 'haas_ffmpeg_01', 'wid_caps_01', 'bit_mda_00', 'stu_sox_02', 'both', 'bothSoft', 'both44')]
+if 'soft' in sys.argv:           # a crusher that mixes plain sound in and is found (mknew.py: nine tenths crushed, a hold of three samples): at 44.1 and 96 kHz, where the sound before it is brought to 48 kHz like the sound itself, and on a long sound
+    N = '/tmp/claude-0/v2/newfx/mc/'; seconds = [seconds[0], seconds[2], ('s44', N + 'sec44.wav')]
+    jobs = [(n, N + n + '.wav', None) for n in 'softOk44 softOk96 softOkLong'.split()]
 if 'tiny' in sys.argv:           # sounds an engine could trip over (mknew.py): no samples, one, less than a window, silence, a standing value, two levels, one loop all through, an event cut off by the file's end, values that are not numbers
     import glob
     N = '/tmp/claude-0/v2/newfx/mc/'; seconds = [seconds[0], seconds[2], ('ten', N + 'secTen.wav')]; sets = [sets[0], sets[3], sets[4]]

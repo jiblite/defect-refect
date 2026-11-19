@@ -10,8 +10,9 @@ engine's group, alone and with a shorter, an equal and a longer second sound, th
 ends (`memcheck.py room`: a room next to each of the other effects; `memcheck.py long`: sounds of more than 9 s,
 which the room engine judges in pieces, with silence around them, gaps, and short bursts; `memcheck.py new`: the
 engines of build 0.4.7, on long sounds, mono files, files at 44.1 and 96 kHz and second sounds of another rate or
-of ten samples; `memcheck.py tiny`: files an engine could trip over, from no samples at all to values that are
-not numbers, as first and as second sound; `mknew.py` makes the sounds of these two). The scripts are a record of how the
+of ten samples; `memcheck.py soft`: a crusher that mixes plain sound in and is found, at 44.1 and 96 kHz and on a
+long sound; `memcheck.py tiny`: files an engine could trip over, from no samples at all to values that are
+not numbers, as first and as second sound; `mknew.py` makes the sounds of these three). The scripts are a record of how the
 engine was built and judged, as they were run: paths point to the working folder they ran in, and no audio is in
 the repo.
 

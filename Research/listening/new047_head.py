@@ -12,7 +12,7 @@ S = dict(haas_fresh=(56, 56), wide_fresh=(37, 42),                 # st7.py: 112
          clean=198, others=384, forms=4,                           # no wrong find: clean clips, scoreboard sounds of the other families; pcm16.py: 16-bit and 24-bit forms
          soft=((90, 36), (70, 9), (50, 0)), soft_n=36,             # softsweep.py: the mixing crusher, share of the sound that is crushed in % and how many of 36 sounds were read
          late44=2.27, late96=1.04, tone_old=-12.1, tone_new=-84.7, tone_in=-12.0,   # Research/appcheck: the loader of build 0.4.6 against the new one (ms late, lagcheck.py on noise files: 109 and 50 samples at 48 kHz; a 30 kHz tone in a 96 kHz file, dB at 18 kHz)
-         exports=19, exports_rates=9)                              # Research/appcheck: the app's exports against the test renderer's, all equal to the last bit; of them at 44.1 or 96 kHz
+         exports=22, exports_rates=12)                              # Research/appcheck: the app's exports against the test renderer's, all equal to the last bit; of them at 44.1 or 96 kHz
 rows = lambda f: sorted((json.loads(l) for l in open(f) if l.strip()), key=lambda r: r['name'])
 assert S['soft'][0] == (90, S['soft_n']) and S['soft'][2] == (50, 0)          # the text says: all with 90 %, none with half
 old, new = rows(OLD), rows(NEW); assert len(old) == 136 and len(new) == 136 and [r['name'] for r in old] == [r['name'] for r in new]
