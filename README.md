@@ -9,6 +9,9 @@ Standalone app. Drop a sound: the effects found on it become faders, grouped by 
   (frequency curve, decay, echoes, transfer curve...), with the found state faint behind it once a fader moves.
 - Every effect has an On/Off switch. Off = left alone: with one sound it stays as found, with two sounds it is not
   put on the second. For comparing with and without, and for an effect that is shown but not there.
+- **MOVEMENT** (new in 0.5.0) is always there, first in the list: five faders for how the sound moves by itself
+  (Pitch, Loudness, Tone, Stereo, Spectral). Left = flat, middle = the sound's own, right = double, or with two
+  sounds the first sound's movement on the second.
 
 **Reverb (new engine in 0.4.0, second model in 0.4.1):** a small model looks at the sound twice and says, band by
 band and moment by moment, what is room and what is the sound itself. From that the app reads the room (decay time
@@ -408,6 +411,112 @@ the plain formula on 15 pairs of rates, a 1 kHz tone from 44.1 and 96 kHz in pla
 30 kHz tone 73 dB down, ten minutes at 44.1 kHz in 0.8 s per side. The app and the render test now give the same
 samples for a file at any rate (`Research/appcheck/`).
 
+**Movement (new in 0.5.0).** A sound moves by itself, with no effect on it: an engine revs, a car passes, a voice
+swells and gets brighter. The MOVEMENT group shows that as five faders. It is always there and stands first; it
+is not a found effect, so it shows no sureness. Every fader runs the same way: far left = flat (the movement
+taken out), middle = the sound's own (nothing is done, bit for bit), far right = the movement twice (one sound)
+or the first sound's movement in place of the second's own (two sounds; the group then works on the second
+sound, the left half in its colour, the right half in the first sound's). In between: straight lines in dB and
+cents.
+- **Pitch**: how the pitch moves, a rev, a glide, a pass-by, a vibrato. It is put on like tape speed: the sound
+  is read at a moving place, nothing is stretched or built anew, so nothing warbles and nothing gets dull. The
+  length stays, so the sound keeps its average pitch.
+- **Loudness**: the level every 5 ms against the sound's own level. Dips shorter than 80 ms are bridged, so the
+  single pulses of a low engine read as one even sound while a hit keeps its edges. Far left lifts quiet parts
+  less and less the further under the sound's level they lie, so a noise floor is not pulled up.
+- **Tone**: the balance of 18 bands (an octave wide, every half octave from 44 Hz) against the moment's average
+  and against its own average over time: getting brighter, darker, opening up. Every moment keeps its power.
+- **Stereo**: where the sound sits between the sides and how wide it is, every 10 ms, around the place it has on
+  average. Every moment keeps its power. A mono sound has nothing to move (the fader says "mono"); onto a mono
+  second sound the right half brings the first sound's movement.
+- **Spectral**: the overall colour, the long-term spectrum in broad strokes (a third of an octave). Far left =
+  neutral, the same power in every octave; far right = the first sound's colour (Tone Match does that in
+  detail), or the sound's own colour once more. Tone is how that colour changes over time.
+
+What an engine shows as an effect of its own (TREMOLO, AUTO PAN, GATED RHYTHM, a phaser's or a filter sweep's
+moving tone) stays in its group: the first sound's movement is measured without those that are shown
+(`movementBase` in `Estimate.h`), so nothing is counted twice. With two sounds MOVEMENT is put on first and the
+found effects after it; with one sound the effects' faders work first and MOVEMENT after them (before a found
+stutter, which stays last). Order inside: Pitch, Spectral, Tone, Stereo, Loudness; after a pitch change the
+sound's own curves are carried along with it. The other sound's movement goes on at the same times; past its
+end its last value holds. The display shows the fader touched last: the curve over time as the result has it,
+the sound's own faintly behind it, with two sounds the first sound's as a thin teal line; for Pitch a line
+under the wave shows where the pitch is followed.
+
+Scores on test sounds with a known movement (`Research/movement/test_move.py`, dB rms): Loudness, far left, a
+swell, a pass-by, a fade or steps of 4 to 6 dB down to 0.1 to 0.5, pulses at 25 and 40 Hz untouched (at 13 Hz
+the gain moves by 0.5), onto a second sound within 0.8 to 2.2; Stereo, far left, a pan sweep of 7 to 13 dB down
+to 0.3 on noise and 0.01 on a chord, the level changed by less than 0.5; Tone, a tilt or a sweep of 1.5 to 3.6
+dB read within 0.3 to 0.8 (1.6 for a narrow bump on a chord) and brought to 0.4 to 0.9, about what a steady
+sound shows by itself (0.7 to 1.4); Spectral, far left, a colouring of 3 to 8 dB against neutral down to 0.5 to
+1.8, far right a second sound within 0.8 to 1.3 of the first sound's colour.
+
+**The reader of pitch movement** (`Flow.h`, the ninth version of the prototype `Research/movement/flow.py`)
+does not look for a note. It follows how the lines of the spectrum move together from one hundredth of a second
+to the next, whatever they are: the partials of an engine, a voice, a siren. Two looks read the lines, a short
+one (a window of 85 ms) for fast movement and a long one (341 ms) for low sounds whose lines the short one
+cannot tell apart; each line's frequency comes from its phase, not from its bin. The shifts are put together
+into one curve in cents. The sound is then played flat with that curve and read again, round after round, until
+nothing is left to read, and once more strictly: what the strict reading does not follow is not kept.
+
+What decides how the fader sounds is what the reader does where it cannot read. The rule: it must never add a
+movement of its own. (The seventh version did, on field recordings: a jump where a passage was not read, a ramp
+across a passage it believed to have found again, a flutter where two sounds beat. The eighth still stepped to a
+short piece of sound and back wherever it took another sound to start: 11 steps of 90 cents and more in 29
+recordings, at places where the sound in truth ran on.) So:
+
+- where nothing can be followed the curve stands still, and what is read next goes on from where it stands. It
+  begins afresh only after a pause. Movement that is not read stays in the sound;
+- a step anywhere else has to be proven by the sound. Where no sound is sustained (zaps, chirps) a piece keeps
+  its place only if, played flat with the curve, the sound shows just after the step the lines it showed just
+  before it (`stepAlike`); the piece is then put exactly where the two fit. A piece whose place is not proven is
+  left out, and so is every short piece beside a sustained sound: there a line that beats, a thump or a few
+  moments in noise were read as movement. No reading follows a step that an earlier round put into the curve the
+  sound is played flat with, or it would hold on to that step;
+- a sound that is lost for a moment and found again on the other side of the loss counts only if that is proven:
+  played flat with a curve that glides through the loss, the sound must show stiller lines than played flat with
+  a curve that takes the same step at once. A search alone finds a sound where it is not, because a sound's lines
+  fit those of its own harmonics in part;
+- the fast part of the curve (above about 3 Hz: a vibrato, but also the flutter a reader picks up where two
+  sounds beat) is kept only where the sound's lines stand stiller with it than without.
+
+The yardstick of both proofs is how gathered the energy is in the spectrum of the sound played flat (`gathered`
+in `Flow.h`): lines that stand still gather it in a few values, lines that still move spread it. A sound of more
+than ten minutes is not read ("too long"). The reading runs on a thread of its own and takes about a quarter to a
+half of the sound's length; the other four faders work meanwhile and the Pitch fader says "reading".
+
+On its test sounds (`test_flow.py`, error in cents rms; the app's reader and the prototype give the same curves
+on all of them): a vibrato of +-30 cents 1.2, a glide 0.1, a pass-by 0.1, a rev 0.6, an engine with partials
+22 Hz apart revving over 1200 cents 2.8 with 99 % of it followed, the same engine steady 1.1 and under a lot of
+noise 0.9, a glide under clicks 0.7 and a rev under bursts of noise 0.8; falling zaps with pauses 7 with 98 % of
+the movement read; an engine that drops 500 cents at once is read to 1.0 on both sides of the drop and the curve
+stands still across it; two steady tones that beat 0.1; noise and a tune of steady notes: nothing read, as it
+should be. What it does not do: of zaps that follow each other without a pause under half are followed and
+three tenths of the movement read (the curve stays inside the true range), and zaps that overlap are not read
+at all; a short sound beside a sustained one is not read; what moves faster than the reader can follow stays in
+the sound (the very top of a fast rev, a drop from one moment to the next); two things that move at once are
+followed for one of them or not at all; an engine whose partials lie closer than about 25 Hz is read in part
+only while it revs fast; and of 40 field recordings (engines, pass-bys, machines, ambiences) about half are
+noise-like or are read only in part. On the 29 of them that move, the ninth version leaves no step between two
+pieces of a sound, and the app's reader gives the prototype's curves to a hundredth of a cent. Where nothing is
+read the fader does nothing, and says so when that is the whole sound ("no pitch").
+
+**Hard cuts (0.5.0).** Nearly every file starts and ends with the sound running, and many hold takes with
+digital silence between them. A window that lies across such a cut holds a tone that stops, and both readers
+that work with windows went wrong there. Pitch: the frequency a line's phase gives is off by up to 0.4 bins
+beside a cut, whatever the line's own frequency, which is nothing for a line at 4 kHz and a semitone or more for
+one at 60 Hz. Recordings cut in two against the same recordings read whole were off by 50 cents on average over
+the 40 ms next to the cut, up to 180, where the sound itself hardly moves. Now the reading beside a cut counts
+only where the sound's lines lie high enough for that (`lowness`); elsewhere the curve stands still for those
+40 ms. That loses a real movement there on some low sounds and never adds one: over 15 recordings the two
+readings now lie 14 cents apart on average at the first frame after a cut and 19 at the last frame before one,
+and the two worst (95 and 200) are cuts through a sound that moves fast right there, whose last hundredths of a
+second are then not read. Tone: a frame across a cut reads as the click
+the cut would be, 18 dB and more in the bands where the sound has least, over the 30 ms either side, and onto a
+second sound that would be a thump. Such a frame now takes the reading of the nearest frame that lies whole on
+the sounding side (`wholeFrames` in `Movement.h`): on steady test sounds the reading beside a cut went from 18
+dB off to under 1. Loudness and Stereo read levels and their ratios and have no such fault.
+
 **What is shown (new in 0.4.2):** up to 0.4.1 an effect was shown as soon as one 3 s window of the sound scored
 above the cut. Measured with the app's own code that showed 1.6 effects per sound that are not there. Now every
 effect is checked against the whole sound before it is shown (`Verify.h`): per effect a small model reads what the
@@ -470,6 +579,11 @@ saturation with the false STUTTER now go onto the second sound better than nothi
 the median: HAAS WIDTH 31 (17), STEREO WIDTH 45 (-17), RING MOD 100 (16), BITCRUSH 91 (10), STUTTER 90 (-30). Of
 the 12 that are left, eight carry a false REVERB, three a false EXCITER, and one is an exciter whose own group
 goes on badly; the exciter is one of the effect types that have no engine of their own yet.
+
+What changed from 0.4.7 to 0.5.0: nothing on this scoreboard. MOVEMENT is not a found effect, and with its five
+faders in the middle it measures the sound and leaves it alone. Two cases of every effect type (38), the sound
+alone and onto a second sound, come out of 0.5.0 the same as out of 0.4.7 to the last bit
+(`Research/movement/same.py`).
 
 The price is in the third row of the first table, and it is uneven: flanger, phaser, filter sweep and a fixed filter are found less
 often than before (9, 39, 39 and 9 % against 36, 73, 61 and 34 %), because most of their earlier finds came with
@@ -570,6 +684,11 @@ filter, stutter, gated rhythm (from a larger 27-effect detector).
   own: every fader, Swap, Export, closing and clearing in the middle of an analysis, random clicks; and its
   exported files against the render test's, sample by sample (see its README).
 - `Tests/resample.cpp` the change of sample rate against the plain formula and its promises (`drresample`).
+- MOVEMENT: `Source/Core/Movement.h` (what moves in a sound, and the five faders put on), `Flow.h` (the reader of
+  pitch movement and the tape-speed reader); `Tests/move.cpp` the faders alone: `drmove a.wav b.wav|- prefix
+  pitch loudness tone stereo spectral` (see the top of the file); `Tools/move_parity.py` compares them with the
+  prototype. `Research/movement/` the Python side: `move.py`, `warp.py` and `flow.py` the prototypes the C++
+  matches, `test_move.py` and `test_flow.py` the test sounds with a known movement and the scores.
 
 ## Build
 `cmake -S . -B build && cmake --build build --config Release --target DefectRefect`

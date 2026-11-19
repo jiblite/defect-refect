@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(DefectRefect VERSION 0.4.7 LANGUAGES C CXX)
+project(DefectRefect VERSION 0.5.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -84,3 +84,7 @@ target_link_libraries(drmoving PRIVATE Threads::Threads)      # left and right a
 # The chorus engine without the UI (no JUCE): Tests/chorus.cpp
 add_executable(drchorus Tests/chorus.cpp)
 target_link_libraries(drchorus PRIVATE Threads::Threads)       # the frames are read on all cores
+
+# The MOVEMENT faders without the UI (no JUCE): Tests/move.cpp
+add_executable(drmove Tests/move.cpp)
+target_link_libraries(drmove PRIVATE Threads::Threads)         # the pitch reader's two looks run at the same time

@@ -63,6 +63,63 @@ with files at 44.1 or 96 kHz):
 | 96 kHz: noise up to 16 kHz | middle | -118.0 dB |
 | 44.1 and 96 kHz: a mixing crusher that is found (nine tenths crushed, a hold of three samples), alone | Amount far left | -119.3, -118.9 dB |
 
+## Build 0.5.0: the MOVEMENT group
+New in the app's own code: the MOVEMENT group in the fader panel (always there, in the left column), its pictures,
+and the pitch reader's thread (`PitchReader` in `Main.cpp`). That thread reads one sound after the other beside the
+worker, and its answer comes in while the user may be doing something else, so the runs were aimed at it.
+
+- `scen.sh` knows MOVEMENT's rows (`MROWS`, `MEND` in `exp`; its faders in `two` and `monkey`) and can wait for the
+  reader: with `WAIT=reading` (`quit`, `clear`, `swap`) or `EARLY=reading` (`exp`) a scenario goes on once the Pitch
+  fader's note says "reading", so the close, the clear, the Swap or the pull of the faders happens while the
+  reader's thread runs. It sees the note by comparing its place on the screen with a picture of the word
+  (`reading_tpl.png`, cut out of a `watch` run, which takes a picture every 2 s:
+  `convert watch_w21.png -crop 60x16+326+414 +repage reading_tpl.png`).
+- `exp_all.py` has the cases m1 .. m10, `exp_44.py` y10 .. y12. The two cases with the mixing crusher (x2, x4)
+  listed two rows that are not there (that crusher has no Sample Rate fader, so STUTTER sits one row higher);
+  their lists are right now, the figures are those of 0.4.7.
+
+Sanitizer: nothing, in any run, and the app closed by itself within 4 s with exit code 0 every time:
+asked to close 1 s and 9 s after "reading" appeared (two sounds; the first sound's pitch, then the second's) and
+with one sound of zaps; the first sound taken away while its pitch was read; Swap pressed while reading and then
+three times in a row; `two` (29 steps: every found fader, MOVEMENT's five with two sounds and three with one, the
+group switched off and on, Swap twice, Reset, Tone Match, Export); `monkey` twice (150 actions on a crushed and
+stuttered sound with a revving engine as the second sound, 120 on a vibrato with zaps as the second); the picture
+hook (75 pictures, 15 of them MOVEMENT's); 32 export runs.
+
+The app's exports against the render test's. The ten cases of 0.4.7 at 48 kHz and the nine at other rates, now
+with MOVEMENT in the window and its faders in the middle, give the figures of 0.4.7 case by case (the 96 kHz test
+tones are a new file: -121.3 dB). With MOVEMENT's faders moved:
+
+| sounds | MOVEMENT's faders | difference |
+|---|---|---|
+| a vibrato, alone | Pitch far left | -123.2 dB |
+| a revving engine, alone | all five far right | -119.6 dB |
+| the engine as the second sound under the vibrato | all five far right | -119.6 dB |
+| crusher and stutter on one sound, alone, both Amounts far left | Loudness and Tone far left | -120.3 dB |
+| the same onto a mono second sound | Loudness and Spectral far right | equal |
+| Haas delay, alone | Stereo and Spectral far left | -118.4 dB |
+| zaps as the second sound under the engine | all five far left | -119.5 dB |
+| the engine, alone | Pitch pulled far left while it said "reading" | -119.5 dB |
+| the engine under the vibrato | all five pulled far right while Pitch said "reading" | -119.6 dB |
+| a second sound of ten samples under the crushed sound | all five far right | equal |
+| 44.1 kHz: crusher and stutter, alone | Loudness, Tone and Spectral far left | -120.1 dB |
+| 96 kHz: stutter onto a 44.1 kHz second sound | all five far right | -116.5 dB |
+| 44.1 kHz: crusher and stutter, alone | Pitch far right | -120.6 dB |
+
+Two of these say less than they seem to. The ten samples come out as silence from both (the first sound is silent
+at that time, and Loudness at far right brings its level). On the 44.1 kHz sound the reader follows nothing (the
+crusher's folded lines move against the sound's own), so the fader says "no pitch" and the export is the one with
+the fader in the middle, to the sample; on the same sound made at 48 kHz with another crusher it follows 47 %.
+The two cases pulled while "reading" come out like the render test's files for those fader positions, and the
+second is, to the sample, the file of the same pull made after the reading: the result waits for the answer. The
+release build of the app, run on two of the cases (the engine under the vibrato, and the engine alone pulled while
+"reading"), gave the same files as the sanitizer build, to the sample.
+
+The memory check ran its two new stages for this build (`Research/moving/memcheck.py move` and `movefx`: 80 runs,
+522 renders, every one clean). Its older stages keep MOVEMENT's faders in the middle, where the render test measures
+no movement and runs the code of 0.4.7, and gives the same files bit for bit (`Research/movement/same.py`, 38 cases);
+they were not run again.
+
 ## What it does not cover
 Dropping a file onto the window and the Open dialog (the sounds come in on the command line), playback (no sound
 device here), the Export IR dialogs, and anything that only Windows or the Mac does differently. The JUCE objects

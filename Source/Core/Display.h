@@ -551,6 +551,150 @@ inline Plot stutterPlot (const FoundFx& F, const Params& p, double s, bool onSec
     P.caption = c; return P;
 }
 
+// The MOVEMENT group (Movement.h): the picture of one of its five faders (which: "pitch", "loudness", "tone", "stereo"
+// or "spectral") with the faders as p has them. Pitch, Loudness, Tone and Stereo run over the time of the sound worked
+// on: the strong line is what the result does, in the colour of the sound worked on (teal the first sound, orange the
+// second); with two sounds the thin teal line is what the first sound does at the same time. Spectral runs over
+// frequency: the overall colours. Curves are drawn as they are measured; a pitch change that carries the sound's own
+// curves along with it is not drawn into them.
+namespace disp
+{
+// A curve over time out of T values, one every `step` seconds, in at most about 600 points (each the average of its stretch).
+template <typename At> Curve timeCurve (size_t T, double step, double span, At&& at, int colour, bool dim = false)
+{
+    Curve c; c.colour = colour; c.dim = dim; if (T == 0) return c;
+    const size_t k = std::max<size_t> (1, (T + 599) / 600);
+    for (size_t a = 0; a < T; a += k)
+    {
+        const size_t b = std::min (T, a + k); double sum = 0; for (size_t t = a; t < b; ++t) sum += at (t);
+        c.pts.push_back ({ std::min (span, step * 0.5 * (double) (a + b - 1)), sum / (double) (b - a) });
+    }
+    return c;
+}
+inline double reach (const Curve& c, double m = 0) { for (auto& q : c.pts) m = std::max (m, std::abs (q.second)); return m; }
+inline std::string percent (double share) { return num (100.0 * share, 0) + " %"; }
+} // namespace disp
+inline Plot movementPlot (const FoundFx& F, const Params& p, const std::string& which, bool two)
+{
+    using namespace disp;
+    Plot P; P.title = F.title + ": " + (which == "pitch" ? "Pitch" : which == "loudness" ? "Loudness" : which == "tone" ? "Tone" : which == "stereo" ? "Stereo" : "Spectral");
+    const move::Found* own = F.moveOwn.get(); const move::Found* other = two ? F.moveOther.get() : nullptr;
+    if (own == nullptr || (two && other == nullptr)) { P.caption = two ? "Reading how the two sounds move..." : "Reading how the sound moves..."; return P; }
+    const double v = std::clamp (get (p, which.c_str(), 1.0), 0.0, 2.0), span = std::max ((double) own->n / SR, 1e-3); const int mine = two ? 1 : 0;
+    const std::string strong = two ? " The strong line is what the result does." : "";
+    auto timeAxes = [&] (const char* unit) { P.x0 = 0; P.x1 = span; P.xLabel = "s"; P.yLabel = unit; P.xTicks = ticks (0, span); };
+    auto around = [&] (double m) { P.y1 = 1.15 * m; P.y0 = -P.y1; P.yTicks = ticks (P.y0, P.y1); };
+    if (which == "pitch")
+    {
+        timeAxes ("cents"); const Vec& o = own->pitch.cents; const Vec* x = other != nullptr ? &other->pitch.cents : nullptr;
+        if (o.empty() || (x != nullptr && x->empty())) { around (100); P.caption = "Reading the pitch movement... The other faders work meanwhile."; return P; }
+        auto share = [] (const move::Pitch& q) { size_t c = 0; for (char h : q.held) c += h != 0 ? 1 : 0; return q.held.empty() ? 0.0 : (double) c / (double) q.held.size(); };
+        const double so = share (own->pitch), sx = other != nullptr ? share (other->pitch) : 0.0, st = (double) move::STEP / SR; const size_t T = o.size();
+        Curve r = timeCurve (T, st, span, [&] (size_t t) { return x != nullptr && v > 1.0 ? (2.0 - v) * o[t] + (v - 1.0) * move::held (*x, t) : v * o[t]; }, mine);
+        double lo = 0, hi = 0; for (double c : o) { lo = std::min (lo, c); hi = std::max (hi, c); }
+        double m = std::max ({ 50.0, reach (r), -lo, hi });
+        if (x != nullptr) { Curve c = timeCurve (T, st, span, [&] (size_t t) { return move::held (*x, t); }, 0, true); m = reach (c, m); P.curves.push_back (std::move (c)); }
+        P.curves.push_back (std::move (r)); around (m);
+        if (! two)
+            P.caption = so <= 0.0 ? "No pitch that can be followed in this sound (noise, or several things at once). This fader does nothing here."
+                      : ! move::moves (o) ? "The pitch is followed on " + percent (so) + " of the sound and stands still: nothing to take out or to double."
+                      : "The sound's pitch movement over a range of " + num (hi - lo, 0) + " cents, followed on " + percent (so) + " of the sound (the line under the wave shows where).";
+        else
+            P.caption = std::string ("Orange: the second sound's pitch movement ") + (so <= 0.0 ? "(none that can be followed)" : "(followed on " + percent (so) + ")")
+                      + ". Teal: the first sound's " + (sx <= 0.0 ? "(none that can be followed)" : "(followed on " + percent (sx) + ")") + "." + strong;
+    }
+    else if (which == "loudness")
+    {
+        timeAxes ("dB"); const Vec& d = own->loud.db; const double ref = own->loud.ref, st = (double) move::LSTEP / SR, low = -48.0; const size_t T = d.size();
+        P.y0 = -12; P.y1 = 6;
+        if (ref < -190.0) { P.caption = two ? "The second sound is silent." : "The sound is silent."; return P; }
+        const bool has = other != nullptr && other->loud.ref > -190.0;
+        auto o = [&] (size_t t) { return d[t] - ref; };
+        auto xo = [&] (size_t t) { return has ? move::held (other->loud.db, t) - other->loud.ref : 0.0; };
+        Curve r = timeCurve (T, st, span, [&] (size_t t) { return std::max (low, o (t) + move::loudGain (o (t), other != nullptr ? move::held (other->loud.db, t) - other->loud.ref : 0.0, other != nullptr, v)); }, mine);
+        double top = 0, bottom = 0; for (auto& q : r.pts) { top = std::max (top, q.second); bottom = std::min (bottom, q.second); }
+        if (has) { Curve c = timeCurve (T, st, span, [&] (size_t t) { return std::max (low, xo (t)); }, 0, true); for (auto& q : c.pts) { top = std::max (top, q.second); bottom = std::min (bottom, q.second); } P.curves.push_back (std::move (c)); }
+        for (size_t t = 0; t < T; ++t) { top = std::max (top, o (t)); bottom = std::min (bottom, std::max (low, o (t))); }
+        P.curves.push_back (std::move (r)); P.y1 = std::clamp (std::ceil (top + 2.0), 6.0, 30.0); P.y0 = std::clamp (std::floor ((bottom - 3.0) / 6.0) * 6.0, low, -12.0);     // the axis holds the level as found too
+        const double every = P.y1 - P.y0 > 30.0 ? 12.0 : 6.0; for (double t = std::floor (P.y1 / every) * every; t > P.y0 + 0.3 * every; t -= every) P.yTicks.push_back (t);
+        for (auto& c : P.curves) for (auto& q : c.pts) q.second = std::max (q.second, P.y0);
+        Vec in; for (size_t t = 0; t < T; ++t) if (o (t) > -40.0) in.push_back (o (t));
+        const double range = in.size() > 2 ? percentile (in, 95.0) - percentile (in, 5.0) : 0.0;
+        P.caption = two ? "Orange: the second sound's level over time, against its own level. Teal: the first sound's." + strong
+                        : "The sound's level over time, against its own level (0 dB). " + (range < 1.0 ? std::string ("It hardly moves.") : "Most of the time it stays within " + num (range, 0) + " dB.");
+    }
+    else if (which == "tone")
+    {
+        timeAxes ("dB"); around (3); const move::ToneMove& M = own->tone; const int NBD = move::NBAND, half = NBD / 2;
+        if (M.T < 1 || M.m.empty()) { P.caption = two ? "The second sound is silent." : "The sound is silent."; return P; }
+        auto sides = [&] (const Vec& w, double& wl, double& wh) { wl = wh = 0; for (int b = 0; b < NBD; ++b) (b < half ? wl : wh) += w[(size_t) b]; return wl >= 0.5 && wh >= 0.5; };
+        double wl = 0, wh = 0;
+        if (! sides (M.w, wl, wh)) { P.caption = std::string (two ? "The second sound" : "The sound") + " has hardly any " + (wh < 0.5 ? "highs" : "lows") + ": no balance of highs and lows to draw. The fader still works band by band."; return P; }
+        const Vec g = move::toneGain (M.m, M.w, other != nullptr ? &other->tone : nullptr, v); const size_t T = (size_t) M.T; const double st = (double) move::STEP / SR;
+        auto bright = [&] (const double* row, const double* add, const Vec& w, double a, double b)        // highs against lows, each the weighted average of its bands
+        {
+            double l = 0, h = 0; for (int k = 0; k < NBD; ++k) (k < half ? l : h) += w[(size_t) k] * (row[k] + (add != nullptr ? add[k] : 0.0));
+            return h / b - l / a;
+        };
+        Curve r = timeCurve (T, st, span, [&] (size_t t) { return bright (M.row ((long) t), g.data() + t * (size_t) NBD, M.w, wl, wh); }, mine);
+        double m = std::max (3.0, reach (r)), most = 0; for (size_t t = 0; t < T; ++t) { const double b = bright (M.row ((long) t), nullptr, M.w, wl, wh); most = std::max (most, std::abs (b)); } m = std::max (m, most);
+        double xl = 0, xh = 0;
+        if (other != nullptr && other->tone.T > 0 && sides (other->tone.w, xl, xh))
+        {
+            const move::ToneMove& X = other->tone;
+            Curve c = timeCurve (T, st, span, [&] (size_t t) { return bright (X.row ((long) std::min (t, (size_t) X.T - 1)), nullptr, X.w, xl, xh); }, 0, true);
+            m = reach (c, m); P.curves.push_back (std::move (c));
+        }
+        P.curves.push_back (std::move (r)); around (m);
+        P.caption = two ? "Highs (from 1 kHz) against lows over time, up = brighter. Orange: the second sound's. Teal: the first sound's." + strong
+                        : "Highs (from 1 kHz) against lows over time, around the sound's own average: up = brighter. It moves by up to " + num (most, 0) + " dB.";
+    }
+    else if (which == "stereo")
+    {
+        timeAxes ("dB"); around (3); const move::Space& S = own->space; const size_t T = S.pan.size(); const double st = (double) move::STEP / SR;
+        const bool brings = other != nullptr && ! other->space.mono;
+        if (S.mono && ! brings) { P.caption = two ? "Both sounds are mono: nothing moves between the sides." : "The sound is mono: nothing moves between its sides."; return P; }
+        Vec tp, tw; move::spaceTargets (S.pan, S.width, S, other != nullptr && ! (S.mono && v <= 1.0) ? &other->space : nullptr, v, tp, tw);
+        Curve r = timeCurve (T, st, span, [&] (size_t t) { return tp[t]; }, mine); double m = std::max (3.0, reach (r)); for (double a : S.pan) m = std::max (m, std::abs (a));
+        if (brings) { Curve c = timeCurve (T, st, span, [&] (size_t t) { return S.pan0 + move::held (other->space.pan, t) - other->space.pan0; }, 0, true); m = reach (c, m); P.curves.push_back (std::move (c)); }
+        if (! S.mono) { Curve c = timeCurve (T, st, span, [&] (size_t t) { return tw[t] - S.width0; }, 2, true); m = reach (c, m); P.curves.push_back (std::move (c)); }
+        P.curves.push_back (std::move (r)); around (std::min (m, 30.0));
+        P.caption = two ? std::string (S.mono ? "The second sound is mono: the right half gives it the first sound's movement. " : "") + "Strong line: where the result sits over time, in dB towards the right. Teal: the first sound's movement. Grey: the width against its average."
+                        : "Strong line: where the sound sits over time, in dB towards the right (down = left). Grey: how its width changes, against its average.";
+    }
+    else
+    {
+        freqAxes (P, -54, 12); const Vec& so = own->spec; const int NB = tone::NB;
+        auto silent = [NB] (const Vec& q) { return q.size() != (size_t) NB || *std::max_element (q.begin(), q.end()) < -250.0; };
+        if (silent (so)) { P.caption = two ? "The second sound is silent." : "The sound is silent."; return P; }
+        const Vec co = move::colour (so), c = tone::softCap (move::specCurve (so, other != nullptr ? &other->spec : nullptr, v)); const double top = *std::max_element (co.begin(), co.end());
+        std::vector<int> ok; for (int k = 0; k < NB; ++k) if (co[(size_t) k] > top - 60.0 && (double) k * tone::binHz >= 20.0) ok.push_back (k);
+        auto over = [&] (const Vec& q, double off, int colour, bool dim)        // a curve on the bins as a line over frequency
+        {
+            Curve cv; cv.colour = colour; cv.dim = dim;
+            for (int i = 0; i <= 240; ++i)
+            {
+                const double f = 20.0 * std::pow (1000.0, i / 240.0), u = std::min (f / tone::binHz, (double) (NB - 1)); const int k = std::min ((int) u, NB - 2);
+                cv.pts.push_back ({ f, std::clamp (q[(size_t) k] + (q[(size_t) k + 1] - q[(size_t) k]) * (u - (double) k) + off, P.y0, P.y1) });
+            }
+            return cv;
+        };
+        auto lands = [&] (const Vec& target, double end)        // the height at which the result lies on a target colour with the fader at that end (the sound keeps its power, so that is not the target's own height)
+        {
+            const Vec ce = tone::softCap (move::specCurve (so, other != nullptr ? &other->spec : nullptr, end)); Vec vals; vals.reserve (ok.size());
+            for (int k : ok) vals.push_back (co[(size_t) k] + ce[(size_t) k] - target[(size_t) k]);
+            return vals.empty() ? 0.0 : median (vals);
+        };
+        P.curves.push_back (over (move::neutral(), lands (move::neutral(), 0.0) - top, 2, true));
+        if (other != nullptr && ! silent (other->spec)) { const Vec cx = move::colour (other->spec); P.curves.push_back (over (cx, lands (cx, 2.0) - top, 0, true)); }      // the first sound's colour
+        Vec res (co.size()); for (size_t k = 0; k < co.size(); ++k) res[k] = co[k] + c[k];
+        P.curves.push_back (over (res, -top, mine, false)); P.curves.back().fill = true;
+        P.caption = two ? "Strong line: the result's overall colour, in broad strokes. Teal: the first sound's, where far right brings it. Grey: the neutral colour, where far left brings it."
+                        : "The sound's overall colour in broad strokes. Grey: the neutral colour (the same power in every octave), where far left brings it.";
+    }
+    return P;
+}
+
 // s: the effect's Amount fader (0..2); p: its settings with the settings faders applied. onSecond: the effect
 // goes onto a second sound (only the room's picture depends on it).
 inline Plot makePlot (const FoundFx& F, const Params& scaledP, double s, bool onSecond = false)

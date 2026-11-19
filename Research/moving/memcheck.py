@@ -1,7 +1,7 @@
 # Memory check of the app's whole processing (drrender built with -fsanitize=address,undefined): every engine's group on
 # short and long first sounds, alone and with a second sound that is shorter, as long and longer, the faders in the middle
 # and at both ends.
-#   python3 memcheck.py [jobs] [rest|room|long|new|tiny|soft]    writes /dev/shm/mc/<name>.log, prints one line per run
+#   python3 memcheck.py [jobs] [rest|room|long|new|tiny|soft|move|movefx]    writes /dev/shm/mc/<name>.log, prints one line per run
 # Two stages side by side: give each a folder of its own (MC_DIR=/dev/shm/mc2/ in the environment).
 # Another build of the render test: MC_EXE=/path/to/drrender_asan in the environment.
 import sys, os, json, subprocess, numpy as np, soundfile as sf
@@ -22,7 +22,7 @@ firsts += [('sweepLong', '/dev/shm/mvl/swL07_wet.wav'), ('sweepHalf', '/dev/shm/
 seconds = [('-', '-'), ('short', '/dev/shm/chl/shortD_dry.wav'), ('six', w('six', load(SETS + 'filtersweep/swp_mda_00/', 'B')['dry'])), ('long', '/dev/shm/mvl/clean00.wav')]
 sets = [('middle', []), ('low', [k + '=0' for k in MOVE]), ('high', [k + '=2' for k in MOVE]), ('off', [k + '.amount=0' for k in ALL]), ('double', [k + '.amount=2' for k in ALL] + [k + '=2' for k in MOVE]), ('mixed', [k + '.amount=0.5' for k in ALL] + [k + '=0.37' for k in MOVE])]
 def one(job):
-    name, first, sure = job; args = []; i = 0; snd = seconds
+    name, first, sure = job[:3]; args = []; i = 0; snd = job[3] if len(job) > 3 else seconds; sets = job[4] if len(job) > 4 else globals()['sets']      # a job may bring its own second sounds and fader sets
     if sure == -1: snd = [('tiny', first)]; first = '/tmp/claude-0/v2/newfx/mc/both.wav'; sure = None      # the tiny sound as the second one, under a first sound with a crusher and a stutter
     for sn, sp in snd:
         for fn, fad in sets:
@@ -62,5 +62,34 @@ if 'tiny' in sys.argv:           # sounds an engine could trip over (mknew.py): 
     N = '/tmp/claude-0/v2/newfx/mc/'; seconds = [seconds[0], seconds[2], ('ten', N + 'secTen.wav')]; sets = [sets[0], sets[3], sets[4]]
     tiny = [(os.path.basename(p)[:-4], p) for p in sorted(glob.glob(N + 't_*.wav'))]
     jobs = [(n, p, None) for n, p in tiny] + [(n + '_s5', p, 5) for n, p in tiny] + [('six_onto_' + os.path.basename(p)[2:-4], p, -1) for p in sorted(glob.glob(N + 't_n*.wav'))]
+if 'move' in sys.argv:           # the MOVEMENT faders (build 0.5.0): on sounds that move, with hard cuts and gaps of silence, without a pitch, with found effects, at other rates, mono, long, and on the sounds an engine could trip over; alone and onto second sounds (the tiny ones and a long one among them)
+    import glob
+    N = '/tmp/claude-0/v2/newfx/mc/'; MV = ['movement.pitch', 'movement.loudness', 'movement.tone', 'movement.stereo', 'movement.spectral']; rng = np.random.default_rng(50); t = np.arange(6 * 48000) / 48000.0
+    def tone(f0, bend): ph = 2 * np.pi * np.cumsum(f0 * 2 ** (bend / 1200.0)) / 48000.0; return sum(np.sin(k * ph + k) / k for k in range(1, 30))
+    a = 0.1 * tone(110.0, 40 * np.sin(2 * np.pi * 5 * t) + 200 * t / 6) * (1 + 0.6 * np.sin(2 * np.pi * 0.4 * t)); pan = 0.5 + 0.4 * np.sin(2 * np.pi * 0.3 * t)
+    moving = w('mvTone', np.stack([a * (1 - pan), a * pan + 0.002 * rng.standard_normal(len(t))], 1))              # a vibrato on a glide, a swell, a pan sweep
+    b = 0.1 * tone(180.0, 0 * t); g = np.stack([b + 0.02 * rng.standard_normal(len(t)), 0.7 * np.roll(b, 100) + 0.02 * rng.standard_normal(len(t))], 1)
+    g[48000:48000 + 960] = 0; g[2 * 48000:2 * 48000 + 9600] = 0; g[3 * 48000:3 * 48000 + 4800, 0] = 0; g[4 * 48000:4 * 48000 + 300] = 0; g[5 * 48000:, 0] = 0; g[5 * 48000 + 700:, 1] = 0
+    g[5 * 48000 + 5000:5 * 48000 + 5600] = 0.1 * rng.standard_normal((600, 2)); g[:2400] *= (np.linspace(0, 1, 2400) ** 4)[:, None]
+    gaps = w('mvGaps', g)                                                                                           # takes with digital silence between them, a cut on one side only, a blip shorter than a frame, a quiet start
+    hiss = w('mvNoise', 0.05 * rng.standard_normal((6 * 48000, 2)))                                                 # nothing whose pitch could be followed
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'movement')); import test_flow; TC = test_flow.cases()
+    zaps = [('zaps%d' % i, w('mvZaps%d' % i, np.stack([TC[n][0]] * 2, 1))) for i, n in enumerate(('zaps apart', 'zaps back to back', 'zaps overlapping'))]       # no sustained sound: pieces whose place the reader has to prove, or leaves out
+    ends = [('flat', [k + '=0' for k in MV]), ('double', [k + '=2' for k in MV])]
+    msets = ends + [('mixed', ['movement.pitch=0.5', 'movement.loudness=1.5', 'movement.tone=0.37', 'movement.stereo=1.63', 'movement.spectral=0.2'] + [k + '.amount=0.5' for k in ALL]),
+                    ('withFound', [k + '=2' for k in MV] + [k + '.amount=2' for k in ALL] + [k + '=2' for k in MOVE]), ('pitchOnly', ['movement.pitch=0.5'])]
+    alone = [('-', '-')]; msec = [alone[0], seconds[2], ('ten', N + 'secTen.wav'), ('mono', N + 'secMono.wav'), ('s44', N + 'sec44.wav'), ('gaps', gaps), ('noise', hiss)]
+    jobs = [('mv_' + n, q, None, msec, msets) for n, q in (('tone', moving), ('gaps', gaps), ('noise', hiss), ('both', N + 'both.wav'), ('both44', N + 'both44.wav'), ('stut96', N + 'stut96.wav'), ('crushMono', N + 'crushMono.wav'))]
+    jobs += [('mv_both_s5', N + 'both.wav', 5, [alone[0], seconds[2]], msets), ('mv_long', '/dev/shm/mvl/clean00.wav', None, alone, msets), ('mv_ontoLong', moving, None, [('long', '/dev/shm/mvl/clean00.wav')], ends[:1] + msets[2:3])]
+    jobs += [('mv_' + n, q, None, [alone[0], seconds[2]], ends) for n, q in zaps] + [('mv_onto_zaps', moving, None, zaps, ends)]
+    tiny = sorted(glob.glob(N + 't_*.wav'))
+    jobs += [('mv_' + os.path.basename(q)[:-4], q, None, alone, ends) for q in tiny] + [('mv_onto_' + os.path.basename(q)[2:-4], moving, None, [('tiny', q)], ends) for q in tiny]
+if 'movefx' in sys.argv:         # the MOVEMENT faders next to every effect type that is found: where the first sound is measured without its level movement or its moving filter (Estimate.h, movementBase), and next to the others; alone and onto a second sound
+    import glob
+    MV = ['movement.pitch', 'movement.loudness', 'movement.tone', 'movement.stereo', 'movement.spectral']
+    msets = [('flat', [k + '=0' for k in MV]), ('double', [k + '=2' for k in MV]), ('withFound', [k + '=2' for k in MV] + [k + '.amount=2' for k in ALL] + [k + '=2' for k in MOVE]),
+             ('mixed', ['movement.pitch=0.5', 'movement.loudness=1.5', 'movement.tone=0.37', 'movement.stereo=1.63', 'movement.spectral=0.2'] + [k + '.amount=0.5' for k in ALL])]
+    rest = [(fam + 'R', w(fam + 'R', load(sorted(glob.glob(SETS + fam + '/*/'))[0], 'A')['wet'])) for fam in ('tone', 'distortion', 'bitcrush', 'ringmod', 'stutter', 'exciter', 'saturation', 'filter')]
+    jobs = [('mx_' + n, q, None, [seconds[0], seconds[2]], msets) for n, q in [f for f in firsts if f[0].endswith('6')] + rest] + [('mx_sweepHalf', '/dev/shm/mvl/swH01_wet.wav', None, [seconds[0]], msets[:2])]
 with ThreadPoolExecutor(int(sys.argv[1]) if len(sys.argv) > 1 else 3) as ex:
     for line in ex.map(one, jobs): print(line, flush=True)

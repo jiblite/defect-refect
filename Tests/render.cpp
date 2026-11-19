@@ -17,6 +17,9 @@
 //   group (faders: <group>.amount, <group>.speed).
 //   The verifier's models are read from ResourcesDir/verify.bin (Source/Core/Verify.h): the scores are its scores, as in the app.
 //   match=1: two sounds with Tone Match switched on (its faders: tonematch.amount, tonematch.detail)
+//   The MOVEMENT group is always there (faders: movement.pitch, movement.loudness, movement.tone, movement.stereo, movement.spectral;
+//   0 = flat, 1 = the sound's own, 2 = twice or, with two sounds, the first sound's). What moves in a sound is measured when a block
+//   moves one of them: the first sound without the level movement and the moving filter that are shown, as in the app.
 #include <chrono>
 #include <fstream>
 #include <iostream>
@@ -168,6 +171,16 @@ int main (int argc, char** argv)
     const auto found0 = dr::estimate (I, src, cut, nullptr, rf, tf, ef, lf, wf, mf, cf, more);
     auto t2 = clk::now();
     for (auto& F : found0) { std::cout << F.name << " p=" << F.prob << (F.room ? " (room engine)" : F.tone ? " (tone engine)" : F.echo ? " (echo engine)" : F.level ? " (level engine)" : F.sweep ? " (flanger engine)" : F.moving ? " (moving-tone engine)" : F.chorus ? " (chorus engine)" : F.sides ? " (sides engine)" : F.ring ? " (ring engine)" : F.crush ? " (crush engine)" : F.stutter ? " (stutter engine)" : ""); for (auto& [k, v] : F.est) std::cout << " " << k << "=" << v; std::cout << "\n"; }
+    // what moves in a sound by itself (the MOVEMENT faders): measured when a block asks for it, the first sound once
+    auto movementOf = [] (const dr::Stereo& plainOn, const dr::Stereo& pitchOn, const char* which)
+    {
+        auto f = std::make_shared<dr::move::Found> (dr::move::findPlain (plainOn)); f->pitch = dr::move::track (pitchOn);
+        size_t held = 0; double lo = 0, hi = 0; for (char h : f->pitch.held) held += h != 0 ? 1 : 0; for (double c : f->pitch.cents) { lo = std::min (lo, c); hi = std::max (hi, c); }
+        std::cout << "movement of the " << which << " sound: pitch followed on " << (f->pitch.held.empty() ? 0.0 : 100.0 * (double) held / (double) f->pitch.held.size()) << " % over " << hi - lo << " cents, level " << f->loud.ref << " dB"
+                  << (f->space.mono ? ", mono" : ", stereo") << "\n";
+        return std::shared_ptr<const dr::move::Found> (f);
+    };
+    std::shared_ptr<const dr::move::Found> moveFirst;
     for (auto& B : blocks)
     {
         const bool two = B.tgt != "-"; dr::Stereo tgt;
@@ -194,6 +207,11 @@ int main (int argc, char** argv)
                 const dr::EchoIr ir = dr::echoIr (*F.echo, dr::scaled (F, fad)); const dr::Stereo& h = ir.h;
                 std::cout << "echoes as an impulse response " << (double) h.size() / 48000.0 << " s, peak " << h.peak() << ", turned down by " << ir.downDb << " dB\n"; writeWav (B.echoIr, h);
             }
+        if (dr::movementFaders (fad).any())
+        {
+            if (moveFirst == nullptr) { const std::string key = dr::movementBaseKey (found0); if (! key.empty()) std::cout << "movement: the first sound is measured without " << key << "\n"; moveFirst = movementOf (dr::movementBase (src, found0), src, "first"); }
+            found.insert (found.begin(), dr::movementFx (two ? movementOf (tgt, tgt, "second") : moveFirst, two ? moveFirst : nullptr));
+        }
         auto out = two ? dr::applyTo (tgt, found, fad) : dr::reshape (src, found, fad);
         { size_t hot = 0; for (size_t i = 0; i < out.size(); ++i) hot += std::max (std::abs (out.l[i]), std::abs (out.r[i])) > 1.0;
           const dr::Stereo& in = two ? tgt : src;

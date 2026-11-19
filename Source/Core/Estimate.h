@@ -13,6 +13,7 @@
 #include "Ring.h"
 #include "Crush.h"
 #include "Stutter.h"
+#include "Movement.h"
 #include "Effects.h"
 #include "Hand.h"
 #include "Inspector.h"
@@ -326,6 +327,7 @@ struct FoundFx
     std::shared_ptr<const ring::Found> ring;        // the tone the ring engine found the sound multiplied by (RING MOD): its faders work that engine (see ringFx)
     std::shared_ptr<const crush::Found> crush;      // the grid of values and the hold the crush engine found (BITCRUSH): its faders work that engine (see crushFx)
     std::shared_ptr<const stutter::Found> stutter;  // the slices the stutter engine found played again (STUTTER): its faders work that engine (see stutterFx)
+    std::shared_ptr<const move::Found> moveOwn, moveOther;   // the MOVEMENT group: what moves in the sound worked on, and in the other sound (two sounds); see movementFx
     Vec curveL, curveR;                        // TONE MATCH, for the picture and Export IR: the curves of the last render (left, right; Amount in the middle)
     Vec foundL, foundR;                        // the same with Detail in the middle too
 };
@@ -336,7 +338,7 @@ inline std::string titleFor (const std::string& f)
         { "width", "STEREO WIDTH" }, { "delay", "DELAY" }, { "reverb", "REVERB" }, { "distortion", "DISTORTION" }, { "bitcrush", "BITCRUSH" },
         { "filtersweep", "FILTER SWEEP" }, { "tremolo", "TREMOLO" }, { "autopan", "AUTO PAN" },
         { "saturation", "SATURATION" }, { "exciter", "EXCITER" }, { "ringmod", "RING MOD" }, { "filter", "FILTER" }, { "stutter", "STUTTER" }, { "gatedrhythm", "GATED RHYTHM" },
-        { "comb", "COMB FILTER" }, { "tonematch", "TONE MATCH" } };
+        { "comb", "COMB FILTER" }, { "tonematch", "TONE MATCH" }, { "movement", "MOVEMENT" } };
     auto it = t.find (f); return it == t.end() ? f : it->second;
 }
 
@@ -1058,6 +1060,58 @@ inline void mergeNew (Inspection& I, const Inspection& I27)
             if (! isNewFx (f)) { auto q = I27.prob.find (f); if (q != I27.prob.end() && q->second < 0.15) v = std::min (v, q->second); }
 }
 
+// ---------------------------------------------------------------- the MOVEMENT group (Movement.h)
+// Always there, whatever was found: five faders for what moves in a sound by itself, with no effect on it. Each runs
+// 0 .. 2: far left = flat, middle = the sound's own (nothing is done), far right = the sound's own movement twice (one
+// sound) or the first sound's movement in place of the second sound's own (two sounds). Not a found effect, so the
+// group shows no sureness. own: what moves in the sound worked on (one sound: the first; two sounds: the second);
+// other: in the first sound, with two sounds. Either may still be missing (not measured yet): the faders then do nothing.
+// What an engine shows as an effect of its own stays with that group: the first sound is measured without the level
+// movement and the moving filter that are shown (movementBase), so a tremolo or a filter sweep is not counted twice.
+// One sound: the faders of the found effects come first, the movement faders after them (before a found stutter, whose
+// repeats close up or spread the sound). Two sounds: the movement comes first and the first sound's effects go on top,
+// as they sit on the first sound itself.
+inline FoundFx movementFx (std::shared_ptr<const move::Found> own, std::shared_ptr<const move::Found> other)
+{
+    FoundFx F; F.name = "movement"; F.title = titleFor ("movement"); F.prob = -1.0; F.moveOwn = std::move (own); F.moveOther = std::move (other);
+    F.est = { { "pitch", 1.0 }, { "loudness", 1.0 }, { "tone", 1.0 }, { "stereo", 1.0 }, { "spectral", 1.0 } };
+    auto K = [] (const char* key, const char* label, std::string one, std::string two)
+    {
+        Knob k; k.key = key; k.id = std::string ("movement.") + key; k.label = label; k.neutral = 0; k.lo = 0; k.hi = 2; k.ownTip = true; k.tip = std::move (one); k.tip2 = std::move (two); return k;
+    };
+    F.knobs = {
+        K ("pitch", "Pitch",
+           "How the sound's pitch moves over time: a glide, a pass-by, a vibrato. Left = the movement taken out, the pitch stands still. Middle = the sound's own. Right = the movement twice. "
+           "It works like tape speed, so nothing warbles; the length stays. It needs a pitch that can be followed: on noise or on several things at once this fader does nothing. A sound of more than ten minutes is not read.",
+           "Left = the second sound's own pitch movement taken out. Middle = its own. Right = the first sound's pitch movement in its place, at the same times. "
+           "It works like tape speed, so nothing warbles; the length stays. It needs a pitch that can be followed: on noise or on several things at once there is nothing to take out or to bring. A sound of more than ten minutes is not read."),
+        K ("loudness", "Loudness",
+           "How the sound's level moves over time: a swell, a fade, a pass-by. Left = held even. Middle = the sound's own. Right = the movement twice. Single hits keep their edges.",
+           "Left = the second sound's level held even. Middle = its own. Right = the first sound's level movement in its place, at the same times."),
+        K ("tone", "Tone",
+           "How the sound's tone moves over time: getting brighter or darker, opening up. Left = the tone held still. Middle = the sound's own. Right = the movement twice. The overall colour itself is the Spectral fader.",
+           "Left = the second sound's tone held still. Middle = its own. Right = the first sound's tone movement in its place, at the same times. The overall colour itself is the Spectral fader."),
+        K ("stereo", "Stereo",
+           "How the sound moves between left and right, and how its width changes. Left = held still where it sits on average. Middle = the sound's own. Right = the movement twice.",
+           "Left = the second sound held still where it sits on average. Middle = its own. Right = the first sound's movement between the sides and in width in its place, at the same times."),
+        K ("spectral", "Spectral",
+           "The sound's overall colour: its long-term spectrum in broad strokes. Left = brought to a neutral colour, the same power in every octave. Middle = the sound's own. Right = its own colour once more.",
+           "The sound's overall colour: its long-term spectrum in broad strokes. Left = the second sound brought to a neutral colour. Middle = its own. Right = the first sound's colour (Tone Match does the same in detail).") };
+    return F;
+}
+// The five fader values (0 .. 2, 1 = nothing is done) out of the fader values by id.
+inline move::Faders movementFaders (const std::map<std::string, double>& faders)
+{
+    auto v = [&] (const char* id) { auto it = faders.find (id); return it == faders.end() ? 1.0 : std::clamp (it->second, 0.0, 2.0); };
+    move::Faders f; f.pitch = v ("movement.pitch"); f.loudness = v ("movement.loudness"); f.tone = v ("movement.tone"); f.stereo = v ("movement.stereo"); f.spectral = v ("movement.spectral");
+    return f;
+}
+// Is this group one whose effect counts as the effect's own movement, not as the sound's: a level movement (TREMOLO,
+// AUTO PAN, GATED RHYTHM) or a moving filter (PHASER, FILTER SWEEP)?
+inline bool movesByItself (const FoundFx& F) { return F.level != nullptr || F.moving != nullptr; }
+// Which of those are among the groups shown, as one word: what movementBase takes out ("" = nothing).
+inline std::string movementBaseKey (const std::vector<FoundFx>& found) { std::string k; for (auto& F : found) if (movesByItself (F)) k += F.name + ";"; return k; }
+
 // The settings with each setting fader applied (fader value v in 0..2, 1 = as found).
 inline Params scaled (const FoundFx& F, const std::map<std::string, double>& faders)
 {
@@ -1098,10 +1152,16 @@ inline Stereo applyTo (const Stereo& target, const std::vector<FoundFx>& found, 
                        FoundFx* shown = nullptr)
 {
     Stereo y = target;
+    for (auto& F : found)       // what moves in this sound by itself, and the first sound's movement in its place: before the first sound's effects
+    {
+        if (F.name != "movement" || F.moveOwn == nullptr || (cancelled && cancelled())) continue;
+        const move::Faders mf = movementFaders (faders);
+        if (mf.any() && F.moveOwn->n == (long) y.size()) { Stereo r = move::apply (y, *F.moveOwn, F.moveOther.get(), mf, cancelled); if (r.size() == y.size()) y = std::move (r); }
+    }
     for (auto& F : found)
     {
         if (cancelled && cancelled()) break;
-        if (F.name == "tonematch" || F.crush != nullptr || F.stutter != nullptr) continue;
+        if (F.name == "tonematch" || F.name == "movement" || F.crush != nullptr || F.stutter != nullptr) continue;
         if (F.room != nullptr)      // the found room, rebuilt from its numbers, on this sound
         {
             const Params p = scaled (F, faders);
@@ -1212,8 +1272,9 @@ inline Stereo takeOut (const FoundFx& F, const Stereo& in, double s)
 }
 // The found crusher is worked first: it was the last thing the sound went through, and its engine's answer belongs to
 // the sound as it was found. The found stutter is worked last: with fewer plays the sound closes up, and the other
-// engines' answers belong to the sound's own times.
-inline Stereo reshape (const Stereo& src, const std::vector<FoundFx>& found, const std::map<std::string, double>& faders, const std::function<bool()>& cancelled = {})
+// engines' answers belong to the sound's own times. limited: the result is held under full scale (not wanted where it
+// is only measured).
+inline Stereo reshape (const Stereo& src, const std::vector<FoundFx>& found, const std::map<std::string, double>& faders, const std::function<bool()>& cancelled = {}, bool limited = true)
 {
     Stereo y = src;
     for (const FoundFx& F : found)
@@ -1227,7 +1288,7 @@ inline Stereo reshape (const Stereo& src, const std::vector<FoundFx>& found, con
     {
         if (cancelled && cancelled()) break;
         const FoundFx& F = *it; const double s = amountOf (F, faders); const bool moved = settingsMoved (F, faders);
-        if (F.crush != nullptr || F.stutter != nullptr) continue;
+        if (F.crush != nullptr || F.stutter != nullptr || F.name == "movement") continue;
         if (! moved && std::abs (s - 1.0) < 1e-9) continue;
         if (F.room != nullptr)
         {
@@ -1305,12 +1366,28 @@ inline Stereo reshape (const Stereo& src, const std::vector<FoundFx>& found, con
     }
     for (const FoundFx& F : found)
     {
+        // what moves in the sound by itself, after the effects' faders; what was measured belongs to this very sound (same length)
+        if (F.name != "movement" || F.moveOwn == nullptr || (cancelled && cancelled())) continue;
+        const move::Faders mf = movementFaders (faders);
+        if (mf.any() && F.moveOwn->n == (long) y.size()) { Stereo r = move::apply (y, *F.moveOwn, nullptr, mf, cancelled); if (r.size() == y.size()) y = std::move (r); }
+    }
+    for (const FoundFx& F : found)
+    {
         if (F.stutter == nullptr || (cancelled && cancelled())) continue;
         // more plays of each slice over what follows, or fewer with the sound closed up; the stutter engine's answer belongs to this very sound (same length)
         if (F.stutter->n == y.size()) y = stutter::own (y, *F.stutter, std::clamp (amountOf (F, faders), 0.0, 2.0), stutterSlice (scaled (F, faders)));
     }
-    limit (y);
+    if (limited) limit (y);
     return y;
+}
+
+// The first sound as its movement is measured: without the level movement and the moving filter that are shown as
+// effects of their own (see movementFx). The sound itself when none is shown.
+inline Stereo movementBase (const Stereo& src, const std::vector<FoundFx>& found, const std::function<bool()>& cancelled = {})
+{
+    std::vector<FoundFx> out; std::map<std::string, double> zero;
+    for (auto& F : found) if (movesByItself (F)) { out.push_back (F); zero[F.name + ".amount"] = 0.0; }
+    return out.empty() ? src : reshape (src, out, zero, cancelled, false);
 }
 
 // An echo found on a sound that is multiplied by a tone. A sound that repeats itself in time (a loop, a bar played

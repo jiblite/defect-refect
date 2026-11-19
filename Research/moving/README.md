@@ -16,7 +16,13 @@ not numbers, as first and as second sound; `mknew.py` makes the sounds of these 
 rest, room, long and tiny ran with the render test as it was before the app and the tests came to share one change
 of sample rate (`Source/Core/Resample.h`): those stages have no file at another rate, so they never run it, and the
 render test gives the same files byte for byte with and without it (checked on three scoreboard cases). The stages
-new and soft, which have such files, ran with the final build: 189 runs in all, every one clean. The scripts are a record of how the
+new and soft, which have such files, ran with the final build: 189 runs in all, every one clean. Build 0.5.0 added
+two stages for the MOVEMENT faders: `memcheck.py move` (the faders at both ends and in between on sounds that move,
+with hard cuts and gaps, without a pitch, zaps, with found effects, at other rates, mono, long, and the files an
+engine could trip over, alone and onto second sounds) and `memcheck.py movefx` (MOVEMENT next to every effect type
+that is found, where the first sound is measured without its level movement or its moving filter): 80 runs, 522
+renders, every one clean. The older stages were not run again for 0.5.0: they keep MOVEMENT's faders in the middle,
+where the render test measures no movement and gives the files of 0.4.7 bit for bit (`Research/movement/same.py`). The scripts are a record of how the
 engine was built and judged, as they were run: paths point to the working folder they ran in, and no audio is in
 the repo.
 

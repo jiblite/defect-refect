@@ -1,12 +1,23 @@
 #!/bin/bash
 # scen.sh display tag scenario first.wav [second.wav]: the sanitizer build of the app on a display of its own, driven with the mouse.
 # Scenarios: two     two sounds: every fader, Swap twice, one sound alone, Export to a file, close
-#            quit    asked to close WAIT seconds after the start (while the first analysis runs)
+#            quit    asked to close WAIT seconds after the start (while the first analysis runs); WAIT=reading: once the
+#                    Pitch fader says "reading" and AFTER seconds more, so while the pitch reader's own thread runs
+#                    (clear, swap and exp's EARLY take the same)
 #            clear   the first sound taken away WAIT seconds after the start, then close
 #            swap    Swap pressed WAIT seconds after the start, then three times in a row, then close
-#            exp     the fader rows ROWS pulled to one end (TO), then Export to a file, close
+#            exp     the found effects' fader rows ROWS and MOVEMENT's rows MROWS pulled to one end (END, MEND: left,
+#                    right or middle), then Export to a file, close
 #            monkey  N random clicks, drags and wheel turns on the controls (SEED), then close
-D=$1; T=$2; S=$3; O=/tmp/claude-0/drasan; APP="$O/Defect Refect"
+#            watch   a picture every 2 s (N of them), then close: shows when the Pitch fader says "reading"
+# The places are those of the window as it opens (1200 x 820 on a screen of 1280 x 860): MOVEMENT in the left column
+# of faders, the found effects in the right one.
+D=$1; T=$2; S=$3; O=/tmp/claude-0/drasan; APP=${APP:-"$O/Defect Refect"}
+MX=239; FX=583          # the middle of a fader: MOVEMENT's column, the found effects' column
+MSW=365; FSW=709        # the On/Off switches
+MHEAD=110; FHEAD=454    # a place on the group's title
+MY="422 446 470 494 518"                                 # MOVEMENT's rows: Pitch, Loudness, Tone, Stereo, Spectral
+endx() { case $2 in left) echo $(($1 - 89)) ;; right) echo $(($1 + 87)) ;; *) echo $1 ;; esac; }
 Xvfb :$D -screen 0 1280x860x24 -noreset > /dev/null 2>&1 &
 echo $! > $O/xvfb_$T.pid
 sleep 2
@@ -30,6 +41,14 @@ idle() {      # wait until the app has used next to no processor time for three 
 }
 drag() { xdotool mousemove $1 $2 mousedown 1; sleep 0.2; local st=8; [ $3 -lt $1 ] && st=-8; for x in $(seq $1 $st $3); do xdotool mousemove $x $2; sleep 0.05; done; xdotool mousemove $3 $2; sleep 0.2; xdotool mouseup 1; sleep 0.5; }
 click() { xdotool mousemove $1 $2; sleep 0.2; xdotool click 1; sleep 0.5; }
+reading() {   # 0 when the Pitch fader's note says "reading" right now (the place of the note against a picture of the word)
+    local d=$(import -window root -crop 60x16+326+414 +repage png:- 2>/dev/null | compare -metric AE -fuzz 25% - $O/reading_tpl.png null: 2>&1); [ "${d%%[!0-9]*}" = "$d" ] && [ -n "$d" ] && [ "$d" -lt 20 ]
+}
+pause() {     # pause N: N seconds; pause reading: until the Pitch fader says "reading" (at most 5 minutes), then AFTER seconds more (1 if not given)
+    if [ "$1" = reading ]; then local k=0; until reading; do sleep 0.5; k=$((k + 1)); kill -0 $PID 2>/dev/null || break; [ $k -gt 600 ] && { say "NEVER SAID reading"; break; }; done; say "reading shown after about $((k / 2)) s"; sleep ${AFTER:-1}
+    else sleep $1; fi
+    if reading; then say "the pitch is being read now"; else say "the pitch is NOT being read now"; fi
+}
 closeapp() {  # ask the window to close, as the close button does, and wait for the process to end by itself (at most 10 minutes)
     local w=$(xdotool search --onlyvisible --pid $PID 2>/dev/null | head -1); [ -z "$w" ] && w=$(xdotool search --name "Defect Refect" | head -1)
     say "asking window $w to close"; $O/wmdel $w
@@ -39,60 +58,76 @@ closeapp() {  # ask the window to close, as the close button does, and wait for 
 case $S in
 two)
     idle s0 || exit 1
-    drag 279 422 212; idle s1 || exit 1                  # BITCRUSH Amount far left
-    drag 279 446 345; idle s2 || exit 1                  # Bit Depth right
-    drag 279 470 215; idle s3 || exit 1                  # Sample Rate left
-    click 150 509; drag 279 534 205; idle s4 || exit 1   # STUTTER: Amount far left
-    drag 279 558 345; idle s5 || exit 1                  # Slice right
-    click 229 322; click 136 322; sleep 3; click 136 322; click 229 322; idle s6 || exit 1    # Result / Original, Play and stop
+    drag $FX 422 $((FX - 67)); idle s1 || exit 1         # BITCRUSH Amount far left
+    drag $FX 446 $((FX + 66)); idle s2 || exit 1         # Bit Depth right
+    drag $FX 470 $((FX - 64)); idle s3 || exit 1         # Sample Rate left
+    click $FHEAD 509; drag $FX 534 $((FX - 74)); idle s4 || exit 1   # STUTTER: Amount far left
+    drag $FX 558 $((FX + 66)); idle s5 || exit 1         # Slice right
+    drag $MX 422 $((MX - 89)); idle s5a || exit 1        # MOVEMENT: Pitch far left (the second sound's own taken out)
+    drag $MX 446 $((MX + 87)); idle s5b || exit 1        # Loudness far right (the first sound's)
+    drag $MX 470 $((MX - 40)); idle s5c || exit 1        # Tone part of the way left
+    drag $MX 494 $((MX + 87)); idle s5d || exit 1        # Stereo far right
+    drag $MX 518 $((MX + 87)); idle s5e || exit 1        # Spectral far right
+    click 189 322; click 96 322; sleep 3; click 96 322; click 189 322; idle s6 || exit 1    # Result / Original, Play and stop
     click 640 166; idle s7 || exit 1                     # Swap
     click 640 166; idle s8 || exit 1                     # Swap back
-    click 933 322; idle s9 || exit 1                     # Reset Faders
-    click 332 322; idle s10 || exit 1                    # Tone Match on
-    click 1165 55; idle s11 || exit 1                    # second sound away: one sound
-    click 150 509; drag 279 534 205; idle s12 || exit 1  # STUTTER Amount far left on the sound itself (ends early)
-    drag 279 422 345; idle s13 || exit 1                 # BITCRUSH Amount right
-    click 405 397; idle s14 || exit 1                    # BITCRUSH off
-    click 405 397; drag 338 359 205; idle s15 || exit 1  # on again; Sureness far left
-    drag 205 359 470; idle s16 || exit 1                 # Sureness far right
-    drag 470 359 338; idle s17 || exit 1                 # and back
+    click 973 322; idle s9 || exit 1                     # Reset Faders
+    click 292 322; idle s10 || exit 1                    # Tone Match on
+    click 1205 55; idle s11 || exit 1                    # second sound away: one sound
+    click $FHEAD 509; drag $FX 534 $((FX - 74)); idle s12 || exit 1  # STUTTER Amount far left on the sound itself (ends early)
+    drag $FX 422 $((FX + 66)); idle s13 || exit 1        # BITCRUSH Amount right
+    click $FSW 397; idle s14 || exit 1                   # BITCRUSH off
+    click $FSW 397; drag 298 359 165; idle s15 || exit 1 # on again; Sureness far left
+    drag 165 359 430; idle s16 || exit 1                 # Sureness far right
+    drag 430 359 298; idle s17 || exit 1                 # and back
+    drag $MX 422 $((MX + 87)); idle s17a || exit 1       # one sound: Pitch far right (its own movement twice)
+    drag $MX 446 $((MX - 89)); idle s17b || exit 1       # Loudness far left
+    drag $MX 470 $((MX + 87)); idle s17c || exit 1       # Tone far right
+    click $MSW 397; idle s17d || exit 1                  # MOVEMENT off
+    click $MSW 397; idle s17e || exit 1                  # and on again
     rm -f $O/export_$T.wav
-    click 1139 322; sleep 3; click 640 617; xdotool key ctrl+a; sleep 0.3; xdotool type --delay 25 "$O/export_$T.wav"; sleep 0.5; xdotool key Return; sleep 2
+    click 1179 322; sleep 3; click 640 617; xdotool key ctrl+a; sleep 0.3; xdotool type --delay 25 "$O/export_$T.wav"; sleep 0.5; xdotool key Return; sleep 2
     import -window root $O/${T}_export.png; click 885 656; sleep 5; import -window root $O/${T}_exported.png; idle s18 || exit 1
     ls -la $O/export_$T.wav 2>&1
     closeapp ;;
 quit)
-    sleep ${WAIT:-12}; import -window root $O/${T}_busy.png; closeapp ;;
+    pause ${WAIT:-12}; import -window root $O/${T}_busy.png; closeapp ;;
 clear)
-    sleep ${WAIT:-12}; import -window root $O/${T}_busy.png; click 586 55; sleep 2; import -window root $O/${T}_cleared.png; idle c1 || exit 1; closeapp ;;
+    pause ${WAIT:-12}; import -window root $O/${T}_busy.png; click 586 55; sleep 2; import -window root $O/${T}_cleared.png; idle c1 || exit 1; closeapp ;;
 swap)
-    sleep ${WAIT:-12}; import -window root $O/${T}_busy.png; click 640 166; idle w1 || exit 1
+    pause ${WAIT:-12}; import -window root $O/${T}_busy.png; click 640 166; idle w1 || exit 1
     click 640 166; click 640 166; click 640 166; idle w2 || exit 1
     click 640 166; sleep 6; closeapp ;;
-exp)        # ROWS: the fader rows to pull to one end (TO: 190 = far left, 370 = far right); EXPORT: the file to save
-    idle e0 || exit 1
-    for y in $ROWS; do drag 279 $y ${TO:-190}; done
-    if [ -n "$ROWS" ]; then idle e1 || exit 1; fi
+watch)      # a picture every 2 s, N of them (to see when the Pitch fader says "reading"), then close
+    for i in $(seq 1 ${N:-60}); do import -window root $O/${T}_w$i.png; kill -0 $PID 2>/dev/null || break; sleep 2; done; closeapp ;;
+exp)        # ROWS: the found effects' fader rows to pull to one end (END); MROWS: MOVEMENT's (MEND, else END); EXPORT: the file to save
+            # EARLY: the faders are pulled that many seconds after the start, while the pitch is still being read, instead of once the app is at rest
+    if [ -n "$EARLY" ]; then pause $EARLY; import -window root $O/${T}_early.png; else idle e0 || exit 1; fi
+    for y in $MROWS; do drag $MX $y $(endx $MX ${MEND:-${END:-left}}); done
+    for y in $ROWS; do drag $FX $y $(endx $FX ${END:-left}); done
+    if [ -n "$ROWS$MROWS" ]; then idle e1 || exit 1; fi
     X=${EXPORT:-$O/export_$T.wav}; rm -f $O/export_$T.wav
-    click 1139 322; sleep 3; click 640 617; xdotool key ctrl+a; sleep 0.3; xdotool type --delay 25 "$X"; sleep 0.5; xdotool key Return; sleep 2
+    click 1179 322; sleep 3; click 640 617; xdotool key ctrl+a; sleep 0.3; xdotool type --delay 25 "$X"; sleep 0.5; xdotool key Return; sleep 2
     click 885 656; sleep 5; idle e2 || exit 1
     ls -la "$X" 2>&1 | cut -c1-120
     closeapp ;;
 monkey)
     idle m0 || exit 1
-    RANDOM=${SEED:-7}; N=${N:-150}; ROWS=(422 446 470 534 558 582 606)
+    RANDOM=${SEED:-7}; N=${N:-150}; ROWS=(422 446 470 534 558 582 606); MROWS=($MY)
     for i in $(seq 1 $N); do
         kill -0 $PID 2>/dev/null || { say "APP GONE at action $i"; break; }
-        a=$((RANDOM % 40)); y=${ROWS[$((RANDOM % 7))]}; x1=$((210 + RANDOM % 139)); x2=$((210 + RANDOM % 139))
+        a=$((RANDOM % 40)); c=$((RANDOM % 5)); o1=$((RANDOM % 139 - 69)); o2=$((RANDOM % 139 - 69))
+        if [ $c -lt 2 ]; then y=${MROWS[$((RANDOM % 5))]}; x1=$((MX + o1)); x2=$((MX + o2)); sw=$MSW; hd=$MHEAD; hy=397      # two times in five: MOVEMENT's column
+        else y=${ROWS[$((RANDOM % 7))]}; x1=$((FX + o1)); x2=$((FX + o2)); sw=$FSW; hd=$FHEAD; hy=$((RANDOM % 2 ? 397 : 509)); fi
         case $a in
             0|1) say "$i swap"; click 640 166 ;;
-            2|3) say "$i play"; click 136 322 ;;
-            4|5) say "$i result"; click 229 322 ;;
-            6|7) say "$i tone match"; click 332 322 ;;
-            8) say "$i reset"; click 933 322 ;;
-            9|10|11) say "$i sureness $x1 to $x2"; drag $((x1 - 8)) 359 $((x2 + 110)) ;;
-            12|13) say "$i switch"; click 405 $((RANDOM % 2 ? 397 : 509)) ;;
-            14|15) say "$i header"; click 150 $((RANDOM % 2 ? 397 : 509)) ;;
+            2|3) say "$i play"; click 96 322 ;;
+            4|5) say "$i result"; click 189 322 ;;
+            6|7) say "$i tone match"; click 292 322 ;;
+            8) say "$i reset"; click 973 322 ;;
+            9|10|11) say "$i sureness"; drag $((231 + o1)) 359 $((349 + o2)) ;;
+            12|13) say "$i switch $sw $hy"; click $sw $hy ;;
+            14|15) say "$i header $hd $hy"; click $hd $hy ;;
             16|17|18) say "$i double click row $y"; xdotool mousemove $x1 $y; sleep 0.1; xdotool click --repeat 2 --delay 80 1 ;;
             19|20|21|22) say "$i wheel row $y"; xdotool mousemove $x1 $y; sleep 0.1; xdotool click --repeat $((1 + RANDOM % 6)) --delay 40 $((4 + RANDOM % 2)) ;;
             *) say "$i drag row $y $x1 to $x2"; drag $x1 $y $x2 ;;
