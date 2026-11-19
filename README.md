@@ -52,8 +52,8 @@ REVERB (50 to 26); of 340 real reverbs one loses its group. On sounds the model 
 60 %). Known limits: on cut-off files and excerpts about a quarter of the real reverbs are still not seen, light
 ones most; with Amount at far left a fifth to a quarter of the cases came out worse than untouched (repaired in
 0.4.6, below); effects the
-app cannot take out yet (widening, distortion, ring modulation) can still make a false REVERB. Method and
-numbers: `Research/room/README.md`.
+app cannot take out yet (distortion, and up to 0.4.6 widening and ring modulation) can still make a false REVERB.
+Method and numbers: `Research/room/README.md`.
 
 **Long sounds (0.4.5).** All of the above is measured on sounds of 6 and 9 s, which is also what the model has
 learned from. On longer sounds every build so far read a room far too easily: of 121 test sounds of 18 to 48 s
