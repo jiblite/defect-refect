@@ -11,11 +11,12 @@ import numpy as np
 SR = 48000
 WIN = 64                         # samples of a window in the table
 LMIN, LMAX = int(0.020 * SR), int(2.0 * SR)      # slices looked for: 20 ms to 2 s
-EXTRA = int(0.030 * SR)          # an event's repeats have to cover this much at least (two cycles of a low note that happen to be equal are not an event)
-LOOP, LOOP_SHARE = int(0.3 * SR), 0.3            # a slice longer than this that 30 % of the whole sound repeats is the sound's own way (a loop), not an event
+EXTRA = int(0.020 * SR)          # an event's repeats have to cover this much at least
+LOOP = int(0.3 * SR)             # a slice longer than this may be the sound's own way (a loop that repeats, with breaks in it) and not an event: see own_way()
+OWN_OUT = 0.10                   # ... it is, if this share of the sound repeats at that distance outside the stretches themselves
 TOL = 2.0 ** -18                 # two samples are "the same" if they are this close (a 24-bit file with dither still passes)
 FADE = 96                        # samples of the fade at each end of a slice when the found slices start and end at nothing (2 ms)
-KEEP = 0.9                       # a stretch counts if it is at least this share of its slice long
+KEEP = 0.5                       # a stretch counts if it is at least this share of its slice long (an event: one and a half plays or more)
 
 def table(y):
     """For every sample t the nearest earlier place where the 64 samples from t on occurred before (0: nowhere)."""
@@ -33,16 +34,19 @@ def table(y):
     prev[order[1:][same]] = order[:-1][same] + 1                       # + 1: 0 stays "nowhere"
     prev[:nw][flat] = 0; return prev
 
-def stretches(y, prev):
+def stretches(y, prev, quiet):
     """The stretches where the sound is what it was L samples before: list of (lo, hi, L) in terms of the earlier
     sample: samples lo + L .. hi + L - 1 equal samples lo .. hi - 1. Silence equals silence, which proves nothing: a
     stretch is cut where a whole slice of it is silent, and it starts and ends no further out than one slice from its
-    first and last live sample."""
-    n = len(y); t = np.where(prev > 0)[0]; out = []
+    first and last live sample. And a sound that stands still (a steady offset, a level that moves by less than can be
+    told apart) proves nothing by being equal either: such a stretch counts only if its slice length is that of a
+    stretch that moves."""
+    n = len(y); t = np.where(prev > 0)[0]; out = []; weak = []
     if not len(t): return out
     lag = t - (prev[t] - 1); ok = (lag >= LMIN) & (lag <= LMAX); t, lag = t[ok], lag[ok]
     if not len(t): return out
-    cut = np.where((np.diff(t) > WIN) | (np.diff(lag) != 0))[0] + 1; starts = np.concatenate([[0], cut]); ends = np.concatenate([cut, [len(t)]]); quiet = (np.abs(y) <= 16 * TOL).all(1); seen = {}
+    cut = np.where((np.diff(t) > WIN) | (np.diff(lag) != 0))[0] + 1; starts = np.concatenate([[0], cut]); ends = np.concatenate([cut, [len(t)]]); seen = {}
+    mv = np.concatenate([[0], np.cumsum((np.abs(np.diff(y, axis=0)) > TOL).any(1))])          # mv[b] - mv[a]: how many of the samples a + 1 .. b differ from the one before (a sound that stands still, or moves by less than can be told apart, proves nothing by being equal)
     for s, e in zip(starts, ends):
         L = int(lag[s]); i0 = int(t[(s + e) // 2]) - L                   # from the middle of the run of windows (the table rounds more coarsely than the test below: a run's first and last windows may reach past the stretch)
         if i0 < seen.get(L, -1): continue
@@ -57,39 +61,118 @@ def stretches(y, prev):
         gaps = np.where(np.diff(lv) > L)[0]; first = np.concatenate([[lv[0]], lv[gaps + 1]]); last = np.concatenate([lv[gaps], [lv[-1]]])
         for k, (fl, ll) in enumerate(zip(first, last)):
             a0 = max(lo if k == 0 else int(last[k - 1]) + 1, int(fl) - L + 1); b0 = min(hi if k == len(first) - 1 else int(first[k + 1]), int(ll) + L)
-            live = int((~quiet[int(fl) + L:int(ll) + L + 1]).sum())
-            if (b0 - a0 >= KEEP * L or (b0 + L == n and b0 - a0 >= 0.25 * L)) and b0 - a0 >= EXTRA and live >= max(0.2 * L, 4 * WIN): out.append((int(a0), int(b0), L))     # cut off by the end of the sound: a quarter of a slice is enough
-    lv = ~quiet; nl = max(int(lv.sum()), 1); loops = set()
-    for L in set(q[2] for q in out):
-        if L > LOOP and float(((np.abs(y[L:] - y[:-L]) <= TOL).all(1) & lv[L:]).sum()) / nl >= LOOP_SHARE: loops.add(L)
-    return [q for q in out if q[2] not in loops]
+            live = int((~quiet[int(fl) + L:int(ll) + L + 1]).sum()); moving = int(mv[min(int(ll) + L, n - 1)] - mv[int(fl) + L]); need = max(0.2 * min(L, b0 - a0), 4 * WIN)
+            if (b0 - a0 >= KEEP * L or (b0 + L == n and b0 - a0 >= 0.25 * L)) and b0 - a0 >= EXTRA and live >= need: (out if moving >= need else weak).append((int(a0), int(b0), L))     # cut off by the end of the sound: a quarter of a slice is enough
+    have = set(q[2] for q in out); return out + [q for q in weak if q[2] in have]       # a stretch that stands still counts only beside one of the same slice length that moves
+
+def own_way(y, S, quiet):
+    """The distances at which the sound repeats of its own accord (a loop), which are not events: (1) one stretch
+    that runs from the start of the sound to its end, whatever its length; and for distances over 0.3 s: (2) two
+    stretches of which the second goes on with what the first repeats (a loop with a break in it); (3) the sound
+    repeating at that distance in many places outside the stretches (a loop with many breaks)."""
+    n = len(y); lv = ~quiet; w = np.where(lv)[0]; res = set()
+    if not len(w): return res
+    f0, f1 = int(w[0]), int(w[-1]); span = max(f1 - f0, 1); nl = len(w)
+    for L in sorted(set(q[2] for q in S)):
+        P = [q for q in S if q[2] == L]
+        if any(a <= f0 + 0.05 * span and b + L >= f1 - 0.10 * span for a, b, _ in P): res.add(L); continue
+        if L <= LOOP: continue
+        hit = False
+        for i in range(len(P)):
+            for j in range(i + 1, len(P)):
+                a1, a2 = P[i][0], P[j][0]; D = L * ((a2 - a1) // L)
+                if D <= 0: continue
+                e = min(a2 + L, n); m = lv[a2:e]
+                if m.sum() and float(((np.abs(y[a2:e] - y[a2 - D:e - D]) <= TOL).all(1) & m).sum()) >= 0.9 * m.sum(): hit = True; break
+            if hit: break
+        if hit: res.add(L); continue
+        eq = (np.abs(y[L:] - y[:-L]) <= TOL).all(1) & lv[L:]
+        for a, b, _ in P: eq[a:b] = False
+        if float(eq.sum()) >= OWN_OUT * nl: res.add(L)
+    return res
+
+def tone(y, s0, L, end):
+    """Whether what looks like a slice played again is a steady wave (a held note of a machine, a test tone): the
+    slice is itself the same thing over and over at a much shorter distance, and nothing happens where one play ends
+    and the next begins. A slice of such a note that was really played again shows a jump (or a fade) there."""
+    n = len(y); P0 = y[s0:s0 + L]; P0 = P0 - P0.mean(0); m = P0.shape[1]; nf = 1 << int(np.ceil(np.log2(2 * L)))       # (without its mean: a steady offset is not a wave)
+    ac = np.fft.irfft((np.abs(np.fft.rfft(P0, nf, axis=0)) ** 2).sum(1), nf)[:L // 2 + 1]
+    c2 = np.concatenate([[0.0], np.cumsum((P0 ** 2).sum(1))]); p = np.arange(L // 2 + 1); r = ac / np.sqrt(np.maximum(c2[L - p] * (c2[L] - c2[p]), 1e-60)); r[:8] = 0.0
+    ps = int(np.argmax(r))
+    if r[ps] < 0.999: return False
+    W = max(ps, 128); seams = 0; stand = 0
+    for q in range(s0 + L, end, L):
+        if q + W > min(end, n) or q - W < s0: break                                                  # (the sound after the event's end is not a seam)
+        ds = float(((y[q - W + ps:q + W] - y[q - W:q + W - ps]) ** 2).sum()) / (2 * W - ps)        # around the seam
+        di = float(((y[q - L + ps:q - W] - y[q - L:q - W - ps]) ** 2).sum()) / max(L - W - ps, 1)   # inside the play before it
+        seams += 1; stand += ds > 16.0 * di + m * TOL ** 2
+    return seams > 0 and 4 * stand <= seams
+
+def goes_on(y, s0, L, end):
+    """Whether the sound before the slice or after the last play is the slice once more at another loudness (a held
+    note of an instrument that is itself a short loop, fading in or out; a loop through an effect that has to settle).
+    A slice that was played again is a cut: the sound before and after it is another. The 100 ms before and after
+    are held against the samples one slice length on (or back), with a loudness that may change evenly; alike if
+    what is left over is under a hundredth of the power."""
+    n = len(y); floor = (16 * TOL) ** 2
+    def alike(a, b):
+        if len(a) < EXTRA: return False
+        ea = float((a ** 2).sum()); eb = float((b ** 2).sum())
+        if ea <= floor * a.size or eb <= floor * b.size: return False
+        t = np.linspace(-1.0, 1.0, len(a))[:, None]; B = np.stack([b.ravel(), (b * t).ravel()], 1); g, *_ = np.linalg.lstsq(B, a.ravel(), rcond=None); r = a.ravel() - B @ g
+        return float((r ** 2).sum()) < 0.01 * ea and g[0] > 0
+    w = min(L, int(0.1 * SR), n - end)
+    if w > 0 and alike(y[end:end + w], y[end - L:end - L + w]): return 'the sound goes on the same way after it'
+    w = min(L, int(0.1 * SR), s0)
+    if w > 0 and alike(y[s0 - w:s0], y[s0 - w + L:s0 + L]): return 'the sound went the same way before it'
+    return ''
+
+def apart(y, s0, L, end):
+    """Whether every play stands by itself, with silence before and after it (5 ms each, 60 dB under the slice's
+    loudest sample): then it is the same note or stroke played again, as a player or a machine does, and not a slice
+    cut out of a sound and repeated."""
+    g = int(0.005 * SR); thr = max(16 * TOL, 1e-3 * float(np.abs(y[s0:s0 + L]).max())); seams = list(range(s0 + L, end, L))
+    return len(seams) > 0 and all(float(np.abs(y[max(q - g, 0):q + g]).max()) <= thr for q in seams)
 
 def edges(y, lo, hi, L):
     """How far the start of a stretch may lie after lo, and its end before hi: the samples there that are next to
     nothing on both sides (they are equal whatever was played, and say nothing)."""
-    n = len(y); q = 16 * TOL; a = lo
-    while a < lo + 16 and a + L < n and float(np.abs(y[a]).max()) <= q and float(np.abs(y[a + L]).max()) <= q: a += 1
+    n = len(y); q = 16 * TOL; a = lo; far = L // 2
+    while a < lo + far and a + L < n and float(np.abs(y[a]).max()) <= q and float(np.abs(y[a + L]).max()) <= q: a += 1
     b = hi
-    while b > hi - 16 and b - 1 > a and float(np.abs(y[b - 1]).max()) <= q and float(np.abs(y[b - 1 + L]).max()) <= q: b -= 1
+    while b > hi - far and b - 1 > a and float(np.abs(y[b - 1]).max()) <= q and float(np.abs(y[b - 1 + L]).max()) <= q: b -= 1
     return a, b
 def find(y):
     """dict(found, events: list of (s0, L, end): the slice s0 .. s0 + L is played again and again up to sample end;
-    fades: whether the slices start and end at nothing; share: how much of the sound the repeats cover)."""
-    n = len(y); out = dict(found=False, n=n, events=[])
+    fades: whether the plays start and end at nothing; share: how much of the sound the repeats cover; own: the
+    distances at which the sound repeats of its own accord)."""
+    n = len(y); out = dict(found=False, n=n, events=[], own=[], left_out=[])
     if n < SR // 4: return out
-    S = sorted(stretches(y, table(y))); ev = []; prev_end = -1
+    pk = float(np.abs(y).max()); quiet = (np.abs(y) <= 16 * TOL).all(1)
+    if pk <= 16 * TOL: return out
+    S = sorted(stretches(y, table(y), quiet))
+    O = own_way(y, S, quiet); out['own'] = sorted(O); out['stretches'] = S; ev = []; prev_end = -1; prev_L = 0
     for lo, hi, L in S:
+        if L in O: continue
         lo2, hi2 = edges(y, lo, hi, L); s0 = prev_end if lo <= prev_end <= lo2 else lo         # a slice that follows straight on another event starts where that one ends
+        if lo < prev_end and L == prev_L and hi + L - prev_end >= (1 + KEEP) * L: s0 = prev_end   # ... also when the sound before it happens to go the same way (a held note of a machine): two events with the same slice length do not lie in each other
         m = int(np.floor((hi + L - s0) / L + 0.5)); end = s0 + m * L if hi2 + L <= s0 + m * L <= hi + L else hi + L       # whole plays where the samples allow it
+        nxt = [q[0] for q in S if q[2] == L and lo < q[0] <= hi + L and q[0] > s0 and (q[0] - s0) % L == 0]         # another event of the same slice length that starts a whole number of plays on: this one ends there (the sound may go on being equal for a while, where both slices begin alike)
+        if nxt: end = min(nxt)
         whole = s0 + L * int(np.ceil((end - s0) / L - 0.02))            # the last play is taken as whole when what is missing of it is silence (in it and in the slice)
         if end < whole <= n and whole - end <= L // 2 and bool((np.abs(y[end:whole]) <= 16 * TOL).all()) and bool((np.abs(y[end - L:whole - L]) <= 16 * TOL).all()): end = whole
         end = min(end, n)
-        if end - s0 >= 2 * L - L // 10 or end >= n: ev.append((int(s0), int(L), int(end))); prev_end = end
-    out['stretches'] = S
+        if not (end - s0 >= (1 + KEEP) * L or end >= n): continue
+        if s0 < prev_end: out['left_out'].append((int(s0), int(L), int(end), 'inside the event before')); continue     # two events cannot lie in each other: the one that starts first is the event, the other an echo of it (see the notes)
+        if tone(y, s0, L, end): out['left_out'].append((int(s0), int(L), int(end), 'a steady wave')); continue
+        why = 'every play stands by itself in silence' if apart(y, s0, L, end) else goes_on(y, s0, L, end)
+        if why: out['left_out'].append((int(s0), int(L), int(end), why)); continue
+        ev.append((int(s0), int(L), int(end))); prev_end = end; prev_L = L
     if not ev: return out
-    cover = sum(e - s0 - L for s0, L, e in ev) / n; pk = float(np.abs(y).max()) + 1e-30
-    edge = [max(float(np.abs(y[s0 + j * L]).max()), float(np.abs(y[min(s0 + (j + 1) * L - 1, n - 1)]).max())) / pk for s0, L, e in ev for j in range(int((e - s0) // L))]
-    out.update(events=ev, share=float(cover), fades=bool(np.median(edge) < 0.02), found=True)
+    cover = sum(e - s0 - L for s0, L, e in ev) / n; q = [s0 + j * L for s0, L, e in ev for j in range(1, int(np.ceil((e - s0) / L))) if s0 + j * L + 8 < n]
+    q = [t for t in q if float(np.abs(y[t:t + FADE]).max()) > 64 * TOL]                                        # the plays that do not begin in silence anyway
+    at0 = [bool((np.abs(y[t]) <= 16 * TOL).all()) for t in q]                                                    # a play that starts at nothing and comes up at once: a fade
+    out.update(events=ev, share=float(cover), fades=bool(len(q) > 0 and np.mean(at0) >= 0.9), found=True)
     return out
 
 def scaled(events, s, n):
