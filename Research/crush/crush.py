@@ -17,6 +17,7 @@ ON = 0.02                        # a sample is on the grid if it is within this 
 SHARE = 0.995                    # .. and this share of the live samples has to be
 HB = 1 << 18                     # bins of the amplitude histogram
 KMAX = 256                       # the longest hold looked for (samples)
+SOFT_HALF = 0.002                # .. and fill a stretch at least this wide (in steps) around each grid value
 SOFT_DENSE = 8.0                 # the crusher with plain sound mixed in counts if the values lie this many times denser around the grid values than between them
 TWO_PI = 2 * np.pi
 
@@ -239,7 +240,9 @@ def find(y):
     ok = [g is not None and g['share'] >= SHARE and g['bits'] <= BITS_MAX for g in G]; hasHold = H['P'] >= 2.0 and H['share'] >= 0.99 and H['changes'] >= 50
     if not (all(ok) or hasHold):
         f = soft(y, G); out['soft_try'] = f
-        if f is not None and f['dense'] >= SOFT_DENSE and f['inside'] >= 0.3 and f['half'] <= 0.2 and f['bits'] <= BITS_MAX: out.update(f); out['found'] = True
+        if f is not None and f['dense'] >= SOFT_DENSE and f['inside'] >= 0.3 and f['half'] <= 0.2 and f['bits'] <= BITS_MAX:
+            if f['half'] >= SOFT_HALF: out.update(f); out['found'] = True
+            else: out.update(found=True, kind='bare', step=f['step'], offset=f['offset'], bits=f['bits'], P=1.0, c=0.0, through=True)       # the values sit on the grid itself but only some of them: a crusher with something after it (a filter) that is not read; its grid is put onto the second sound as it is
         return out
     out.update(found=True, kind='bare', step=[g['step'] if o else 0.0 for g, o in zip(G, ok)], offset=[g['offset'] if o else 0.0 for g, o in zip(G, ok)], bits=float(np.mean([g['bits'] for g, o in zip(G, ok) if o])) if any(ok) else 24.0, P=H['P'] if hasHold else 1.0, c=H['c'] if hasHold else 0.0)
     return out
