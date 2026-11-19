@@ -100,10 +100,11 @@ are off the grid) and carries the grid and the hold's length in time over: one c
 - A **bare crusher cannot be taken out**.
 - A crush under another effect is not found: the values are off the grid.
 - A **16-bit file made louder by 18 dB or more** and kept as it is (no dither, nothing else done to it) sits on
-  a grid of 13 bits or coarser against full scale, and is read as a light crusher.
+  a grid of 13 bits or coarser against full scale, and is read as a light crusher (`pcm16b.py`: 40 quiet 16-bit
+  clips made louder by 12 dB: none; by 18 dB, 24 dB and 30 dB: all 40, as 13, 12 and 11 bits).
 
 ## Files
 `crush.py` the prototype. `bf7.py` fresh cases (made by `fc7.py`), `bc2.py` the scoreboard pairs (prototype),
 `nf1.py` / `nf2.py` wrong finds (prototype / the app's code), `pcm16.py` ordinary 16-bit and 24-bit files,
-`r44t.py` other sample rates; `fc7.py`, `nf1.py`, `nf2.py`, `pcm16.py` and `r44t.py` are in `Research/stutter` (they
-serve both engines), `st_common.py` in `Research/sides`.
+`pcm16b.py` 16-bit files made louder, `r44t.py` other sample rates; `fc7.py`, `nf1.py`, `nf2.py`, `pcm16.py`,
+`pcm16b.py` and `r44t.py` are in `Research/stutter` (they serve both engines), `st_common.py` in `Research/sides`.
