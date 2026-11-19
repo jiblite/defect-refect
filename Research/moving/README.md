@@ -12,7 +12,11 @@ which the room engine judges in pieces, with silence around them, gaps, and shor
 engines of build 0.4.7, on long sounds, mono files, files at 44.1 and 96 kHz and second sounds of another rate or
 of ten samples; `memcheck.py soft`: a crusher that mixes plain sound in and is found, at 44.1 and 96 kHz and on a
 long sound; `memcheck.py tiny`: files an engine could trip over, from no samples at all to values that are
-not numbers, as first and as second sound; `mknew.py` makes the sounds of these three). The scripts are a record of how the
+not numbers, as first and as second sound; `mknew.py` makes the sounds of these three). For build 0.4.7 the stages main,
+rest, room, long and tiny ran with the render test as it was before the app and the tests came to share one change
+of sample rate (`Source/Core/Resample.h`): those stages have no file at another rate, so they never run it, and the
+render test gives the same files byte for byte with and without it (checked on three scoreboard cases). The stages
+new and soft, which have such files, ran with the final build: 189 runs in all, every one clean. The scripts are a record of how the
 engine was built and judged, as they were run: paths point to the working folder they ran in, and no audio is in
 the repo.
 
