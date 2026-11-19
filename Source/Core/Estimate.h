@@ -11,6 +11,8 @@
 #include "Chorus.h"
 #include "Sides.h"
 #include "Ring.h"
+#include "Crush.h"
+#include "Stutter.h"
 #include "Effects.h"
 #include "Hand.h"
 #include "Inspector.h"
@@ -305,6 +307,7 @@ struct Knob
     std::string id, label, tip, key;   // key: the setting this fader scales ("" = the effect's Amount)
     double neutral = 0, lo = 0, hi = 1e9;
     bool ownTip = false;               // the tip says what left and right do (otherwise: left = none, right = double)
+    std::string tip2;                  // the tip while there is a second sound, where it differs ("" = the same words)
 };
 struct FoundFx
 {
@@ -321,6 +324,8 @@ struct FoundFx
     std::shared_ptr<const chorus::Found> chorus;    // the voices the chorus engine found (CHORUS): its faders work that engine (see chorusFx)
     std::shared_ptr<const sides::Found> sides;      // what the sides engine found between the two sides (HAAS WIDTH, STEREO WIDTH): its fader works that engine (see sidesFx)
     std::shared_ptr<const ring::Found> ring;        // the tone the ring engine found the sound multiplied by (RING MOD): its faders work that engine (see ringFx)
+    std::shared_ptr<const crush::Found> crush;      // the grid of values and the hold the crush engine found (BITCRUSH): its faders work that engine (see crushFx)
+    std::shared_ptr<const stutter::Found> stutter;  // the slices the stutter engine found played again (STUTTER): its faders work that engine (see stutterFx)
     Vec curveL, curveR;                        // TONE MATCH, for the picture and Export IR: the curves of the last render (left, right; Amount in the middle)
     Vec foundL, foundR;                        // the same with Detail in the middle too
 };
@@ -337,7 +342,7 @@ inline std::string titleFor (const std::string& f)
 
 inline std::vector<Knob> knobsFor (const std::string& f)
 {
-    auto K = [] (std::string key, std::string label, std::string tip, double neutral = 0, double lo = 0, double hi = 1e9) { return Knob { "", std::move (label), std::move (tip), std::move (key), neutral, lo, hi }; };
+    auto K = [] (std::string key, std::string label, std::string tip, double neutral = 0, double lo = 0, double hi = 1e9) { Knob k; k.label = std::move (label); k.tip = std::move (tip); k.key = std::move (key); k.neutral = neutral; k.lo = lo; k.hi = hi; return k; };
     std::vector<Knob> k { K ("", "Amount", "How much of the effect. Middle = as found. Left = none. Right = double.") };
     if (f == "flanger") { k.push_back (K ("rate", "Speed", "Sweep speed, scaled from the speed found.", 0, 0.01, 10)); k.push_back (K ("dmax", "Sweep", "How far the sweep travels.", 0, 0.2e-3, 20e-3)); k.push_back (K ("depth", "Intensity", "Strength of the comb.", 0, 0, 1)); }
     else if (f == "chorus") { k.push_back (K ("rate", "Speed", "Wobble speed.", 0, 0.01, 10)); k.push_back (K ("base", "Delay", "Distance of the copies.", 0, 1e-3, 60e-3)); k.push_back (K ("width", "Wobble", "How far the copies drift.", 0, 0, 30e-3)); k.push_back (K ("mix", "Mix", "Level of the copies.", 0, 0, 1)); }
@@ -850,12 +855,84 @@ inline FoundFx ringFx (std::shared_ptr<const ring::Found> found, double prob)
 inline double ringCarrier (const Params& p) { return std::pow (2.0, std::clamp (get (p, "carrier", 1.0), 0.0, 2.0) - 1.0); }
 // The ring engine's verdict goes into the inspection and the detector's own guess about ring modulation goes out.
 inline void mergeRing (Inspection& I, const ring::Found& f) { I.prob["ringmod"] = f.found ? ringSure : level::sureNone; }
+// ---------------------------------------------------------------- the crush engine's group (Crush.h)
+// BITCRUSH: the grid of values the samples were rounded to and the hold, as the crush engine read them off the sound.
+// On a second sound: Amount 0 = none, 1 = through the same crusher, 2 = what the crusher changes twice over. On the
+// sound itself: a crusher that mixed plain sound in can be undone (Amount 0 = the sound before it); a bare one cannot,
+// since what the rounding and the hold threw away is gone: there the left half of every fader leaves the sound as found.
+// Bit Depth: the steps up to 16 times as large (4 bits fewer) or as small. Sample Rate: the hold up to 4 times as long
+// or as short. Each of the two is shown when the crusher has that part.
+constexpr double crushSure = 0.95;
+inline FoundFx crushFx (std::shared_ptr<const crush::Found> found, double prob)
+{
+    FoundFx F; F.name = "bitcrush"; F.title = titleFor ("bitcrush"); F.prob = prob; F.est = { { "bits", 1.0 }, { "down", 1.0 } };
+    const bool soft = found->soft, grid = found->hasGrid(), hold = found->hasHold(); F.crush = std::move (found);
+    Knob a; a.id = "bitcrush.amount"; a.label = "Amount"; a.neutral = 0; a.lo = 0; a.hi = 2; a.ownTip = true;
+    a.tip = soft ? "Middle = as found. Left = take the crusher out, far left = the sound before it: this crusher mixed plain sound in, so that sound can be worked out. Right = what the crusher changed, up to twice over."
+                 : std::string ("Middle = as found. Right = more of it: towards ") + (grid && hold ? "steps twice as large and a hold twice as long" : grid ? "steps twice as large" : "a hold twice as long")
+                       + ". Left of the middle nothing changes: what the crusher threw away is not in the sound any more.";
+    a.tip2 = std::string ("How much of the found crusher goes onto the second sound. Middle = ") + (grid && hold ? "the same steps and the same hold" : grid ? "the same steps" : "the same hold") + " as on the first sound. Left = not applied. Right = what the crusher changes, twice over.";
+    F.knobs = { a };
+    if (grid)
+    {
+        Knob b; b.key = "bits"; b.id = "bitcrush.bits"; b.label = "Bit Depth"; b.neutral = 0; b.lo = 0; b.hi = 2; b.ownTip = true;
+        b.tip = std::string ("The size of the crusher's steps. Middle = as found. Right = larger steps, up to 4 bits fewer. ")
+                    + (soft ? "Left = smaller steps, up to 4 bits more." : "Left of the middle nothing changes: smaller steps than the found ones are not in the sound any more.");
+        b.tip2 = "The size of the crusher's steps on the second sound. Middle = as found. Right = larger steps, up to 4 bits fewer. Left = smaller steps, up to 4 bits more.";
+        F.knobs.push_back (b);
+    }
+    if (hold)
+    {
+        Knob d; d.key = "down"; d.id = "bitcrush.down"; d.label = "Sample Rate"; d.neutral = 0; d.lo = 0; d.hi = 2; d.ownTip = true;
+        d.tip = std::string ("How long the crusher holds each value: its sample rate. Middle = as found. Right = longer, down to a quarter of the rate. ")
+                    + (soft ? "Left = shorter, up to four times the rate." : "Left of the middle nothing changes: what lay between the held values is not in the sound any more.");
+        d.tip2 = "How long the crusher holds each value on the second sound: its sample rate. Middle = as found. Right = longer, down to a quarter of the rate. Left = shorter, up to four times the rate.";
+        F.knobs.push_back (d);
+    }
+    return F;
+}
+// The Bit Depth fader (0 .. 2, 1 = as found) as a factor on the size of the steps: a sixteenth to sixteen times (4 bits
+// either way), and never fewer than two levels over full scale.
+inline double crushSteps (const FoundFx& F, const Params& p)
+{
+    const double f = std::pow (2.0, 4.0 * (std::clamp (get (p, "bits", 1.0), 0.0, 2.0) - 1.0));
+    return F.crush != nullptr ? std::min (f, std::max (std::pow (2.0, F.crush->bits - 1.0), 1.0)) : f;
+}
+// The Sample Rate fader (0 .. 2, 1 = as found) as a factor on the hold: a quarter to four times.
+inline double crushHold (const Params& p) { return std::pow (2.0, 2.0 * (std::clamp (get (p, "down", 1.0), 0.0, 2.0) - 1.0)); }
+// The crush engine's verdict goes into the inspection and the detector's own guess about bitcrush goes out.
+inline void mergeCrush (Inspection& I, const crush::Found& f) { I.prob["bitcrush"] = f.found ? crushSure : level::sureNone; }
+
+// ---------------------------------------------------------------- the stutter engine's group (Stutter.h)
+// STUTTER: the slices that are played again and again, as the stutter engine read them off the sound. On a second
+// sound: Amount 0 = none, 1 = the same slices at the same times, 2 = each slice twice as many extra times; Slice: the
+// slices half to twice as long. On the sound itself: right of the middle each slice is played more often (over what
+// follows it); left of it fewer times, and since what the repeats covered is gone the sound closes up and ends early;
+// Slice: only shorter (a longer slice is not in the sound).
+constexpr double stutterSure = 0.95;
+inline FoundFx stutterFx (std::shared_ptr<const stutter::Found> found, double prob)
+{
+    FoundFx F; F.name = "stutter"; F.title = titleFor ("stutter"); F.prob = prob; F.stutter = std::move (found); F.est = { { "slice", 1.0 } };
+    Knob a; a.id = "stutter.amount"; a.label = "Amount"; a.neutral = 0; a.lo = 0; a.hi = 2; a.ownTip = true;
+    a.tip = "Middle = as found. Right = every slice is played more often, up to twice as many repeats, over what follows it. Left = fewer repeats, far left = none: the sound closes up and ends early. What the repeats covered is not in the sound any more, so it cannot come back.";
+    a.tip2 = "How much of the found stutter goes onto the second sound. Middle = the same slices at the same times. Left = fewer repeats, far left = none. Right = up to twice as many repeats.";
+    Knob c; c.key = "slice"; c.id = "stutter.slice"; c.label = "Slice"; c.neutral = 0; c.lo = 0; c.hi = 2; c.ownTip = true;
+    c.tip = "The length of each repeated slice. Middle = as found. Left = shorter, down to half: the start of each slice is repeated faster. Right of the middle nothing changes: a longer slice than the found one is not in the sound any more.";
+    c.tip2 = "The length of each repeated slice on the second sound. Middle = as found. Left = shorter, down to half. Right = longer, up to double.";
+    F.knobs = { a, c }; return F;
+}
+// The Slice fader (0 .. 2, 1 = as found) as a factor on the slice length: half to double.
+inline double stutterSlice (const Params& p) { return std::pow (2.0, std::clamp (get (p, "slice", 1.0), 0.0, 2.0) - 1.0); }
+// The stutter engine's verdict goes into the inspection and the detector's own guess about a stutter goes out.
+inline void mergeStutter (Inspection& I, const stutter::Found& f) { I.prob["stutter"] = f.found ? stutterSure : level::sureNone; }
 
 // What the engines added in build 0.4.7 found on the sound (each may be missing: then the detectors' verdict and the old handling stay).
 struct More
 {
     std::shared_ptr<const sides::Found> sides;
     std::shared_ptr<const ring::Found> ring;
+    std::shared_ptr<const crush::Found> crush;
+    std::shared_ptr<const stutter::Found> stutter;
 };
 
 // Settings of each found effect (estimate.estimate, without the slower sweep fit for now).
@@ -887,7 +964,8 @@ inline void pruneFound (std::vector<FoundFx>& out)
 // mov: what the moving-tone engine found on the sound; a moving filter found is the PHASER or FILTER SWEEP group (movingFx).
 // cho: what the chorus engine found on the sound; voices found are the CHORUS group (chorusFx).
 // more: what the engines of build 0.4.7 found: a delay or a widening between the sides is the HAAS WIDTH or STEREO WIDTH group (sidesFx),
-// a tone the sound was multiplied by is the RING MOD group (ringFx).
+// a tone the sound was multiplied by is the RING MOD group (ringFx), a grid of values or a hold is the BITCRUSH group (crushFx),
+// slices played again are the STUTTER group (stutterFx).
 inline std::vector<FoundFx> estimate (const Inspection& I, const Stereo& y, double cut = 0.65, const std::set<std::string>* only = nullptr,
                                       const std::shared_ptr<const room::Found>& room = {}, const std::shared_ptr<const tone::Found>& tone = {},
                                       const std::shared_ptr<const echo::Found>& echo = {}, const std::shared_ptr<const level::Movement>& lvl = {},
@@ -912,6 +990,8 @@ inline std::vector<FoundFx> estimate (const Inspection& I, const Stereo& y, doub
         if (cho != nullptr && f == "chorus") { if (cho->found) out.push_back (chorusFx (cho, pit->second)); continue; }
         if (more.sides != nullptr && (f == "haas" || f == "width")) { if (more.sides->found() && f == sidesName (*more.sides)) out.push_back (sidesFx (more.sides, pit->second)); continue; }
         if (more.ring != nullptr && f == "ringmod") { if (more.ring->found) out.push_back (ringFx (more.ring, pit->second)); continue; }
+        if (more.crush != nullptr && f == "bitcrush") { if (more.crush->found) out.push_back (crushFx (more.crush, pit->second)); continue; }
+        if (more.stutter != nullptr && f == "stutter") { if (more.stutter->found) out.push_back (stutterFx (more.stutter, pit->second)); continue; }
         FoundFx F; F.name = f; F.title = titleFor (f); F.prob = pit->second; F.knobs = knobsFor (f); Params& e = F.est;
         if (f == "haas") e["lag"] = (double) hand::gccPhat (y, 30.0).lag;
         else if (f == "width") e["amount"] = std::clamp (S (f, "amount", 0.5), 0.05, 1.2);
@@ -1010,6 +1090,10 @@ inline bool settingsMoved (const FoundFx& F, const std::map<std::string, double>
 // TONE MATCH comes last, on what the other effects have made of the target: the result then has the first sound's
 // long-term tone whatever went on before. shown: if given, receives that group with the curves it used (for the
 // picture and Export IR).
+// The found crusher and the found stutter were the last things the first sound went through: anything after a crusher
+// takes the values off its grid, anything after a stutter makes its repeats unequal, and neither would then have been
+// read. So here too the crusher comes after the other effects, and the stutter at the very end (after TONE MATCH,
+// whose filter would blur the cuts, and which a stutter hardly changes).
 inline Stereo applyTo (const Stereo& target, const std::vector<FoundFx>& found, const std::map<std::string, double>& faders, const std::function<bool()>& cancelled = {},
                        FoundFx* shown = nullptr)
 {
@@ -1017,7 +1101,7 @@ inline Stereo applyTo (const Stereo& target, const std::vector<FoundFx>& found, 
     for (auto& F : found)
     {
         if (cancelled && cancelled()) break;
-        if (F.name == "tonematch") continue;
+        if (F.name == "tonematch" || F.crush != nullptr || F.stutter != nullptr) continue;
         if (F.room != nullptr)      // the found room, rebuilt from its numbers, on this sound
         {
             const Params p = scaled (F, faders);
@@ -1075,6 +1159,12 @@ inline Stereo applyTo (const Stereo& target, const std::vector<FoundFx>& found, 
         }
         y = applyAmount (F.name, y, scaled (F, faders), amountOf (F, faders));
     }
+    for (auto& F : found)       // this sound through the found crusher
+    {
+        if (F.crush == nullptr || (cancelled && cancelled())) continue;
+        const double s = amountOf (F, faders); const Params p = scaled (F, faders);
+        if (s > 1e-9) y = crush::onto (y, *F.crush, std::min (s, 2.0), crushSteps (F, p), crushHold (p));
+    }
     for (auto& F : found)
     {
         if (F.name != "tonematch" || (cancelled && cancelled())) continue;
@@ -1089,13 +1179,19 @@ inline Stereo applyTo (const Stereo& target, const std::vector<FoundFx>& found, 
         for (auto& v : gl) v *= s; for (auto& v : gr) v *= s;
         Stereo r = tone::gainFilter (y, gl, gr, cancelled); if (r.size() == y.size()) y = std::move (r);
     }
+    for (auto& F : found)       // the found slices of this sound played again, at the same times
+    {
+        if (F.stutter == nullptr || (cancelled && cancelled())) continue;
+        const double s = amountOf (F, faders);
+        if (s > 1e-9) y = stutter::onto (y, *F.stutter, std::min (s, 2.0), stutterSlice (scaled (F, faders)));
+    }
     limit (y);
     return y;
 }
 
 // One sound: take the found effects out (left), leave as is (middle) or double (right).
 inline bool canRemove (const std::string& f) { return f != "reverb" && f != "distortion" && f != "bitcrush" && ! isNewFx (f); }
-inline bool canRemove (const FoundFx& F) { return F.room != nullptr || F.tone != nullptr || F.echo != nullptr || F.level != nullptr || F.sweep != nullptr || F.moving != nullptr || F.chorus != nullptr || F.sides != nullptr || F.ring != nullptr || canRemove (F.name); }      // the room engine takes its reverb out, the tone engine its reflections, the echo engine its echoes, the level engine its movement, the flanger engine its moving copy, the moving-tone engine its curve, the chorus engine its voices, the sides engine its delay or widening, the ring engine its tone
+inline bool canRemove (const FoundFx& F) { return F.room != nullptr || F.tone != nullptr || F.echo != nullptr || F.level != nullptr || F.sweep != nullptr || F.moving != nullptr || F.chorus != nullptr || F.sides != nullptr || F.ring != nullptr || (F.crush != nullptr && F.crush->soft) || canRemove (F.name); }      // the room engine takes its reverb out, the tone engine its reflections, the echo engine its echoes, the level engine its movement, the flanger engine its moving copy, the moving-tone engine its curve, the chorus engine its voices, the sides engine its delay or widening, the ring engine its tone, the crush engine a crusher that mixed plain sound in
 // The found effect turned down to s (0 = out as far as this effect allows, 1 = untouched).
 inline Stereo takeOut (const FoundFx& F, const Stereo& in, double s)
 {
@@ -1114,13 +1210,24 @@ inline Stereo takeOut (const FoundFx& F, const Stereo& in, double s)
     else if (isLfoFx (f)) y = est::motionControl (y, s, F.lfoRate);
     return y;
 }
+// The found crusher is worked first: it was the last thing the sound went through, and its engine's answer belongs to
+// the sound as it was found. The found stutter is worked last: with fewer plays the sound closes up, and the other
+// engines' answers belong to the sound's own times.
 inline Stereo reshape (const Stereo& src, const std::vector<FoundFx>& found, const std::map<std::string, double>& faders, const std::function<bool()>& cancelled = {})
 {
     Stereo y = src;
+    for (const FoundFx& F : found)
+    {
+        if (F.crush == nullptr || (cancelled && cancelled())) continue;
+        // a crusher that mixed plain sound in: the sound before it, and from there to where the faders are; a bare one: more of it only; the crush engine's answer belongs to this very sound (same length)
+        const Params p = scaled (F, faders);
+        if (F.crush->n == y.size()) y = crush::own (y, *F.crush, std::clamp (amountOf (F, faders), 0.0, 2.0), crushSteps (F, p), crushHold (p));
+    }
     for (auto it = found.rbegin(); it != found.rend(); ++it)      // undo in reverse chain order
     {
         if (cancelled && cancelled()) break;
         const FoundFx& F = *it; const double s = amountOf (F, faders); const bool moved = settingsMoved (F, faders);
+        if (F.crush != nullptr || F.stutter != nullptr) continue;
         if (! moved && std::abs (s - 1.0) < 1e-9) continue;
         if (F.room != nullptr)
         {
@@ -1195,6 +1302,12 @@ inline Stereo reshape (const Stereo& src, const std::vector<FoundFx>& found, con
             }
             if (s > 1.0) y = applyAmount (F.name, y, scaled (F, faders), s - 1.0);
         }
+    }
+    for (const FoundFx& F : found)
+    {
+        if (F.stutter == nullptr || (cancelled && cancelled())) continue;
+        // more plays of each slice over what follows, or fewer with the sound closed up; the stutter engine's answer belongs to this very sound (same length)
+        if (F.stutter->n == y.size()) y = stutter::own (y, *F.stutter, std::clamp (amountOf (F, faders), 0.0, 2.0), stutterSlice (scaled (F, faders)));
     }
     limit (y);
     return y;

@@ -10,6 +10,9 @@
 //   The chorus engine always runs: found voices are the CHORUS group (faders: chorus.amount, chorus.speed, chorus.depth).
 //   The sides engine always runs: a delay or a widening between the two sides is the HAAS WIDTH or STEREO WIDTH group (faders: haas.amount, width.amount).
 //   The ring engine always runs: a tone the sound was multiplied by is the RING MOD group (faders: ringmod.amount, ringmod.carrier).
+//   The crush engine always runs: a grid of values or a hold is the BITCRUSH group (faders: bitcrush.amount, bitcrush.bits, bitcrush.down).
+//   The stutter engine always runs: slices played again are the STUTTER group (faders: stutter.amount, stutter.slice).
+//   A sound that is not at 48 kHz is brought there for everything else, and those two engines read it at its own rate (as in the app).
 //   The moving-tone engine runs when ResourcesDir holds moving.bin (as in the app): a found moving filter is the PHASER or FILTER SWEEP
 //   group (faders: <group>.amount, <group>.speed).
 //   The verifier's models are read from ResourcesDir/verify.bin (Source/Core/Verify.h): the scores are its scores, as in the app.
@@ -34,6 +37,8 @@ int main (int argc, char** argv)
     auto loadM = [] (const std::string& p) { std::ifstream f (p, std::ios::binary); std::vector<char> b ((std::istreambuf_iterator<char> (f)), {}); dr::Models m; m.load (b.data(), b.size()); return m; };
     const std::string dir = argv[1]; const dr::Models M = loadM (dir + "/models.bin"), M27 = loadM (dir + "/models27.bin");
     dr::Stereo src; double sr = 0; if (! dr::readWav (argv[2], src, sr) || src.size() == 0) { std::cout << "cannot read " << argv[2] << "\n"; return 1; }
+    dr::Stereo raw; const bool other = std::abs (sr - 48000.0) > 0.5;       // a file at another rate: its own samples for the engines that need them exact
+    if (other) { raw = src; src = dr::resampled (raw, sr, 48000.0); std::cout << "file at " << sr << " Hz: brought to 48000 Hz\n"; }
     struct Block { std::string tgt, out, ir, echoIr; std::map<std::string, double> fad; bool match = false; };
     std::vector<Block> blocks; double cut = 0.65;
     for (int i = 3; i + 1 < argc;)
@@ -127,6 +132,27 @@ int main (int argc, char** argv)
         if (rg->measured) std::cout << " hz=" << rg->f << " rho=" << rg->rho << " floor=" << rg->eps << " win=" << rg->win << " ideal=" << rg->ideal << " match_db=" << rg->match << " dip_db=" << rg->dip << " offset_db=" << rg->offset << " holes=" << rg->holes;
         std::cout << "\n";
     }
+    {
+        dr::crush::Found f = dr::crush::find (other ? raw : src, other ? sr : 48000.0);
+        if (other)
+        {
+            std::vector<float> xl, xr;
+            if (f.found && f.soft) { dr::Vec a (f.xl.begin(), f.xl.end()), b (f.xr.begin(), f.xr.end()); a = dr::resampled (a, sr, 48000.0); b = dr::resampled (b, sr, 48000.0); xl.assign (a.begin(), a.end()); xr.assign (b.begin(), b.end()); }
+            f = dr::crush::atRate (std::move (f), 48000.0, src.size(), std::move (xl), std::move (xr));
+        }
+        const auto cr = std::make_shared<const dr::crush::Found> (std::move (f)); dr::mergeCrush (I, *cr); more.crush = cr;
+        std::cout << "crush: found=" << (cr->found ? 1 : 0);
+        if (cr->found) std::cout << " kind=" << (cr->soft ? "soft" : cr->through ? "through" : "bare") << " bits=" << cr->bits << " step=" << cr->step[0] << "," << cr->step[1] << " hold=" << cr->P << " mix=" << cr->mix << " blend=" << cr->blend;
+        std::cout << "\n";
+    }
+    {
+        dr::stutter::Found f = dr::stutter::find (other ? raw : src, other ? sr : 48000.0);
+        if (other) f = dr::stutter::atRate (std::move (f), 48000.0, src.size());
+        const auto st = std::make_shared<const dr::stutter::Found> (std::move (f)); dr::mergeStutter (I, *st); more.stutter = st;
+        std::cout << "stutter: found=" << (st->found ? 1 : 0);
+        if (st->found) { std::cout << " events=" << st->events.size() << " slice_ms=" << st->slice() * 1e3 << " plays=" << st->plays() << " fades=" << (st->fades ? 1 : 0) << " share=" << st->share << " at_s="; for (size_t i = 0; i < st->events.size() && i < 12; ++i) std::cout << (i ? "," : "") << (double) st->events[i].s0 / 48000.0 << ".." << (double) st->events[i].end / 48000.0; }
+        std::cout << "\n";
+    }
     {       // an echo on a sound that is multiplied by a tone: is it still there with the tone taken out?
         const double s = dr::recheckEchoWithout (I, ef, more);
         if (s >= 0) std::cout << "echo without the tone: sureness=" << s << " counts=" << I.prob.at ("delay") << "\n";
@@ -140,10 +166,10 @@ int main (int argc, char** argv)
     if (only) { for (auto& [f, p] : I.prob) std::cout << f << "=" << p << " "; std::cout << "\n"; return 0; }
     const auto found0 = dr::estimate (I, src, cut, nullptr, rf, tf, ef, lf, wf, mf, cf, more);
     auto t2 = clk::now();
-    for (auto& F : found0) { std::cout << F.name << " p=" << F.prob << (F.room ? " (room engine)" : F.tone ? " (tone engine)" : F.echo ? " (echo engine)" : F.level ? " (level engine)" : F.sweep ? " (flanger engine)" : F.moving ? " (moving-tone engine)" : F.chorus ? " (chorus engine)" : F.sides ? " (sides engine)" : F.ring ? " (ring engine)" : ""); for (auto& [k, v] : F.est) std::cout << " " << k << "=" << v; std::cout << "\n"; }
+    for (auto& F : found0) { std::cout << F.name << " p=" << F.prob << (F.room ? " (room engine)" : F.tone ? " (tone engine)" : F.echo ? " (echo engine)" : F.level ? " (level engine)" : F.sweep ? " (flanger engine)" : F.moving ? " (moving-tone engine)" : F.chorus ? " (chorus engine)" : F.sides ? " (sides engine)" : F.ring ? " (ring engine)" : F.crush ? " (crush engine)" : F.stutter ? " (stutter engine)" : ""); for (auto& [k, v] : F.est) std::cout << " " << k << "=" << v; std::cout << "\n"; }
     for (auto& B : blocks)
     {
-        const bool two = B.tgt != "-"; dr::Stereo tgt; if (two) dr::readWav (B.tgt, tgt, sr);
+        const bool two = B.tgt != "-"; dr::Stereo tgt; if (two) { double tsr = 0; dr::readWav (B.tgt, tgt, tsr); if (std::abs (tsr - 48000.0) > 0.5) tgt = dr::resampled (tgt, tsr, 48000.0); }
         auto found = found0; const auto& fad = B.fad;
         if (two && B.match && ! tf->spec.silent)
         {

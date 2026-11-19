@@ -551,5 +551,17 @@ inline Stereo own (const Stereo& y, const Found& F, double s = 1.0, double sf = 
     return q;
 }
 
+// What was found on a sound at one rate, for the same sound at another (the app works at 48 kHz, and a file at another
+// rate is read at its own, since its values lie on the grid only there): the same grid of values, a hold as long in
+// time. n: the sound's length at that rate; xl, xr: the sound before the crusher at that rate (the caller's conversion
+// of F.xl, F.xr; without it the found sound itself cannot be changed).
+inline Found atRate (Found F, double rate, size_t n, std::vector<float> xl = {}, std::vector<float> xr = {})
+{
+    const double r = rate / F.rate; F.n = n; if (std::abs (r - 1.0) < 1e-9) return F;
+    F.from = std::lround ((double) F.from * r);
+    if (F.P > 1.0 && F.P * r > 1.0) { F.P *= r; F.c *= r; } else { F.P = 1.0; F.c = 0.0; }
+    F.xl = std::move (xl); F.xr = std::move (xr); F.rate = rate; return F;
+}
+
 } // namespace crush
 } // namespace dr

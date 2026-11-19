@@ -420,6 +420,22 @@ inline Stereo onto (const Stereo& z, const Found& F, double s = 1.0, double slic
     if (! F.found || s < 1e-12) return z;
     return play (z, scaled (F.events, s, (long) z.size(), slice, sizes (F.rate).fade), F.fades, sizes (F.rate).fade);
 }
+// Where the events lie in the found sound itself with Amount at s (own): right of the middle they reach further; left
+// of it each has fewer plays and everything after a shortened event has moved up by what was cut out.
+inline std::vector<Event> lies (const Found& F, double s, long n, long* cut = nullptr)
+{
+    const std::vector<Event> ev = scaled (F.events, s, n); if (cut != nullptr) *cut = 0;
+    if (! (s < 1.0 - 1e-12)) return ev;
+    std::vector<Event> now; long gone = 0;                                           // samples cut out so far
+    for (const Event& w : F.events)
+    {
+        long to = w.s0 + w.L; const Event* kept = nullptr; for (const Event& e : ev) if (e.s0 == w.s0 && e.L == w.L) { to = e.end; kept = &e; }
+        if (kept != nullptr) now.push_back ({ w.s0 - gone, w.L, w.s0 - gone + (kept->end - kept->s0) });
+        gone += std::max (std::min (w.end, n) - std::max (to, w.s0), 0L);
+    }
+    if (cut != nullptr) *cut = gone;
+    return now;
+}
 // The found sound with Amount at s. Right of the middle: each slice is played more often (over what follows). Left of
 // it: fewer times, and since what the repeats covered is gone, the sound closes up and ends early (silence at the end).
 // Slice under 1: the first part of each slice is played instead of all of it (a longer slice than the found one is not
@@ -430,14 +446,13 @@ inline Stereo own (const Stereo& y, const Found& F, double s = 1.0, double slice
     const long n = (long) y.size(), fade = sizes (F.rate).fade; slice = std::min (slice, 1.0);
     if (std::abs (s - 1.0) < 1e-12 && std::abs (slice - 1.0) < 1e-12) return y;
     const std::vector<Event> ev = scaled (F.events, s, n);
-    Stereo o = y; std::vector<Event> now;                                            // the events as they lie in the result
+    Stereo o = y;
     if (s > 1.0)
     {
         for (const Event& e : ev)
         {
             long e0 = e.end; for (const Event& w : F.events) if (w.s0 == e.s0 && w.L == e.L) e0 = w.end;
             for (long t = e0; t < e.end; ++t) { const long i = (t - e.s0) % e.L; o.l[(size_t) t] = y.l[(size_t) (e.s0 + i)]; o.r[(size_t) t] = y.r[(size_t) (e.s0 + i)]; }
-            now.push_back (e);
         }
     }
     else if (std::abs (s - 1.0) >= 1e-12)
@@ -448,18 +463,46 @@ inline Stereo own (const Stereo& y, const Found& F, double s = 1.0, double slice
             long to = w.s0 + w.L; for (const Event& e : ev) if (e.s0 == w.s0 && e.L == w.L) to = e.end;
             for (long t = to; t < std::min (w.end, n); ++t) keep[(size_t) t] = 0;
         }
-        std::vector<long> at ((size_t) n + 1, 0); long k = 0;                        // where each sample went
-        for (long t = 0; t < n; ++t) { at[(size_t) t] = k; if (keep[(size_t) t]) { o.l[(size_t) k] = y.l[(size_t) t]; o.r[(size_t) k] = y.r[(size_t) t]; ++k; } }
-        at[(size_t) n] = k; for (long t = k; t < n; ++t) { o.l[(size_t) t] = 0.0; o.r[(size_t) t] = 0.0; }
-        for (const Event& e : ev) now.push_back ({ at[(size_t) e.s0], e.L, at[(size_t) e.s0] + (e.end - e.s0) });
+        long k = 0;
+        for (long t = 0; t < n; ++t) if (keep[(size_t) t]) { o.l[(size_t) k] = y.l[(size_t) t]; o.r[(size_t) k] = y.r[(size_t) t]; ++k; }
+        for (long t = k; t < n; ++t) { o.l[(size_t) t] = 0.0; o.r[(size_t) t] = 0.0; }
     }
-    else now = ev;
     if (std::abs (slice - 1.0) >= 1e-12)
     {
-        std::vector<Event> fine; for (const Event& e : now) { const long L = std::max ((long) std::lround ((double) e.L * slice), fade); if (L < e.L) fine.push_back ({ e.s0, L, e.end }); }
+        std::vector<Event> fine; for (const Event& e : lies (F, s, n)) { const long L = std::max ((long) std::lround ((double) e.L * slice), fade); if (L < e.L) fine.push_back ({ e.s0, L, e.end }); }
         o = play (o, fine, F.fades, fade);
     }
     return o;
+}
+// The events as the faders have them, for the picture: on a second sound (own = false: the found events scaled) or in
+// the found sound itself.
+inline std::vector<Event> shown (const Found& F, double s, double slice, bool own, long n)
+{
+    const long fade = sizes (F.rate).fade;
+    if (! own) return s < 1e-12 ? std::vector<Event>() : scaled (F.events, s, n, slice, fade);
+    std::vector<Event> now = lies (F, s, n); slice = std::min (slice, 1.0);
+    if (std::abs (slice - 1.0) >= 1e-12) for (Event& e : now) e.L = std::min (e.L, std::max ((long) std::lround ((double) e.L * slice), fade));
+    return now;
+}
+// What was found on a sound at one rate, for the same sound at another (the app works at 48 kHz, and a file at another
+// rate is read at its own, since its repeats are exact only there): the same times. n: the sound's length at that rate.
+// Two events that follow straight on each other still do.
+inline Found atRate (Found F, double rate, size_t n)
+{
+    const double r = rate / F.rate; F.n = n; if (std::abs (r - 1.0) < 1e-9) return F;
+    auto at = [r] (long v) { return std::lround ((double) v * r); };
+    const std::vector<Event> was = F.events;
+    for (size_t i = 0; i < was.size(); ++i)
+    {
+        Event& e = F.events[i]; const double plays = (double) (was[i].end - was[i].s0) / (double) was[i].L;
+        e.s0 = at (was[i].s0); e.L = std::max (at (was[i].L), 2L); e.end = e.s0 + std::lround (plays * (double) e.L);
+        if (i + 1 < was.size() && was[i].end <= was[i + 1].s0) { const long nx = at (was[i + 1].s0); e.end = was[i].end == was[i + 1].s0 ? nx : std::min (e.end, nx); }
+        e.end = std::min (e.end, (long) n);
+    }
+    for (Stretch& q : F.stretches) { q.lo = at (q.lo); q.hi = at (q.hi); q.L = at (q.L); }
+    for (LeftOut& q : F.leftOut) { q.s0 = at (q.s0); q.L = at (q.L); q.end = at (q.end); }
+    for (long& v : F.own) v = at (v);
+    F.rate = rate; return F;
 }
 
 } // namespace stutter

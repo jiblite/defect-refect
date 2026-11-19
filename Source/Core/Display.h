@@ -459,6 +459,84 @@ inline Plot ringPlot (const FoundFx& F, const Params& p, double s, bool onSecond
     P.caption = t; return P;
 }
 
+// The crush engine's group (BITCRUSH): a quiet tone before the crusher (grey) and after it as the faders have it, the
+// level counted in steps of the found grid: the steps show as levels, the hold as flat stretches.
+inline Plot crushPlot (const FoundFx& F, const Params& p, double s, bool onSecond)
+{
+    using namespace disp;
+    Plot P; P.title = F.title; if (F.crush == nullptr || ! F.crush->found) return P;
+    const crush::Found& f = *F.crush; const double amount = std::clamp (s, 0.0, 2.0), sf = crushSteps (F, p), hf = crushHold (p);
+    const int ch = f.step[0] > 0.0 ? 0 : 1; const bool grid = f.step[ch] > 0.0, own = ! onSecond, bare = ! f.soft;
+    const double unit = grid ? f.step[ch] : 1.0, top = grid ? 8.0 * unit : 0.5;       // the tone: 8 found steps high (without a grid: half of full scale)
+    const long span = std::max (64L, std::lround (16.0 * f.P));
+    Stereo x; x.l.resize ((size_t) span + 1); for (long i = 0; i <= span; ++i) x.l[(size_t) i] = top * std::sin (2 * PI * 1.5 * (double) i / (double) span); x.r = x.l;
+    const Stereo was = crush::through (x, f);                                         // the tone as the found crusher leaves it
+    const Stereo now = own && bare ? crush::own (was, f, amount, sf, hf) : crush::onto (x, f, amount, sf, hf);
+    const Vec& a = ch ? now.r : now.l; const Vec& b = ch ? was.r : was.l; double hi = top;
+    for (long i = 0; i <= span; ++i) hi = std::max ({ hi, std::abs (a[(size_t) i]), std::abs (b[(size_t) i]) });      // the axis holds the tone as found too
+    const double lim = 1.2 * hi / unit, ms = 1e3 / f.rate;
+    P.x0 = 0; P.x1 = (double) span * ms; P.y0 = -lim; P.y1 = lim; P.xLabel = "ms"; P.yLabel = grid ? "steps" : "level"; P.xTicks = ticks (P.x0, P.x1); P.yTicks = ticks (P.y0, P.y1);
+    Curve dry; dry.colour = 2; dry.dim = true; Curve wet;
+    for (long i = 0; i <= span; ++i) { dry.pts.push_back ({ (double) i * ms, x.l[(size_t) i] / unit }); wet.pts.push_back ({ (double) i * ms, a[(size_t) i] / unit }); }
+    P.curves.push_back (dry); P.curves.push_back (wet);
+    // in words: the crusher as the faders have it
+    const double sfNow = own && bare ? std::max (sf, 1.0) : sf, hfNow = own && bare ? std::max (hf, 1.0) : hf, bits = f.bits - std::log2 (sfNow), hold = std::max (f.P * hfNow, 1.0);
+    const std::string levels = num (std::pow (2.0, bits), 0) + " levels (" + num (bits, 1) + " bits)";
+    const std::string held = "each value held for " + num (hold, std::abs (hold - std::round (hold)) < 0.005 ? 0 : 2) + " samples (" + num (f.rate / hold / 1000.0, 1) + " kHz)";
+    std::string c;
+    if (f.soft) c = "A crusher that mixes plain sound back in: " + levels + (hold > 1.0 ? ", " + held : std::string()) + ", " + num (f.mix * 100, 0) + "% crushed" + (f.blend > 0.02 ? ", its steps rounded off" : "") + ".";
+    else if (f.through) c = "A grid of " + levels + " shows through something that came after the crusher and is not read (a filter). The grid goes onto a second sound as a plain crusher.";
+    else if (grid) c = "Rounded to " + levels + (hold > 1.0 ? ", " + held : std::string()) + ".";
+    else c = "No rounding, but " + held + ".";
+    c += " Drawn: a quiet tone before (grey) and after.";
+    if (amount < 1e-3) c += onSecond ? " Amount at zero: not put on the second sound." : f.soft ? " Amount at zero: the sound before the crusher, worked out from the plain share." : "";
+    if (own && bare && amount < 1.0 - 1e-3) c += " What the crusher threw away is not in the sound any more: left of the middle it stays as found.";
+    P.caption = c; return P;
+}
+
+// The stutter engine's group (STUTTER): where along the sound slices are played again, as the faders have it: every
+// slice as a tall bar and each repeat of it as a lower one behind it.
+inline Plot stutterPlot (const FoundFx& F, const Params& p, double s, bool onSecond)
+{
+    using namespace disp;
+    Plot P; P.title = F.title; if (F.stutter == nullptr || ! F.stutter->found || F.stutter->n == 0) return P;
+    const stutter::Found& f = *F.stutter; const double amount = std::clamp (s, 0.0, 2.0), slice = stutterSlice (p), all = (double) f.n / f.rate;
+    long cut = 0; if (! onSecond) (void) stutter::lies (f, amount, (long) f.n, &cut);
+    const std::vector<stutter::Event> ev = stutter::shown (f, amount, slice, ! onSecond, (long) f.n);
+    P.x0 = 0; P.x1 = all; P.y0 = 0; P.y1 = 1.2; P.xLabel = "s"; P.xTicks = ticks (0, all);
+    long plays = 0; for (const auto& e : ev) plays += (long) std::ceil ((double) (e.end - e.s0) / (double) e.L);
+    for (const auto& e : ev)
+    {
+        const long m = (long) std::ceil ((double) (e.end - e.s0) / (double) e.L);
+        if (plays > 2500)       // very many: the slice and one bar for all its repeats
+        {
+            const double t0 = (double) e.s0 / f.rate, t1 = (double) (e.s0 + e.L) / f.rate, t2 = (double) e.end / f.rate;
+            P.bars.push_back ({ 0.5 * (t0 + t1), 0.0, 1.0, t1 - t0, 0 }); P.bars.push_back ({ 0.5 * (t1 + t2), 0.0, 0.6, t2 - t1, 0 });
+            continue;
+        }
+        for (long j = 0; j < m; ++j)
+        {
+            const double t0 = (double) (e.s0 + j * e.L) / f.rate, t1 = (double) std::min (e.s0 + (j + 1) * e.L, e.end) / f.rate;
+            P.bars.push_back ({ 0.5 * (t0 + t1), 0.0, j == 0 ? 1.0 : 0.6, (t1 - t0) * 0.86, 0 });
+        }
+    }
+    // in words: the slices and their plays as the faders have them (with no repeats left: as they were found)
+    const std::vector<stutter::Event>& base = ev.empty() ? f.events : ev;
+    long lo = 0, hi = 0; std::vector<double> pv; for (const auto& e : base) { lo = lo == 0 ? e.L : std::min (lo, e.L); hi = std::max (hi, e.L); pv.push_back ((double) (e.end - e.s0) / (double) e.L); }
+    std::sort (pv.begin(), pv.end()); const double pl = pv[pv.size() / 2]; const bool alike = pv.back() - pv.front() < 0.05;
+    auto msText = [&] (long L) { const double v = (double) L / f.rate * 1e3; return num (v, v < 10 ? 1 : 0); };
+    const std::string len = hi > lo + lo / 50 ? msText (lo) + " to " + msText (hi) + " ms long" : msText (hi) + " ms long";
+    const std::string times = "played " + num (pl, std::abs (pl - std::round (pl)) < 0.05 ? 0 : 1) + " times";
+    std::string c = base.size() == 1 ? "One slice, " + len + ", is " + times + " (tall = the slice, low = a repeat of it)."
+                                     : std::to_string (base.size()) + " slices, " + len + ", are " + (alike ? "" : "mostly ") + times + " each (tall = a slice, low = a repeat of it).";
+    if (f.fades) c += " Every play comes up from nothing and goes back to it.";
+    if (onSecond) c += amount < 1e-3 ? " Amount at zero: not put on the second sound." : " The second sound's own slices are played again at the same times.";
+    else if (amount < 1e-3) c += " Amount at zero: no repeats. What they covered is gone, so the sound closes up and ends " + num ((double) cut / f.rate, 1) + " s early.";
+    else if (cut > 0) c += " With fewer repeats the sound closes up and ends " + num ((double) cut / f.rate, 1) + " s early: what the repeats covered is gone.";
+    else if (amount > 1.0 + 1e-3) c += " The extra repeats take the place of what followed.";
+    P.caption = c; return P;
+}
+
 // s: the effect's Amount fader (0..2); p: its settings with the settings faders applied. onSecond: the effect
 // goes onto a second sound (only the room's picture depends on it).
 inline Plot makePlot (const FoundFx& F, const Params& scaledP, double s, bool onSecond = false)
@@ -473,6 +551,8 @@ inline Plot makePlot (const FoundFx& F, const Params& scaledP, double s, bool on
     if (F.chorus != nullptr) return chorusPlot (F, scaledP, s, onSecond);
     if (F.sides != nullptr) return sidesPlot (F, s, onSecond);
     if (F.ring != nullptr) return ringPlot (F, scaledP, s, onSecond);
+    if (F.crush != nullptr) return crushPlot (F, scaledP, s, onSecond);
+    if (F.stutter != nullptr) return stutterPlot (F, scaledP, s, onSecond);
     const std::string& f = F.name; Plot P; P.title = F.title;
     bool fade = false; const Params e = mapAmount (f, scaledP, std::max (s, 0.0), fade); const double w = fade ? std::min (1.0, s) : 1.0;
     auto g = [&] (const char* k, double d) { return get (e, k, d); };

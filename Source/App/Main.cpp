@@ -56,8 +56,20 @@ public:
 };
 
 // ---------------------------------------------------------------- audio
-inline bool loadStereo48k (const juce::File& f, dr::Stereo& out, juce::String& err)
+// One side of a sound at the app's rate (48 kHz), from the rate it has.
+inline std::vector<float> to48k (const std::vector<float>& in, double rate)
 {
+    const double ratio = rate / dr::SR; const int m = (int) std::floor ((double) in.size() / ratio);
+    std::vector<float> o ((size_t) juce::jmax (m, 0)); if (m <= 0) return o;
+    juce::WindowedSincInterpolator ip; ip.process (ratio, in.data(), o.data(), m, (int) in.size(), 0);
+    return o;
+}
+// raw, rate: a file that is not at 48 kHz also gives its own samples and its rate (files up to 10 minutes). The crush
+// engine and the stutter engine read those: a grid of values and exact repeats do not survive the change of rate.
+inline bool loadStereo48k (const juce::File& f, dr::Stereo& out, juce::String& err, std::shared_ptr<const dr::Stereo>* raw = nullptr, double* rate = nullptr)
+{
+    if (raw != nullptr) raw->reset();
+    if (rate != nullptr) *rate = dr::SR;
     juce::AudioFormatManager fm; fm.registerBasicFormats();
     std::unique_ptr<juce::AudioFormatReader> r (fm.createReaderFor (f));
     if (r == nullptr) { err = "Cannot read " + f.getFileName(); return false; }
@@ -69,13 +81,8 @@ inline bool loadStereo48k (const juce::File& f, dr::Stereo& out, juce::String& e
     for (int i = 0; i < n; ++i) { L[(size_t) i] = b.getSample (0, i); R[(size_t) i] = b.getSample (c1, i); }
     if (std::abs (r->sampleRate - dr::SR) > 0.5)
     {
-        const double ratio = r->sampleRate / dr::SR; const int m = (int) std::floor (n / ratio);
-        auto rs = [&] (const std::vector<double>& x)
-        {
-            std::vector<float> in (x.begin(), x.end()), o ((size_t) m); juce::WindowedSincInterpolator ip;
-            ip.process (ratio, in.data(), o.data(), m, (int) in.size(), 0);
-            return std::vector<double> (o.begin(), o.end());
-        };
+        if (raw != nullptr && rate != nullptr && r->lengthInSamples <= (juce::int64) (r->sampleRate * 60 * 10)) { auto own = std::make_shared<dr::Stereo>(); own->l = L; own->r = R; *raw = own; *rate = r->sampleRate; }
+        auto rs = [&] (const std::vector<double>& x) { const std::vector<float> o = to48k (std::vector<float> (x.begin(), x.end()), r->sampleRate); return std::vector<double> (o.begin(), o.end()); };
         L = rs (L); R = rs (R);
     }
     out.l = std::move (L); out.r = std::move (R);
@@ -338,9 +345,10 @@ public:
                 s.setColour (juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack); s.setColour (juce::Slider::textBoxTextColourId, theme::textDim);
                 s.setColour (juce::Slider::thumbColourId, twoSounds ? theme::orange : theme::teal);
                 const bool amount = k.key.empty();
-                juce::String tip = k.tip;
+                juce::String tip = twoSounds && ! k.tip2.empty() ? k.tip2 : k.tip;
                 const bool match = fxName == "tonematch";
-                if (amount) tip = match ? "How far the second sound takes the tone of the first. Left = not at all, middle = matched, right = the curve twice."
+                if (amount && k.ownTip) tip += " Double-click for the middle.";      // a group whose Amount has words of its own (BITCRUSH, STUTTER)
+                else if (amount) tip = match ? "How far the second sound takes the tone of the first. Left = not at all, middle = matched, right = the curve twice."
                                 : twoSounds ? "How much of this effect goes onto the second sound. Middle = as found on the first sound. Left = not applied. Right = double."
                                 : fxName == "comb" ? "Middle = as found. Left = take the reflection out. Right = once more, up to double."
                                             : F.room != nullptr ? "Middle = as found. Left = take the reverb out, far left = as much as the app can tell apart from the sound. Right = more reverb, up to double."
@@ -552,6 +560,7 @@ private:
     dr::FoundFx matchShown;                                     // TONE MATCH as the last render used it, with its curves (for the picture and Export IR)
     std::weak_ptr<const dr::Stereo> pairA, pairB; bool pairSame = false;     // are the two sounds versions of one recording (worked out once per pair; weak: a new sound at an old address is still a new sound)
     std::shared_ptr<const dr::Stereo> sound[2], result;
+    std::shared_ptr<const dr::Stereo> rawSound[2]; double rawRate[2] = { dr::SR, dr::SR };      // a file that is not at 48 kHz: its own samples and its rate (for the crush engine and the stutter engine)
     juce::String names[2]; juce::File pending[2], lastDir;
     std::vector<dr::FoundFx> found; bool inspected = false;
     std::shared_ptr<const dr::Inspection> inspection; std::map<std::string, dr::FoundFx> cache;   // every effect read so far, by name
@@ -587,21 +596,21 @@ private:
     {
         if (! models) { pending[slot] = f; return; }
         lastDir = f.getParentDirectory();
-        dr::Stereo s; juce::String err;
-        if (! loadStereo48k (f, s, err)) { modeLabel.setText (err, juce::dontSendNotification); return; }
-        sound[slot] = std::make_shared<const dr::Stereo> (std::move (s)); names[slot] = f.getFileName();
+        dr::Stereo s; juce::String err; std::shared_ptr<const dr::Stereo> raw; double rate = dr::SR;
+        if (! loadStereo48k (f, s, err, &raw, &rate)) { modeLabel.setText (err, juce::dontSendNotification); return; }
+        sound[slot] = std::make_shared<const dr::Stereo> (std::move (s)); names[slot] = f.getFileName(); rawSound[slot] = raw; rawRate[slot] = rate;
         (slot == 0 ? zoneA : zoneB).setSound (names[slot], sound[slot]);
         if (slot == 0) inspect(); else modeChanged();
     }
     void clearSlot (int slot)
     {
-        sound[slot].reset(); names[slot] = {}; (slot == 0 ? zoneA : zoneB).setSound ({}, nullptr);
+        sound[slot].reset(); names[slot] = {}; rawSound[slot].reset(); rawRate[slot] = dr::SR; (slot == 0 ? zoneA : zoneB).setSound ({}, nullptr);
         if (slot == 0) { ++generation; busy = false; found.clear(); groups.clear(); inspected = false; roomFound.reset(); toneFound.reset(); echoFound.reset(); levelFound.reset(); sweepFound.reset(); movingFound.reset(); chorusFound.reset(); moreFound = {}; matchShown = {}; faders.clearSwitches(); faders.build ({}, false); result.reset(); updatePlayerBuffer(); updateUi(); }
         else modeChanged();
     }
     void swapSlots()
     {
-        std::swap (sound[0], sound[1]); std::swap (names[0], names[1]);
+        std::swap (sound[0], sound[1]); std::swap (names[0], names[1]); std::swap (rawSound[0], rawSound[1]); std::swap (rawRate[0], rawRate[1]);
         zoneA.setSound (names[0], sound[0]); zoneB.setSound (names[1], sound[1]);
         if (sound[0]) inspect(); else clearSlot (0);
     }
@@ -614,11 +623,11 @@ private:
         auto toneOut = std::make_shared<std::shared_ptr<const dr::tone::Found>>(); auto echoOut = std::make_shared<std::shared_ptr<const dr::echo::Found>>();
         auto levelOut = std::make_shared<std::shared_ptr<const dr::level::Movement>>(); auto sweepOut = std::make_shared<std::shared_ptr<const dr::sweep::Result>>();
         auto MN = movingNet; auto movingOut = std::make_shared<std::shared_ptr<const dr::moving::Found>>(); auto chorusOut = std::make_shared<std::shared_ptr<const dr::chorus::Found>>(); auto moreOut = std::make_shared<dr::More>();
-        const int gen = generation.load();
-        startWorker ([src, M, M27, RN, RN2, MN, out, insp, roomOut, toneOut, echoOut, levelOut, sweepOut, movingOut, chorusOut, moreOut, c, gen, this]
+        const int gen = generation.load(); auto raw = rawSound[0]; const double rawSr = rawRate[0];
+        startWorker ([src, raw, rawSr, M, M27, RN, RN2, MN, out, insp, roomOut, toneOut, echoOut, levelOut, sweepOut, movingOut, chorusOut, moreOut, c, gen, this]
                      {
                          auto alive = [this, gen] (float) { return generation.load() == gen; };
-                         // the level engine, the flanger engine, the moving-tone engine, the chorus engine and the sides engine need nothing from the others: they measure on threads of their own while the rest goes on here
+                         // the level engine, the flanger engine, the moving-tone engine, the chorus engine, the sides engine, the ring engine, the crush engine and the stutter engine need nothing from the others: they measure on threads of their own while the rest goes on here
                          auto levelJob = std::async (std::launch::async, [this, gen, src]
                                                      {
                                                          std::shared_ptr<dr::level::Movement> m;
@@ -662,6 +671,35 @@ private:
                                                         catch (const std::exception&) { f.reset(); }        // the ring engine failed: the detector's verdict and the old handling stay
                                                         return f;
                                                     });
+                         auto crushJob = std::async (std::launch::async, [this, gen, src, raw, rawSr]
+                                                     {
+                                                         std::shared_ptr<dr::crush::Found> f;
+                                                         try
+                                                         {
+                                                             const dr::crush::Stop stop = [this, gen] { return generation.load() != gen; };
+                                                             if (raw == nullptr) f = std::make_shared<dr::crush::Found> (dr::crush::find (*src, dr::SR, stop));
+                                                             else        // a file at another rate: read at its own, where its values still lie on the grid; the sound before the crusher is brought to 48 kHz like the sound itself
+                                                             {
+                                                                 dr::crush::Found r = dr::crush::find (*raw, rawSr, stop); std::vector<float> xl, xr;
+                                                                 if (r.found && r.soft) { xl = to48k (r.xl, rawSr); xr = to48k (r.xr, rawSr); }
+                                                                 f = std::make_shared<dr::crush::Found> (dr::crush::atRate (std::move (r), dr::SR, src->size(), std::move (xl), std::move (xr)));
+                                                             }
+                                                         }
+                                                         catch (const std::exception&) { f.reset(); }        // the crush engine failed: the detector's verdict and the old handling stay
+                                                         return f;
+                                                     });
+                         auto stutterJob = std::async (std::launch::async, [this, gen, src, raw, rawSr]
+                                                       {
+                                                           std::shared_ptr<dr::stutter::Found> f;
+                                                           try
+                                                           {
+                                                               const dr::stutter::Stop stop = [this, gen] { return generation.load() != gen; };
+                                                               if (raw == nullptr) f = std::make_shared<dr::stutter::Found> (dr::stutter::find (*src, dr::SR, stop));
+                                                               else f = std::make_shared<dr::stutter::Found> (dr::stutter::atRate (dr::stutter::find (*raw, rawSr, stop), dr::SR, src->size()));      // a file at another rate: read at its own, where its repeats are still exact
+                                                           }
+                                                           catch (const std::exception&) { f.reset(); }        // the stutter engine failed: the detector's verdict and the old handling stay
+                                                           return f;
+                                                       });
                          auto I = dr::inspect (*M, *src, alive);
                          if (generation.load() != gen) return;
                          dr::mergeNew (I, dr::inspect (*M27, *src, alive, &I));
@@ -729,6 +767,16 @@ private:
                              const std::shared_ptr<dr::ring::Found> f = ringJob.get();
                              if (generation.load() != gen) return;
                              if (f != nullptr) { dr::mergeRing (I, *f); moreOut->ring = f; }
+                         }
+                         {       // the crush engine: values on a grid, held for several samples (its verdict replaces the detector's about bitcrush)
+                             const std::shared_ptr<dr::crush::Found> f = crushJob.get();
+                             if (generation.load() != gen) return;
+                             if (f != nullptr) { dr::mergeCrush (I, *f); moreOut->crush = f; }
+                         }
+                         {       // the stutter engine: slices of the sound played again (its verdict replaces the detector's about a stutter)
+                             const std::shared_ptr<dr::stutter::Found> f = stutterJob.get();
+                             if (generation.load() != gen) return;
+                             if (f != nullptr) { dr::mergeStutter (I, *f); moreOut->stutter = f; }
                          }
                          if (moreOut->ring != nullptr && moreOut->ring->found && *echoOut != nullptr)      // an echo on a sound that is multiplied by a tone: is it still there with the tone taken out?
                          {
@@ -829,6 +877,15 @@ private:
             {
                 const double na = (double) F->sides->n / dr::SR;
                 if (dr::sides::share (*F->sides) < 0.97) for (const auto& sp : dr::sides::where (*F->sides)) ma.push_back ({ sp.first / na, sp.second / na });
+            }
+            if (F != nullptr && F->stutter != nullptr && F->stutter->found && F->stutter->n > 0)      // the stretches of the first sound where slices are played again: on a second sound its own slices are played again at the same times
+            {
+                const double na = (double) F->stutter->n, nb = sound[1] != nullptr ? (double) sound[1]->size() : 0.0;
+                for (const auto& e : F->stutter->events)
+                {
+                    ma.push_back ({ (double) e.s0 / na, (double) e.end / na });
+                    if (nb > 0 && (double) e.s0 < nb) mb.push_back ({ (double) e.s0 / nb, juce::jmin (1.0, (double) e.end / nb) });
+                }
             }
             zoneA.setMarks (ma); zoneB.setMarks (mb);
         }
@@ -1172,6 +1229,40 @@ inline void dumpPlots (const juce::File& dir)
             p.set (dr::makePlot (V, dr::scaled (V, v), dr::amountOf (V, v)), moved ? dr::makePlot (V, V.est, 1.0) : dr::Plot());
             juce::Image img = p.createComponentSnapshot (p.getLocalBounds(), true, 2.0f);
             juce::File out = dir.getChildFile (juce::String ("chorus-engine") + (moved ? "-moved" : "") + ".png"); out.deleteFile();
+            juce::FileOutputStream os (out); juce::PNGImageFormat png; if (os.openedOk()) png.writeImageToStream (img, os);
+        }
+    }
+    // the crush engine's group: a crusher at 6 bits that holds every value for 4 samples, and one that mixes a quarter of plain sound in
+    for (int kind = 0; kind < 2; ++kind)
+    {
+        auto cf = std::make_shared<dr::crush::Found>(); cf->found = true; cf->n = (size_t) (8.0 * dr::SR); cf->soft = kind == 1; cf->bits = 6.0; cf->step[0] = cf->step[1] = 2.0 / 64.0; cf->P = 4.0; cf->mix = kind ? 0.75 : 1.0; cf->blend = kind ? 0.3 : 0.0;
+        const dr::FoundFx C = dr::crushFx (cf, 0.95);
+        for (int moved = 0; moved < 2; ++moved)
+        {
+            DisplayPanel p; p.setSize (420, 330);
+            std::map<std::string, double> v; for (auto& k : C.knobs) v[k.id] = 1.0;
+            if (moved) { v["bitcrush.amount"] = kind ? 0.5 : 1.5; v["bitcrush.bits"] = 1.25; v["bitcrush.down"] = 1.5; }
+            p.set (dr::makePlot (C, dr::scaled (C, v), dr::amountOf (C, v)), moved ? dr::makePlot (C, C.est, 1.0) : dr::Plot());
+            juce::Image img = p.createComponentSnapshot (p.getLocalBounds(), true, 2.0f);
+            juce::File out = dir.getChildFile (juce::String (kind ? "bitcrush-soft-engine" : "bitcrush-engine") + (moved ? "-moved" : "") + ".png"); out.deleteFile();
+            juce::FileOutputStream os (out); juce::PNGImageFormat png; if (os.openedOk()) png.writeImageToStream (img, os);
+        }
+    }
+    // the stutter engine's group: five slices of 60 to 250 ms played three to six times in 8 s (as found, with fewer repeats, and going onto a second sound with more and shorter ones)
+    {
+        auto sf = std::make_shared<dr::stutter::Found>(); sf->found = true; sf->n = (size_t) (8.0 * dr::SR); sf->rate = dr::SR; sf->fades = true;
+        const double at[5] = { 0.6, 2.1, 3.4, 5.0, 6.6 }, len[5] = { 0.125, 0.25, 0.06, 0.125, 0.18 }; const int plays[5] = { 4, 3, 6, 4, 5 };
+        for (int i = 0; i < 5; ++i) { const long s0 = std::lround (at[i] * dr::SR), L = std::lround (len[i] * dr::SR); sf->events.push_back ({ s0, L, s0 + plays[i] * L }); sf->share += (double) ((plays[i] - 1) * L) / (double) sf->n; }
+        const dr::FoundFx S = dr::stutterFx (sf, 0.95);
+        for (int kind = 0; kind < 3; ++kind)
+        {
+            DisplayPanel p; p.setSize (420, 330);
+            std::map<std::string, double> v; for (auto& k : S.knobs) v[k.id] = 1.0;
+            if (kind == 1) v["stutter.amount"] = 0.4;
+            if (kind == 2) { v["stutter.amount"] = 1.6; v["stutter.slice"] = 0.5; }
+            p.set (dr::makePlot (S, dr::scaled (S, v), dr::amountOf (S, v), kind == 2), kind ? dr::makePlot (S, S.est, 1.0, kind == 2) : dr::Plot());
+            juce::Image img = p.createComponentSnapshot (p.getLocalBounds(), true, 2.0f);
+            juce::File out = dir.getChildFile (kind == 0 ? "stutter-engine.png" : kind == 1 ? "stutter-engine-moved.png" : "stutter-engine-second.png"); out.deleteFile();
             juce::FileOutputStream os (out); juce::PNGImageFormat png; if (os.openedOk()) png.writeImageToStream (img, os);
         }
     }

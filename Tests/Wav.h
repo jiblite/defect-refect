@@ -1,5 +1,7 @@
 #pragma once
-// Minimal WAV reader for the command-line tests (PCM 16/24/32, float 32).
+// Minimal WAV reader for the command-line tests (PCM 16/24/32, float 32), and a plain change of sample rate for the
+// tests that take a file at another rate than the app works at (the app has its own).
+#include <cmath>
 #include <cstdio>
 #include <cstdint>
 #include <cstring>
@@ -39,4 +41,23 @@ inline bool readWav (const std::string& path, Stereo& out, double& sr)
     }
     return false;
 }
+// x at another sample rate: a windowed sinc (24 crossings each side, Hann), low-passed at the lower of the two rates.
+inline Vec resampled (const Vec& x, double from, double to)
+{
+    const long n = (long) x.size(), m = (long) std::floor ((double) n * to / from); Vec o ((size_t) std::max (m, 0L), 0.0);
+    const double step = from / to, fc = std::min (1.0, to / from); const int half = (int) std::ceil (24.0 / fc);
+    for (long i = 0; i < m; ++i)
+    {
+        const double t = (double) i * step; const long c = (long) std::floor (t); double acc = 0.0;
+        for (long k = c - half + 1; k <= c + half; ++k)
+        {
+            if (k < 0 || k >= n) continue;
+            const double d = (t - (double) k) * fc, w = 0.5 + 0.5 * std::cos (PI * (t - (double) k) / (double) half);
+            acc += x[(size_t) k] * w * fc * (std::abs (d) < 1e-12 ? 1.0 : std::sin (PI * d) / (PI * d));
+        }
+        o[(size_t) i] = acc;
+    }
+    return o;
+}
+inline Stereo resampled (const Stereo& y, double from, double to) { Stereo o; o.l = resampled (y.l, from, to); o.r = resampled (y.r, from, to); return o; }
 }
