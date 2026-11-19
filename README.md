@@ -388,7 +388,8 @@ the other found effects and the stutter last, after Tone Match; on the sound its
 and the stutter last. A file at another sample rate is read by these two engines at its own rate, because the
 app's change to 48 kHz takes the values off the grid and makes the repeats unequal; what they find is carried
 over to 48 kHz. On 32 test files at 44.1 and 96 kHz grid and hold are right on all of them, and 276 of 277
-stutter events to the sample.
+stutter events to the sample. This holds for files up to ten minutes: of a longer file at another rate the app
+keeps only its 48 kHz form, and there neither a crusher nor a stutter is found.
 
 **What is shown (new in 0.4.2):** up to 0.4.1 an effect was shown as soon as one 3 s window of the sound scored
 above the cut. Measured with the app's own code that showed 1.6 effects per sound that are not there. Now every
