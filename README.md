@@ -355,7 +355,11 @@ scoreboard's two, and then only its grid); which dry sample a held value was and
 (nearest, down, towards zero) cannot be told from the sound, so one outside tool that does both its own way goes
 onto a second sound at 80 in the median; a crusher under another effect is not found (the values are off the
 grid); a file that was recorded with 16 bits and made louder by 18 dB or more afterwards lies on a grid of 13
-bits or coarser and reads as a light crusher. Method, numbers and limits: `Research/crush/README.md`.
+bits or coarser and reads as a light crusher; the crusher that mixes plain sound in is read only when most of the
+sound is crushed (the fresh cases: 85 to 100 %; on the engine's own model of it, found on 36 of 36 sounds with
+90 % crushed, 9 of 36 with 70 % and none of 36 with 50 %, so a crusher behind a wet/dry mix at half is not
+found), and its hold is read only when it is a whole number of samples. Method, numbers and limits:
+`Research/crush/README.md`.
 
 **Stutter (new engine in 0.4.7):** a slice of the sound played several times over, in place of what came after
 it. A repeat made that way is exact, sample for sample, and nothing a sound does by itself is. The engine finds
@@ -390,6 +394,18 @@ app's change to 48 kHz takes the values off the grid and makes the repeats unequ
 over to 48 kHz. On 32 test files at 44.1 and 96 kHz grid and hold are right on all of them, and 276 of 277
 stutter events to the sample. This holds for files up to ten minutes: of a longer file at another rate the app
 keeps only its 48 kHz form, and there neither a crusher nor a stutter is found.
+
+**The change of sample rate itself (mended in 0.4.7).** Up to 0.4.6 the app's loader brought a file at another
+rate to 48 kHz with a resampler that delays the sound by 100 of the file's samples and does not low-pass a file
+that comes down from a higher rate. So every result of such a file came out late against the file (2.3 ms at
+44.1 kHz, 1.0 ms at 96 kHz) and lost that much at its end, and whatever a 96 kHz file held between 24 and 48 kHz
+folded into the hearing range at full level: a 30 kHz tone came out as an 18 kHz tone, as loud as it went in
+(measured on an export of build 0.4.6's loader). Both were found when the app's exports were compared with the
+render test's, sample by sample. The loader now uses `Resample.h`, the conversion the render test has used all
+along: a windowed sinc without delay, low-passed at the lower of the two rates. `Tests/resample.cpp`: equal to
+the plain formula on 15 pairs of rates, a 1 kHz tone from 44.1 and 96 kHz in place to a hundred-thousandth, the
+30 kHz tone 73 dB down, ten minutes at 44.1 kHz in 0.8 s per side. The app and the render test now give the same
+samples for a file at any rate (`Research/appcheck/`).
 
 **What is shown (new in 0.4.2):** up to 0.4.1 an effect was shown as soon as one 3 s window of the sound scored
 above the cut. Measured with the app's own code that showed 1.6 effects per sound that are not there. Now every
@@ -496,6 +512,8 @@ filter, stutter, gated rhythm (from a larger 27-effect detector).
   The stutter engine: `Stutter.h` (the table of windows, stretches, events, what repeats exactly and is no event,
   the events played on a sound, cut out of it or moved to another sample rate).
   `Verify.h` the check of every effect against the whole sound before it is shown.
+  `Resample.h` the change of sample rate for a file that is not at 48 kHz (no delay, low-passed at the lower
+  rate), used by the app's loader and by the tests.
 - `Source/App/Main.cpp` the JUCE app.
 - `Resources/models.bin` (12 effects) and `models27.bin` (27 effects, `DR_MODEL27=1`) the trained models, written by `Tools/export_models.py`.
 - `Resources/room.bin` and `room2.bin` the reverb engine's model (first and second look), written by `Tools/export_room_model.py`.
@@ -547,6 +565,10 @@ filter, stutter, gated rhythm (from a larger 27-effect detector).
   the C++ matches, the fresh cases, every clip with a stutter put on, the far left, the false-find checks and
   the files at other sample rates (several scripts serve both engines and sit in `Research/stutter/`).
 - `Research/listening/` the scripts that make the listening page: its examples are rendered by `drrender`.
+- `Research/appcheck/` the app itself under the address sanitizer, driven with the mouse on a display of its
+  own: every fader, Swap, Export, closing and clearing in the middle of an analysis, random clicks; and its
+  exported files against the render test's, sample by sample (see its README).
+- `Tests/resample.cpp` the change of sample rate against the plain formula and its promises (`drresample`).
 
 ## Build
 `cmake -S . -B build && cmake --build build --config Release --target DefectRefect`

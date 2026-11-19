@@ -13,6 +13,7 @@
 
 #include "BinaryData.h"
 #include "Core/Display.h"
+#include "Core/Resample.h"
 
 namespace app
 {
@@ -56,13 +57,11 @@ public:
 };
 
 // ---------------------------------------------------------------- audio
-// One side of a sound at the app's rate (48 kHz), from the rate it has.
+// One side of a sound at the app's rate (48 kHz), from the rate it has (dr::resampled: without delay, and low-passed
+// first when it comes down from a higher rate).
 inline std::vector<float> to48k (const std::vector<float>& in, double rate)
 {
-    const double ratio = rate / dr::SR; const int m = (int) std::floor ((double) in.size() / ratio);
-    std::vector<float> o ((size_t) juce::jmax (m, 0)); if (m <= 0) return o;
-    juce::WindowedSincInterpolator ip; ip.process (ratio, in.data(), o.data(), m, (int) in.size(), 0);
-    return o;
+    const dr::Vec o = dr::resampled (dr::Vec (in.begin(), in.end()), rate, dr::SR); return std::vector<float> (o.begin(), o.end());
 }
 // b as a 24-bit 48 kHz stereo WAV. false: the file could not be written (a folder without the right to write, a file
 // that another program holds open, a full disk).
@@ -97,8 +96,7 @@ inline bool loadStereo48k (const juce::File& f, dr::Stereo& out, juce::String& e
     if (std::abs (r->sampleRate - dr::SR) > 0.5)
     {
         if (raw != nullptr && rate != nullptr && r->lengthInSamples <= (juce::int64) (r->sampleRate * 60 * 10)) { auto own = std::make_shared<dr::Stereo>(); own->l = L; own->r = R; *raw = own; *rate = r->sampleRate; }
-        auto rs = [&] (const std::vector<double>& x) { const std::vector<float> o = to48k (std::vector<float> (x.begin(), x.end()), r->sampleRate); return std::vector<double> (o.begin(), o.end()); };
-        L = rs (L); R = rs (R);
+        L = dr::resampled (L, r->sampleRate, dr::SR); R = dr::resampled (R, r->sampleRate, dr::SR);
     }
     if (L.empty()) { if (raw != nullptr) raw->reset(); if (rate != nullptr) *rate = dr::SR; err = "No sound in " + f.getFileName(); return false; }      // a few samples at a high rate can come to none at 48 kHz
     out.l = std::move (L); out.r = std::move (R);

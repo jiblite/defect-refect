@@ -3,10 +3,11 @@
 # and at both ends.
 #   python3 memcheck.py [jobs] [rest|room|long|new|tiny]    writes /dev/shm/mc/<name>.log, prints one line per run
 # Two stages side by side: give each a folder of its own (MC_DIR=/dev/shm/mc2/ in the environment).
+# Another build of the render test: MC_EXE=/path/to/drrender_asan in the environment.
 import sys, os, json, subprocess, numpy as np, soundfile as sf
 from concurrent.futures import ThreadPoolExecutor
 sys.path[:0] = ['/tmp/claude-0/v2/sweep']; from lab import load
-EXE = '/tmp/claude-0/lvx/drrender_asan'; RES = '/home/claude/defect-refect/Resources'; D = os.environ.get('MC_DIR', '/dev/shm/mc/'); SETS = '/tmp/claude-0/v2/bench/sets/'
+EXE = os.environ.get('MC_EXE', '/tmp/claude-0/lvx/drrender_asan'); RES = '/home/claude/defect-refect/Resources'; D = os.environ.get('MC_DIR', '/dev/shm/mc/'); SETS = '/tmp/claude-0/v2/bench/sets/'
 ALL = 'flanger chorus phaser haas width delay reverb distortion bitcrush filtersweep tremolo autopan saturation exciter ringmod filter stutter gatedrhythm comb'.split()
 MOVE = ['tremolo.speed', 'autopan.speed', 'gatedrhythm.speed', 'flanger.speed', 'flanger.sweep', 'flanger.feedback', 'chorus.speed', 'chorus.depth', 'phaser.speed', 'filtersweep.speed', 'delay.time', 'delay.feedback', 'delay.bright', 'reverb.length', 'reverb.bright', 'reverb.width', 'ringmod.carrier', 'bitcrush.bits', 'bitcrush.down', 'stutter.slice', 'comb.delay', 'tonematch.detail']
 def w(name, x): p = D + name + '.wav'; sf.write(p, x, 48000, subtype='FLOAT'); return p
