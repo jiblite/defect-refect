@@ -106,9 +106,47 @@ th { font-family: var(--display); font-weight: 600; text-transform: uppercase; l
 td.n, th.n { text-align: right; padding-right: 0; padding-left: 10px; }
 .tablewrap { overflow-x: auto; }
 @media (max-width: 560px) { .row { grid-template-columns: 1fr; gap: 4px; } body { font-size: 16px; } h1 { font-size: 28px; } }
+
+/* a pitch curve as the app read it (build 0.5.0): one line; the axis texts are HTML so that they keep their size on a phone. --curve: the first sound's teal, stepped so that it holds as a thin line on both surfaces */
+:root { --curve: #0a9087; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --curve: #2aa89d; } }
+:root[data-theme="dark"] { --curve: #2aa89d; }
+figure.curve { margin: 0; }
+figure.curve figcaption { color: var(--muted); font-size: 15px; }
+.plot { position: relative; height: 150px; margin: 14px 6px 30px 48px; }
+.plot svg { display: block; width: 100%; height: 100%; overflow: visible; outline-offset: 6px; touch-action: pan-y; cursor: crosshair; }
+.plot .none { fill: var(--muted); opacity: 0.14; }
+.plot .grid { stroke: var(--line); stroke-width: 1; }
+.plot .line { fill: none; stroke: var(--curve); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.plot .yt, .plot .xt, .plot .nr { position: absolute; color: var(--muted); font-size: 13px; line-height: 1; font-variant-numeric: tabular-nums; white-space: nowrap; pointer-events: none; }
+.plot .yt { right: 100%; padding-right: 8px; transform: translateY(-50%); }
+.plot .xt { top: 100%; padding-top: 8px; transform: translateX(-50%); }
+.plot .nr { top: 7px; text-align: center; }
+.plot .hair { position: absolute; top: 0; bottom: 0; width: 1px; margin-left: -0.5px; background: var(--muted); display: none; pointer-events: none; }
+.plot .dot { position: absolute; width: 8px; height: 8px; margin: -4px 0 0 -4px; border-radius: 50%; background: var(--curve); box-shadow: 0 0 0 2px var(--panel); display: none; pointer-events: none; }
+.plot .tip { position: absolute; bottom: 100%; margin-bottom: 6px; z-index: 2; background: var(--panel); color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 3px 8px; font-size: 14px; line-height: 1.3; white-space: nowrap; font-variant-numeric: tabular-nums; display: none; pointer-events: none; }
+.plot .tip b { font-weight: 500; }
+@media (max-width: 560px) { .plot { margin-left: 44px; } .plot .nr { display: none; } }
 '''
 JS = '''
 document.addEventListener('play', function (e) { document.querySelectorAll('audio').forEach(function (a) { if (a !== e.target) a.pause(); }); }, true);
+/* the pitch curve pictures: a hairline and the value under the pointer, or under the arrow keys when the picture has the focus */
+document.querySelectorAll('.plot').forEach(function (plot) {
+  var svg = plot.querySelector('svg'), tip = plot.querySelector('.tip'), hair = plot.querySelector('.hair'), dot = plot.querySelector('.dot');
+  var c = svg.dataset.c.split(',').map(Number), h = svg.dataset.h, n = c.length, lo = +svg.dataset.lo, hi = +svg.dataset.hi, at = -1;
+  function show(i) {
+    at = Math.max(0, Math.min(n - 1, i)); var x = 100 * at / (n - 1), y = 100 * (hi - c[at]) / (hi - lo);
+    hair.style.left = x + '%'; hair.style.display = 'block'; dot.style.left = x + '%'; dot.style.top = y + '%'; dot.style.display = 'block';
+    tip.textContent = ''; var b = document.createElement('b'); b.textContent = (c[at] > 0 ? '+' : '') + c[at] + ' cents'; tip.appendChild(b);
+    tip.appendChild(document.createTextNode(' at ' + (at / 100).toFixed(2) + ' s' + (h.charAt(at) === '1' ? '' : ', not read')));
+    tip.style.display = 'block'; var w = plot.clientWidth, tw = tip.offsetWidth; tip.style.left = Math.max(-44, Math.min(w - tw, w * x / 100 - tw / 2)) + 'px';
+  }
+  function hide() { at = -1; hair.style.display = dot.style.display = tip.style.display = 'none'; }
+  function point(e) { var r = svg.getBoundingClientRect(); show(Math.round((e.clientX - r.left) / r.width * (n - 1))); }
+  svg.addEventListener('pointermove', point); svg.addEventListener('pointerdown', point); svg.addEventListener('pointerleave', hide); svg.addEventListener('blur', hide);
+  svg.addEventListener('focus', function () { if (at < 0) show(Math.round((n - 1) / 2)); });
+  svg.addEventListener('keydown', function (e) { if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { e.preventDefault(); show((at < 0 ? Math.round((n - 1) / 2) : at) + (e.key === 'ArrowLeft' ? -10 : 10)); } });
+});
 '''
 def row(cls, label, small, src):
     return '<div class="row %s"><div class="lab">%s<small>%s</small></div><audio controls preload="none" src="%s"></audio></div>' % (cls, html.escape(label), html.escape(small), src)
@@ -144,5 +182,5 @@ if __name__ == '__main__':
         EX = pick(); json.dump(EX, open(exf, 'w'), indent=1); items = render_all(EX)
     else: items = json.load(open(os.path.join(HERE, 'rendered.json')))
     rd = lambda name: open(os.path.join(HERE, name)).read() if os.path.exists(os.path.join(HERE, name)) else ''
-    open(os.path.join(HERE, 'index.html'), 'w').write(page(items, rd('intro.html'), rd('table.html'), rd('outro.html'), rd('tone.html') + '\n' + rd('echo.html') + '\n' + rd('level.html') + '\n' + rd('new044.html') + '\n' + rd('cut045_head.html') + '\n' + rd('cut045_panels.html') + '\n' + rd('fader046_head.html') + '\n' + rd('fader046_panels.html') + '\n' + rd('new047_head.html') + '\n' + rd('new047_panels.html')))
+    open(os.path.join(HERE, 'index.html'), 'w').write(page(items, rd('intro.html'), rd('table.html'), rd('outro.html'), rd('tone.html') + '\n' + rd('echo.html') + '\n' + rd('level.html') + '\n' + rd('new044.html') + '\n' + rd('cut045_head.html') + '\n' + rd('cut045_panels.html') + '\n' + rd('fader046_head.html') + '\n' + rd('fader046_panels.html') + '\n' + rd('new047_head.html') + '\n' + rd('new047_panels.html') + '\n' + rd('move050_head.html') + '\n' + rd('move050_panels.html')))
     print('page written,', len(items), 'examples,', sum(os.path.getsize(os.path.join(AUD, f)) for f in os.listdir(AUD)) // 1024, 'KB of audio')
