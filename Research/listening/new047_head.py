@@ -11,6 +11,7 @@ S = dict(haas_fresh=(56, 56), wide_fresh=(37, 42),                 # st7.py: 112
          stut_clips=198, stut_read=1152, stut_right=1138,          # sk2.py: every clip of the corpus with a stutter put on
          clean=198, others=384, forms=4,                           # no wrong find: clean clips, scoreboard sounds of the other families; pcm16.py: 16-bit and 24-bit forms
          soft=((90, 36), (70, 9), (50, 0)), soft_n=36,             # softsweep.py: the mixing crusher, share of the sound that is crushed in % and how many of 36 sounds were read
+         soft_all=(178, 198), soft_flat=13,                        # softall.py: 90 % crushed on every clip of the corpus: found / all; clips with many samples on one value away from zero, all missed
          late44=2.27, late96=1.04, tone_old=-12.1, tone_new=-84.7, tone_in=-12.0,   # Research/appcheck: the loader of build 0.4.6 against the new one (ms late, lagcheck.py on noise files: 109 and 50 samples at 48 kHz; a 30 kHz tone in a 96 kHz file, dB at 18 kHz)
          exports=22, exports_rates=12)                              # Research/appcheck: the app's exports against the test renderer's, all equal to the last bit; of them at 44.1 or 96 kHz
 rows = lambda f: sorted((json.loads(l) for l in open(f) if l.strip()), key=lambda r: r['name'])
@@ -60,8 +61,9 @@ html = ('<section id="new047"><h2>Stereo width, ring modulation, bitcrush and st
  '<p><b>BITCRUSH.</b> A crusher rounds the samples to a grid of values and holds each value for several samples. Both are read exactly, and a second sound goes through the same crusher; Bit Depth and Sample Rate change its steps and its hold. '
  'Taking a crusher out is another matter: what the rounding and the hold threw away is gone, so on the sound itself the Amount fader does nothing left of the middle (example 37). '
  'One kind is the exception. A crusher that mixes plain sound back in loses nothing, and for it far left gives the sound before the crusher (two of the eight cases, example 36). '
- 'It is read only when most of the sound went through the crusher: on test sounds of my own all %d were read with %d %% of the sound crushed, %d of %d with %d %%, and none with half. '
- 'So a crusher behind a wet/dry mix set to the middle is not found. Its hold is read when it is a whole number of samples; with any other hold far left undoes the rounding and leaves the hold in the sound. '
+ 'It is read only when most of the sound went through the crusher, and then not on every sound: with %d %% of the sound crushed it was read on %d of the %d clean test sounds, with %d %% on %d of %d, and with half on none, '
+ 'so a crusher behind a wet/dry mix set to the middle is not found. The %d misses with %d %% crushed include all %d sounds on which many samples sit at one value, such as the flat tops of a clipped sound. '
+ 'Its hold is read when it is a whole number of samples; with any other hold far left undoes the rounding and leaves the hold in the sound. '
  'Not read yet: a crusher with a filter after it. That is two of the eight cases; the group comes up on one of them, with its grid only.</p>'
  '<p><b>STUTTER.</b> A stutter plays a slice of the sound several times over, in place of what came after it. The engine finds every repeat to the sample: on the %d test sounds with a stutter of my own it read %s repeats, %s of them exactly right. '
  'On a second sound its own slices are played again at the same times, and Slice makes them shorter or longer. A stutter cannot be undone either, because what the repeats covered is not in the file. '
@@ -83,7 +85,7 @@ html = ('<section id="new047"><h2>Stereo width, ring modulation, bitcrush and st
  'For the crusher that can be undone: the weaker of its two cases. For the other crushers and for the stutter: the middle case by its score on the second sound. The last example is a file of my own making at 44.1 kHz.</p></section>'
  % (worse_old, trs, S['haas_fresh'][0], S['wide_fresh'][0], S['wide_fresh'][1], r0(mono[0]), r0(mono[1]), r0(wide[0]), r0(wide[-1]),
     S['ring_more'], {1: 'one'}[S['ring_missed']], S['ring_hz'],
-    S['soft'][0][1], S['soft'][0][0], S['soft'][1][1], S['soft_n'], S['soft'][1][0],
+    S['soft'][0][0], S['soft_all'][0], S['soft_all'][1], S['soft'][1][0], S['soft'][1][1], S['soft_n'], S['soft_all'][1] - S['soft_all'][0], S['soft'][0][0], S['soft_flat'],
     S['stut_clips'], '{:,}'.format(S['stut_read']), '{:,}'.format(S['stut_right']),
     '%.1f' % S['late44'], '%.1f' % S['late96'], S['tone_in'] - S['tone_new'], S['exports'], S['exports_rates'],
     S['clean'], S['others']))

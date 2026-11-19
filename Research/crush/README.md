@@ -98,12 +98,26 @@ are off the grid) and carries the grid and the hold's length in time over: one c
 - **Which dry sample a held value was**, and the crusher's **rounding rule** (nearest, down, towards zero): the
   sound does not tell. The nearest value and the sample at the boundary are taken.
 - A **bare crusher cannot be taken out**.
-- A **crusher that mixes plain sound in is read only when most of the sound is crushed.** The fresh cases above
-  draw the crushed share from 85 to 100 %. On the prototype's own model of such a crusher (`softsweep.py`: 7-bit
-  steps on three clips, holds of 1, 2, 3 and 2.7 samples, the steps sharp or rounded off by 0.15 and 0.3, 108
-  sounds) it is found on all 36 with 90 % crushed, on 9 of 36 with 70 % (only where the steps are not rounded
-  off) and on none of 36 with 50 %. A crusher without a hold behind a wet/dry mix at half is this case: it is
-  not found.
+- A **crusher that mixes plain sound in is read only when most of the sound is crushed, and then not on every
+  sound.** The fresh cases above draw the crushed share from 85 to 100 %. On the prototype's own model of such a
+  crusher (`softsweep.py`: 7-bit steps on three clips, holds of 1, 2, 3 and 2.7 samples, the steps sharp or
+  rounded off by 0.15 and 0.3, 108 sounds) it is found on all 36 with 90 % crushed, on 9 of 36 with 70 % (only
+  where the steps are not rounded off) and on none of 36 with 50 %. A crusher without a hold behind a wet/dry mix
+  at half is this case: it is not found.
+- **Three clips said too little.** `softall.py` puts the best of those settings (90 % crushed, a hold of three
+  samples, rounded off by 0.3) on every clip of the corpus: found on 178 of 198, with the hold right on 177 of
+  them, the share within 0.03 on all, the rounding within 0.05 on 153 and within 0.1 on all. The 20 misses: 10
+  of the 54 clips from the synthesizer (4 of its 6 band clips, saw and square leads, two chord clips, a drum
+  pattern, a woodblock), 6 of the 40 recordings, 3 of the 72 sample clips, 1 of the 16 synthetic ones; on 16 of
+  the 20 the stretch around the grid values that the crusher fills could not be read at all. One cause is
+  known: many samples on one value away from zero (the flat tops of a clipped or limited sound, a square wave).
+  That value stands as a needle in the picture of the values folded onto one step and hides the stretch's ends.
+  On the 13 clips where one value at least half a step from zero holds more than 0.3 % of the samples, the
+  crusher is missed on all 13; on the other 185 it is missed on 7, not looked into yet. A long test sound whose
+  first seconds have such flat tops is missed as a whole (the settings are read from its loudest 30 s), while
+  each 6 s piece after those seconds is found. Leaving out the values that many samples share made the loudest
+  30 s readable again in a trial, but not the first seconds alone. Not mended in 0.4.7: a miss shows no
+  BITCRUSH group and changes nothing in the sound.
 - **Its hold, when that is not a whole number of samples, is not read**: the 12 such sounds that were found were
   found without a hold (whole-number holds were right on all 33). Far left then undoes the rounding and leaves
   the held share in the sound.
@@ -115,6 +129,6 @@ are off the grid) and carries the grid and the hold's length in time over: one c
 ## Files
 `crush.py` the prototype. `bf7.py` fresh cases (made by `fc7.py`), `bc2.py` the scoreboard pairs (prototype),
 `nf1.py` / `nf2.py` wrong finds (prototype / the app's code), `pcm16.py` ordinary 16-bit and 24-bit files,
-`pcm16b.py` 16-bit files made louder, `r44t.py` other sample rates, `softsweep.py` the mixing crusher over shares,
+`pcm16b.py` 16-bit files made louder, `r44t.py` other sample rates, `softsweep.py` the mixing crusher over shares, `softall.py` the mixing crusher on every clip,
 holds and blends; `fc7.py`, `nf1.py`, `nf2.py`, `pcm16.py`,
 `pcm16b.py` and `r44t.py` are in `Research/stutter` (they serve both engines), `st_common.py` in `Research/sides`.

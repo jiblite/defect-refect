@@ -356,10 +356,11 @@ scoreboard's two, and then only its grid); which dry sample a held value was and
 onto a second sound at 80 in the median; a crusher under another effect is not found (the values are off the
 grid); a file that was recorded with 16 bits and made louder by 18 dB or more afterwards lies on a grid of 13
 bits or coarser and reads as a light crusher; the crusher that mixes plain sound in is read only when most of the
-sound is crushed (the fresh cases: 85 to 100 %; on the engine's own model of it, found on 36 of 36 sounds with
-90 % crushed, 9 of 36 with 70 % and none of 36 with 50 %, so a crusher behind a wet/dry mix at half is not
-found), and its hold is read only when it is a whole number of samples. Method, numbers and limits:
-`Research/crush/README.md`.
+sound is crushed, and then not on every sound (the fresh cases: 85 to 100 %; on the engine's own model of it
+with 90 % crushed, found on 178 of the 198 clips of the corpus, and missed on all 13 clips where many samples
+share one value, as on a clipped sound or a square wave; with 70 % crushed found on 9 of 36 sounds and with 50 %
+on none, so a crusher behind a wet/dry mix at half is not found), and its hold is read only when it is a whole
+number of samples. Method, numbers and limits: `Research/crush/README.md`.
 
 **Stutter (new engine in 0.4.7):** a slice of the sound played several times over, in place of what came after
 it. A repeat made that way is exact, sample for sample, and nothing a sound does by itself is. The engine finds
