@@ -435,6 +435,30 @@ inline Plot sidesPlot (const FoundFx& F, double s, bool onSecond)
     P.caption = c; return P;
 }
 
+// The ring engine's group (RING MOD): the gain the sound is multiplied by, over two cycles of the tone, as the faders have
+// it (1 = the sound as it is, under the line = upside down).
+inline Plot ringPlot (const FoundFx& F, const Params& p, double s, bool onSecond)
+{
+    using namespace disp;
+    Plot P; P.title = F.title; if (F.ring == nullptr || ! F.ring->found || ! (F.ring->f > 0)) return P;
+    const ring::Found& f = *F.ring; const double amount = std::clamp (s, 0.0, 2.0), tone = f.f * ringCarrier (p);
+    const ring::GainAt now (f, amount), was (f, 1.0); const double span = 2000.0 / tone;       // two cycles, ms
+    double lo = std::min ({ 0.0, now.base - now.swing, was.base - was.swing }), hi = std::max ({ 1.0, now.base + now.swing, was.base + was.swing });     // the axis holds the gain as found too
+    P.x0 = 0; P.x1 = span; P.y0 = lo < 0 ? 1.12 * lo : 0.0; P.y1 = 1.12 * hi; P.xLabel = "ms"; P.yLabel = "gain"; P.xTicks = ticks (0, span); P.yTicks = ticks (P.y0, P.y1);
+    if (lo < 0) { Curve z; z.colour = 2; z.dim = true; z.pts = { { P.x0, 0.0 }, { P.x1, 0.0 } }; P.curves.push_back (z); }
+    Curve c; for (int i = 0; i <= 240; ++i) { const double ms = span * i / 240.0; c.pts.push_back ({ ms, now.base + now.swing * std::sin (2 * PI * tone * ms * 1e-3) }); }
+    P.curves.push_back (c);
+    std::string t = "Multiplied by a tone at " + (tone < 100 ? num (tone, 1) + " Hz" : hz (tone)) + ": every pitch in the sound splits into two, that far above and below.";
+    if (now.swing > 1e-9)
+    {
+        const double plain = now.base / (now.swing / std::sqrt (2.0));          // the plain sound against the split part
+        if (plain < 0.03) t += " None of the plain sound is left beside them.";
+        else { const double dB = 20 * std::log10 (plain); t += " The plain sound is still there, " + (std::abs (dB) < 0.5 ? std::string ("as loud as the split part.") : num (std::abs (dB), 1) + " dB " + (dB < 0 ? "under" : "over") + " the split part."); }
+    }
+    if (amount < 1e-3) t = onSecond ? "Amount at zero: not put on the second sound." : "Amount at zero: the tone is taken out (the sound divided by the gain).";
+    P.caption = t; return P;
+}
+
 // s: the effect's Amount fader (0..2); p: its settings with the settings faders applied. onSecond: the effect
 // goes onto a second sound (only the room's picture depends on it).
 inline Plot makePlot (const FoundFx& F, const Params& scaledP, double s, bool onSecond = false)
@@ -448,6 +472,7 @@ inline Plot makePlot (const FoundFx& F, const Params& scaledP, double s, bool on
     if (F.moving != nullptr) return movingPlot (F, scaledP, s, onSecond);
     if (F.chorus != nullptr) return chorusPlot (F, scaledP, s, onSecond);
     if (F.sides != nullptr) return sidesPlot (F, s, onSecond);
+    if (F.ring != nullptr) return ringPlot (F, scaledP, s, onSecond);
     const std::string& f = F.name; Plot P; P.title = F.title;
     bool fade = false; const Params e = mapAmount (f, scaledP, std::max (s, 0.0), fade); const double w = fade ? std::min (1.0, s) : 1.0;
     auto g = [&] (const char* k, double d) { return get (e, k, d); };

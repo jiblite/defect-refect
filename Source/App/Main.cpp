@@ -655,6 +655,13 @@ private:
                                                          catch (const std::exception&) { f.reset(); }        // the sides engine failed: the detectors' verdicts and the old handling stay
                                                          return f;
                                                      });
+                         auto ringJob = std::async (std::launch::async, [this, gen, src]
+                                                    {
+                                                        std::shared_ptr<dr::ring::Found> f;
+                                                        try { f = std::make_shared<dr::ring::Found> (dr::ring::find (*src, [this, gen] { return generation.load() != gen; })); }
+                                                        catch (const std::exception&) { f.reset(); }        // the ring engine failed: the detector's verdict and the old handling stay
+                                                        return f;
+                                                    });
                          auto I = dr::inspect (*M, *src, alive);
                          if (generation.load() != gen) return;
                          dr::mergeNew (I, dr::inspect (*M27, *src, alive, &I));
@@ -717,6 +724,17 @@ private:
                              const std::shared_ptr<dr::sides::Found> f = sidesJob.get();
                              if (generation.load() != gen) return;
                              if (f != nullptr) { dr::mergeSides (I, *f, toneOut->get()); moreOut->sides = f; }
+                         }
+                         {       // the ring engine: the sound multiplied by a steady tone (its verdict replaces the detector's about ring modulation)
+                             const std::shared_ptr<dr::ring::Found> f = ringJob.get();
+                             if (generation.load() != gen) return;
+                             if (f != nullptr) { dr::mergeRing (I, *f); moreOut->ring = f; }
+                         }
+                         if (moreOut->ring != nullptr && moreOut->ring->found && *echoOut != nullptr)      // an echo on a sound that is multiplied by a tone: is it still there with the tone taken out?
+                         {
+                             try { dr::recheckEchoWithout (I, *echoOut, *moreOut, [this, gen] { return generation.load() != gen; }); }
+                             catch (const std::exception&) {}
+                             if (generation.load() != gen) return;
                          }
                          if (*roomOut != nullptr && (*roomOut)->found && RN != nullptr && RN->ready())      // a room on a sound that shows other effects: is it still there with those taken out?
                          {

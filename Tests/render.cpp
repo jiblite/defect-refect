@@ -9,6 +9,7 @@
 //   The flanger engine always runs: a found moving copy is the FLANGER group (faders: flanger.amount, flanger.speed, flanger.sweep, flanger.feedback).
 //   The chorus engine always runs: found voices are the CHORUS group (faders: chorus.amount, chorus.speed, chorus.depth).
 //   The sides engine always runs: a delay or a widening between the two sides is the HAAS WIDTH or STEREO WIDTH group (faders: haas.amount, width.amount).
+//   The ring engine always runs: a tone the sound was multiplied by is the RING MOD group (faders: ringmod.amount, ringmod.carrier).
 //   The moving-tone engine runs when ResourcesDir holds moving.bin (as in the app): a found moving filter is the PHASER or FILTER SWEEP
 //   group (faders: <group>.amount, <group>.speed).
 //   The verifier's models are read from ResourcesDir/verify.bin (Source/Core/Verify.h): the scores are its scores, as in the app.
@@ -119,6 +120,17 @@ int main (int argc, char** argv)
         if (sd->found()) { std::cout << " there_s="; const auto sp = dr::sides::where (*sd); for (size_t i = 0; i < sp.size(); ++i) std::cout << (i ? "," : "") << sp[i].first << ".." << sp[i].second; }
         std::cout << "\n";
     }
+    {
+        const auto rg = std::make_shared<const dr::ring::Found> (dr::ring::find (src)); dr::mergeRing (I, *rg); more.ring = rg;
+        std::cout << "ring: found=" << (rg->found ? 1 : 0);
+        if (rg->looked) std::cout << " first_win=" << rg->firstWin << " first_hz=" << rg->firstF;
+        if (rg->measured) std::cout << " hz=" << rg->f << " rho=" << rg->rho << " floor=" << rg->eps << " win=" << rg->win << " ideal=" << rg->ideal << " match_db=" << rg->match << " dip_db=" << rg->dip << " offset_db=" << rg->offset << " holes=" << rg->holes;
+        std::cout << "\n";
+    }
+    {       // an echo on a sound that is multiplied by a tone: is it still there with the tone taken out?
+        const double s = dr::recheckEchoWithout (I, ef, more);
+        if (s >= 0) std::cout << "echo without the tone: sureness=" << s << " counts=" << I.prob.at ("delay") << "\n";
+    }
     if (rf != nullptr && rf->found && net.ready())      // a room on a sound that shows other effects: is it still there with those taken out?
     {
         std::string what; const double s = dr::recheckRoomWithout (I, src, ef, lf, wf, mf, cf, more, net, net2.ready() ? &net2 : nullptr, {}, &what);
@@ -128,7 +140,7 @@ int main (int argc, char** argv)
     if (only) { for (auto& [f, p] : I.prob) std::cout << f << "=" << p << " "; std::cout << "\n"; return 0; }
     const auto found0 = dr::estimate (I, src, cut, nullptr, rf, tf, ef, lf, wf, mf, cf, more);
     auto t2 = clk::now();
-    for (auto& F : found0) { std::cout << F.name << " p=" << F.prob << (F.room ? " (room engine)" : F.tone ? " (tone engine)" : F.echo ? " (echo engine)" : F.level ? " (level engine)" : F.sweep ? " (flanger engine)" : F.moving ? " (moving-tone engine)" : F.chorus ? " (chorus engine)" : F.sides ? " (sides engine)" : ""); for (auto& [k, v] : F.est) std::cout << " " << k << "=" << v; std::cout << "\n"; }
+    for (auto& F : found0) { std::cout << F.name << " p=" << F.prob << (F.room ? " (room engine)" : F.tone ? " (tone engine)" : F.echo ? " (echo engine)" : F.level ? " (level engine)" : F.sweep ? " (flanger engine)" : F.moving ? " (moving-tone engine)" : F.chorus ? " (chorus engine)" : F.sides ? " (sides engine)" : F.ring ? " (ring engine)" : ""); for (auto& [k, v] : F.est) std::cout << " " << k << "=" << v; std::cout << "\n"; }
     for (auto& B : blocks)
     {
         const bool two = B.tgt != "-"; dr::Stereo tgt; if (two) dr::readWav (B.tgt, tgt, sr);

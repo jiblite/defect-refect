@@ -10,6 +10,7 @@
 #include "Moving.h"
 #include "Chorus.h"
 #include "Sides.h"
+#include "Ring.h"
 #include "Effects.h"
 #include "Hand.h"
 #include "Inspector.h"
@@ -319,6 +320,7 @@ struct FoundFx
     std::shared_ptr<const moving::Found> moving;    // the moving tone curve the moving-tone engine found (PHASER, FILTER SWEEP): its faders work that engine (see movingFx)
     std::shared_ptr<const chorus::Found> chorus;    // the voices the chorus engine found (CHORUS): its faders work that engine (see chorusFx)
     std::shared_ptr<const sides::Found> sides;      // what the sides engine found between the two sides (HAAS WIDTH, STEREO WIDTH): its fader works that engine (see sidesFx)
+    std::shared_ptr<const ring::Found> ring;        // the tone the ring engine found the sound multiplied by (RING MOD): its faders work that engine (see ringFx)
     Vec curveL, curveR;                        // TONE MATCH, for the picture and Export IR: the curves of the last render (left, right; Amount in the middle)
     Vec foundL, foundR;                        // the same with Detail in the middle too
 };
@@ -830,10 +832,30 @@ inline void mergeSides (Inspection& I, const sides::Found& f, const tone::Found*
     I.prob["haas"] = f.kind == sides::HAAS ? sidesSure : level::sureNone; I.prob["width"] = f.kind == sides::WIDTH ? sidesSure : level::sureNone;
     if (tone != nullptr && sidesHoldComb (f, *tone)) I.prob["comb"] = level::sureNone;
 }
+// ---------------------------------------------------------------- the ring engine's group (Ring.h)
+// RING MOD: the tone the sound was multiplied by, as the ring engine read it off the sound. Amount: on the sound itself
+// 0 = the tone out (the sound divided by the gain), 1 = untouched (bit for bit), 2 = the tone part twice as strong; on
+// a second sound 0 = none, 1 = as found, 2 = the tone part twice as strong. Carrier: the tone's pitch, an octave down
+// to an octave up; on the sound itself a moved Carrier means the found tone out and the new one in.
+constexpr double ringSure = 0.95;
+inline FoundFx ringFx (std::shared_ptr<const ring::Found> found, double prob)
+{
+    FoundFx F; F.name = "ringmod"; F.title = titleFor ("ringmod"); F.prob = prob; F.ring = std::move (found); F.est = { { "carrier", 1.0 } };
+    Knob a; a.id = "ringmod.amount"; a.label = "Amount"; a.neutral = 0; a.lo = 0; a.hi = 2;
+    Knob c; c.key = "carrier"; c.id = "ringmod.carrier"; c.label = "Carrier"; c.neutral = 0; c.lo = 0; c.hi = 2; c.ownTip = true;
+    c.tip = "The pitch of the tone the sound is multiplied by. Middle = as found. Left = lower, down to an octave. Right = higher, up to an octave.";
+    F.knobs = { a, c }; return F;
+}
+// The Carrier fader (0 .. 2, 1 = as found) as a factor on the tone's pitch: half to double.
+inline double ringCarrier (const Params& p) { return std::pow (2.0, std::clamp (get (p, "carrier", 1.0), 0.0, 2.0) - 1.0); }
+// The ring engine's verdict goes into the inspection and the detector's own guess about ring modulation goes out.
+inline void mergeRing (Inspection& I, const ring::Found& f) { I.prob["ringmod"] = f.found ? ringSure : level::sureNone; }
+
 // What the engines added in build 0.4.7 found on the sound (each may be missing: then the detectors' verdict and the old handling stay).
 struct More
 {
     std::shared_ptr<const sides::Found> sides;
+    std::shared_ptr<const ring::Found> ring;
 };
 
 // Settings of each found effect (estimate.estimate, without the slower sweep fit for now).
@@ -864,7 +886,8 @@ inline void pruneFound (std::vector<FoundFx>& out)
 // swp: what the flanger engine found on the sound; a moving copy found is the FLANGER group (flangerFx).
 // mov: what the moving-tone engine found on the sound; a moving filter found is the PHASER or FILTER SWEEP group (movingFx).
 // cho: what the chorus engine found on the sound; voices found are the CHORUS group (chorusFx).
-// more: what the engines of build 0.4.7 found: a delay or a widening between the sides is the HAAS WIDTH or STEREO WIDTH group (sidesFx).
+// more: what the engines of build 0.4.7 found: a delay or a widening between the sides is the HAAS WIDTH or STEREO WIDTH group (sidesFx),
+// a tone the sound was multiplied by is the RING MOD group (ringFx).
 inline std::vector<FoundFx> estimate (const Inspection& I, const Stereo& y, double cut = 0.65, const std::set<std::string>* only = nullptr,
                                       const std::shared_ptr<const room::Found>& room = {}, const std::shared_ptr<const tone::Found>& tone = {},
                                       const std::shared_ptr<const echo::Found>& echo = {}, const std::shared_ptr<const level::Movement>& lvl = {},
@@ -888,6 +911,7 @@ inline std::vector<FoundFx> estimate (const Inspection& I, const Stereo& y, doub
         if (mov != nullptr && (f == "phaser" || f == "filtersweep")) { if (mov->found && f == mov->kind) out.push_back (movingFx (mov, pit->second)); continue; }
         if (cho != nullptr && f == "chorus") { if (cho->found) out.push_back (chorusFx (cho, pit->second)); continue; }
         if (more.sides != nullptr && (f == "haas" || f == "width")) { if (more.sides->found() && f == sidesName (*more.sides)) out.push_back (sidesFx (more.sides, pit->second)); continue; }
+        if (more.ring != nullptr && f == "ringmod") { if (more.ring->found) out.push_back (ringFx (more.ring, pit->second)); continue; }
         FoundFx F; F.name = f; F.title = titleFor (f); F.prob = pit->second; F.knobs = knobsFor (f); Params& e = F.est;
         if (f == "haas") e["lag"] = (double) hand::gccPhat (y, 30.0).lag;
         else if (f == "width") e["amount"] = std::clamp (S (f, "amount", 0.5), 0.05, 1.2);
@@ -1043,6 +1067,12 @@ inline Stereo applyTo (const Stereo& target, const std::vector<FoundFx>& found, 
             if (s > 1e-9) y = sides::onto (y, *F.sides, std::min (s, 2.0));
             continue;
         }
+        if (F.ring != nullptr)      // this sound multiplied by the found gain
+        {
+            const double s = amountOf (F, faders);
+            if (s > 1e-9) y = ring::onto (y, *F.ring, std::min (s, 2.0), ringCarrier (scaled (F, faders)));
+            continue;
+        }
         y = applyAmount (F.name, y, scaled (F, faders), amountOf (F, faders));
     }
     for (auto& F : found)
@@ -1065,7 +1095,7 @@ inline Stereo applyTo (const Stereo& target, const std::vector<FoundFx>& found, 
 
 // One sound: take the found effects out (left), leave as is (middle) or double (right).
 inline bool canRemove (const std::string& f) { return f != "reverb" && f != "distortion" && f != "bitcrush" && ! isNewFx (f); }
-inline bool canRemove (const FoundFx& F) { return F.room != nullptr || F.tone != nullptr || F.echo != nullptr || F.level != nullptr || F.sweep != nullptr || F.moving != nullptr || F.chorus != nullptr || F.sides != nullptr || canRemove (F.name); }      // the room engine takes its reverb out, the tone engine its reflections, the echo engine its echoes, the level engine its movement, the flanger engine its moving copy, the moving-tone engine its curve, the chorus engine its voices
+inline bool canRemove (const FoundFx& F) { return F.room != nullptr || F.tone != nullptr || F.echo != nullptr || F.level != nullptr || F.sweep != nullptr || F.moving != nullptr || F.chorus != nullptr || F.sides != nullptr || F.ring != nullptr || canRemove (F.name); }      // the room engine takes its reverb out, the tone engine its reflections, the echo engine its echoes, the level engine its movement, the flanger engine its moving copy, the moving-tone engine its curve, the chorus engine its voices, the sides engine its delay or widening, the ring engine its tone
 // The found effect turned down to s (0 = out as far as this effect allows, 1 = untouched).
 inline Stereo takeOut (const FoundFx& F, const Stereo& in, double s)
 {
@@ -1142,6 +1172,11 @@ inline Stereo reshape (const Stereo& src, const std::vector<FoundFx>& found, con
             // the part of the sound that the found pair of filters (or the copy at the sides) explains, changed; the rest stays; the sides engine's answer belongs to this very sound (same length)
             if (F.sides->n == y.size()) y = sides::own (y, *F.sides, std::clamp (s, 0.0, 2.0));
         }
+        else if (F.ring != nullptr)
+        {
+            // the sound without the found gain, times the difference between the gain the faders give and the found one, added; the ring engine's answer belongs to this very sound (same length)
+            if (F.ring->n == y.size()) y = ring::own (y, *F.ring, std::clamp (s, 0.0, 2.0), ringCarrier (scaled (F, faders)));
+        }
         else if (F.name == "tonematch") {}      // two sounds only
         else if (canRemove (F.name))
         {
@@ -1163,6 +1198,35 @@ inline Stereo reshape (const Stereo& src, const std::vector<FoundFx>& found, con
     }
     limit (y);
     return y;
+}
+
+// An echo found on a sound that is multiplied by a tone. A sound that repeats itself in time (a loop, a bar played
+// twice) is told from an echo by how its repeats differ, and a ring modulation changes just that: every pitch of the
+// sound is split in two. The ring engine gives the sound without the tone, so the echo engine looks at that sound as
+// well. An echo that was there before the tone is found there too, at the same time, and there the sound is as the
+// echo engine's rule knows sounds: the less sure of the two verdicts counts. An echo that is not found there at all was
+// put on after the tone (dividing by the tone's gain tears it apart): the verdict on the sound as it is stays.
+// Returned: the second verdict, or -1 when there was nothing to look at. The echoes that are shown and worked with
+// are still the ones found on the sound as it is. Costs one more look of the echo engine, and only when a tone and an
+// echo are both found.
+// Measured with the app's own code (Research/ring/rc1.py: 16 clips, a tone and an echo put on in both orders at
+// several levels, 112 sounds): the echo engine looks again on 48 of them, and on none does the DELAY group come or go
+// at the default Sureness; the largest drop of an echo that was put on is 0.98 to 0.71 (still shown). On the
+// scoreboard the one DELAY group on a sound that has a tone only (a loop that repeats every half second) goes
+// (0.87 to 0.52). Not done: an echo under a tone that the echo engine sees clearly only without the tone (one clip
+// of the 112: 0.20 on the sound, 0.99 without) stays hidden, since the echoes that are worked with are the ones
+// measured on the sound as it is.
+inline double recheckEchoWithout (Inspection& I, const std::shared_ptr<const echo::Found>& echo, const More& more, const echo::Stop& stop = {})
+{
+    if (more.ring == nullptr || ! more.ring->found || echo == nullptr || ! echo->any()) return -1.0;
+    auto p = I.prob.find ("delay"); if (p == I.prob.end()) return -1.0;
+    Stereo x; x.l.assign (more.ring->xl.begin(), more.ring->xl.end()); x.r.assign (more.ring->xr.begin(), more.ring->xr.end());
+    if (x.size() == 0 || x.l.size() != x.r.size()) return -1.0;
+    const echo::Found e = echo::analyse (x, stop); if (stop && stop()) return -1.0;
+    const double s = e.any() ? e.sure : echo::sureNone; bool same = false;
+    for (int c = 0; c < 2; ++c) for (int d = 0; d < 2; ++d) if (echo->ch[c].found && e.ch[d].found && std::abs (echo->ch[c].rec.ms - e.ch[d].rec.ms) <= 2.0) same = true;
+    if (same) p->second = std::min (p->second, s);
+    return s;
 }
 
 // A room found on a sound that shows other effects as well. A train of echoes dies away as a room does; the copies
