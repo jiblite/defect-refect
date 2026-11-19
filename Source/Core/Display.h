@@ -495,7 +495,8 @@ inline Plot crushPlot (const FoundFx& F, const Params& p, double s, bool onSecon
 }
 
 // The stutter engine's group (STUTTER): where along the sound slices are played again, as the faders have it: every
-// slice as a tall bar and each repeat of it as a lower one behind it.
+// slice as a tall bar and each repeat of it as a lower one behind it. With no repeat left in the sound itself: the
+// slices alone, where they lie once the sound has closed up.
 inline Plot stutterPlot (const FoundFx& F, const Params& p, double s, bool onSecond)
 {
     using namespace disp;
@@ -520,18 +521,31 @@ inline Plot stutterPlot (const FoundFx& F, const Params& p, double s, bool onSec
             P.bars.push_back ({ 0.5 * (t0 + t1), 0.0, j == 0 ? 1.0 : 0.6, (t1 - t0) * 0.86, 0 });
         }
     }
+    const bool none = ev.empty();                                   // the faders leave no repeat
+    if (none && ! onSecond)
+    {
+        long gone = 0;                                              // samples cut out so far (as in stutter::lies)
+        for (const auto& w : f.events)
+        {
+            const double t0 = (double) (w.s0 - gone) / f.rate, t1 = (double) (w.s0 - gone + w.L) / f.rate;
+            P.bars.push_back ({ 0.5 * (t0 + t1), 0.0, 1.0, (t1 - t0) * 0.86, 0 });
+            if (amount < 1.0 - 1e-12) gone += std::max (std::min (w.end, (long) f.n) - (w.s0 + w.L), 0L);
+        }
+    }
     // in words: the slices and their plays as the faders have them (with no repeats left: as they were found)
-    const std::vector<stutter::Event>& base = ev.empty() ? f.events : ev;
+    const std::vector<stutter::Event>& base = none ? f.events : ev;
     long lo = 0, hi = 0; std::vector<double> pv; for (const auto& e : base) { lo = lo == 0 ? e.L : std::min (lo, e.L); hi = std::max (hi, e.L); pv.push_back ((double) (e.end - e.s0) / (double) e.L); }
     std::sort (pv.begin(), pv.end()); const double pl = pv[pv.size() / 2]; const bool alike = pv.back() - pv.front() < 0.05;
     auto msText = [&] (long L) { const double v = (double) L / f.rate * 1e3; return num (v, v < 10 ? 1 : 0); };
     const std::string len = hi > lo + lo / 50 ? msText (lo) + " to " + msText (hi) + " ms long" : msText (hi) + " ms long";
     const std::string times = "played " + num (pl, std::abs (pl - std::round (pl)) < 0.05 ? 0 : 1) + " times";
-    std::string c = base.size() == 1 ? "One slice, " + len + ", is " + times + " (tall = the slice, low = a repeat of it)."
-                                     : std::to_string (base.size()) + " slices, " + len + ", are " + (alike ? "" : "mostly ") + times + " each (tall = a slice, low = a repeat of it).";
-    if (f.fades) c += " Every play comes up from nothing and goes back to it.";
-    if (onSecond) c += amount < 1e-3 ? " Amount at zero: not put on the second sound." : " The second sound's own slices are played again at the same times.";
-    else if (amount < 1e-3) c += " Amount at zero: no repeats. What they covered is gone, so the sound closes up and ends " + num ((double) cut / f.rate, 1) + " s early.";
+    std::string c;
+    if (none) c = base.size() == 1 ? "One slice, " + len + ", was " + times + "." : std::to_string (base.size()) + " slices, " + len + ", were " + (alike ? "" : "mostly ") + times + " each.";
+    else c = base.size() == 1 ? "One slice, " + len + ", is " + times + " (tall = the slice, low = a repeat of it)."
+                              : std::to_string (base.size()) + " slices, " + len + ", are " + (alike ? "" : "mostly ") + times + " each (tall = a slice, low = a repeat of it).";
+    if (f.fades) c += none ? " Every play came up from nothing and went back to it." : " Every play comes up from nothing and goes back to it.";
+    if (onSecond) c += amount < 1e-3 ? " Amount at zero: not put on the second sound." : none ? " With the faders here no repeat is left: the second sound stays as it is." : " The second sound's own slices are played again at the same times.";
+    else if (none) c += std::string (amount < 1e-3 ? " Amount at zero" : " At this Amount") + ": no repeats, each slice is played once. What the repeats covered is gone, so the sound closes up and ends " + num ((double) cut / f.rate, 1) + " s early.";
     else if (cut > 0) c += " With fewer repeats the sound closes up and ends " + num ((double) cut / f.rate, 1) + " s early: what the repeats covered is gone.";
     else if (amount > 1.0 + 1e-3) c += " The extra repeats take the place of what followed.";
     P.caption = c; return P;

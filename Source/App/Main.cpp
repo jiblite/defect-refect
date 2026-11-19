@@ -226,7 +226,7 @@ public:
         auto cap = area.removeFromBottom (48);
         g.setColour (theme::textDim); g.setFont (juce::FontOptions (12.0f));
         g.drawFittedText (juce::String (plot.caption), cap.withTrimmedTop (6), juce::Justification::topLeft, 3, 0.85f);     // wrap before the letters get narrow
-        if (plot.empty()) return;
+        if (plot.empty() && (ghost.empty() || ghost.xLog != plot.xLog || ghost.x0 != plot.x0 || ghost.x1 != plot.x1 || ghost.y0 != plot.y0 || ghost.y1 != plot.y1)) return;     // nothing to draw now: the axes and the faint picture as found stay, when they share the axes
         auto pr = area.withTrimmedLeft (38).withTrimmedBottom (20).withTrimmedTop (16).withTrimmedRight (6).toFloat();
         auto X = [&] (double v) { const double u = plot.xLog ? std::log (juce::jmax (v, 1e-9) / plot.x0) / std::log (plot.x1 / plot.x0) : (v - plot.x0) / (plot.x1 - plot.x0); return pr.getX() + (float) u * pr.getWidth(); };
         auto Y = [&] (double v) { return pr.getBottom() - (float) ((v - plot.y0) / (plot.y1 - plot.y0)) * pr.getHeight(); };
@@ -1251,21 +1251,22 @@ inline void dumpPlots (const juce::File& dir)
             juce::FileOutputStream os (out); juce::PNGImageFormat png; if (os.openedOk()) png.writeImageToStream (img, os);
         }
     }
-    // the stutter engine's group: five slices of 60 to 250 ms played three to six times in 8 s (as found, with fewer repeats, and going onto a second sound with more and shorter ones)
+    // the stutter engine's group: five slices of 60 to 250 ms played three to six times in 8 s (as found, with fewer repeats, going onto a second sound with more and shorter ones, with Amount at zero, and at zero on a second sound)
     {
         auto sf = std::make_shared<dr::stutter::Found>(); sf->found = true; sf->n = (size_t) (8.0 * dr::SR); sf->rate = dr::SR; sf->fades = true;
         const double at[5] = { 0.6, 2.1, 3.4, 5.0, 6.6 }, len[5] = { 0.125, 0.25, 0.06, 0.125, 0.18 }; const int plays[5] = { 4, 3, 6, 4, 5 };
         for (int i = 0; i < 5; ++i) { const long s0 = std::lround (at[i] * dr::SR), L = std::lround (len[i] * dr::SR); sf->events.push_back ({ s0, L, s0 + plays[i] * L }); sf->share += (double) ((plays[i] - 1) * L) / (double) sf->n; }
         const dr::FoundFx S = dr::stutterFx (sf, 0.95);
-        for (int kind = 0; kind < 3; ++kind)
+        for (int kind = 0; kind < 5; ++kind)
         {
-            DisplayPanel p; p.setSize (420, 330);
+            DisplayPanel p; p.setSize (420, 330); const bool second = kind == 2 || kind == 4;
             std::map<std::string, double> v; for (auto& k : S.knobs) v[k.id] = 1.0;
             if (kind == 1) v["stutter.amount"] = 0.4;
             if (kind == 2) { v["stutter.amount"] = 1.6; v["stutter.slice"] = 0.5; }
-            p.set (dr::makePlot (S, dr::scaled (S, v), dr::amountOf (S, v), kind == 2), kind ? dr::makePlot (S, S.est, 1.0, kind == 2) : dr::Plot());
+            if (kind >= 3) v["stutter.amount"] = 0.0;
+            p.set (dr::makePlot (S, dr::scaled (S, v), dr::amountOf (S, v), second), kind ? dr::makePlot (S, S.est, 1.0, second) : dr::Plot());
             juce::Image img = p.createComponentSnapshot (p.getLocalBounds(), true, 2.0f);
-            juce::File out = dir.getChildFile (kind == 0 ? "stutter-engine.png" : kind == 1 ? "stutter-engine-moved.png" : "stutter-engine-second.png"); out.deleteFile();
+            juce::File out = dir.getChildFile (kind == 0 ? "stutter-engine.png" : kind == 1 ? "stutter-engine-moved.png" : kind == 2 ? "stutter-engine-second.png" : kind == 3 ? "stutter-engine-zero.png" : "stutter-engine-second-zero.png"); out.deleteFile();
             juce::FileOutputStream os (out); juce::PNGImageFormat png; if (os.openedOk()) png.writeImageToStream (img, os);
         }
     }
