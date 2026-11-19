@@ -19,6 +19,8 @@ working folders it ran in, and no audio is in the repo.
 - `exp_all.py` and `exp_44.py` run `exp` on a list of cases and compare each exported file with the render test's
   output for the same sounds and fader positions (faders only at an end of their travel or in the middle, where
   their value is exact).
+- `lagcheck.py export.wav reference.wav` says how many samples an export comes after the render test's output and
+  how equal the two are once lined up.
 
 Without a window manager the atoms of the close protocol do not exist and JUCE only looks them up: `wmdel intern`
 makes them before the app starts. The fader rows' places depend on which groups are shown and how many faders each
@@ -36,7 +38,10 @@ Three faults, none of them one the sanitizer could see, all mended in 0.4.7:
    44.1 kHz were not: the app's sound came 109 samples after the render test's (the delay of the resampler it
    used), and a 96 kHz file came down without a low-pass: a 30 kHz tone at -12 dB came out as an 18 kHz tone at
    -12.1 dB. The app now uses the render test's conversion (`Source/Core/Resample.h`): in place to the sample, the
-   tone at -84.7 dB.
+   tone at -84.7 dB. The delay measured once more on two noise files (3 s, nothing above 16 kHz, faders in the
+   middle), with the app as it was before the mend and after: 109 samples (2.27 ms) at 44.1 kHz and 50 samples
+   (1.04 ms) at 96 kHz before, which is the 100 samples of the file that the old resampler states as its delay;
+   0 samples after, and the 96 kHz export then equal to the render test's (-118.0 dB).
 
 The app's exports against the render test's (24-bit files, so -120 dB is the last bit):
 

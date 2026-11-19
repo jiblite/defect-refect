@@ -9,8 +9,12 @@ S = dict(haas_fresh=(56, 56), wide_fresh=(37, 42),                 # st7.py: 112
          ring_more=476, ring_missed=1, ring_hz=0.0014,             # rt7.py (80 fresh cases) and rk2.py (396: every clip with a tone put on, twice)
          crush_fresh=(56, 56), crush_filter=(1, 14),               # bf7.py: the four kinds it reads; the crusher with a filter after it
          stut_clips=198, stut_read=1152, stut_right=1138,          # sk2.py: every clip of the corpus with a stutter put on
-         clean=198, others=384, forms=4)                           # no wrong find: clean clips, scoreboard sounds of the other families; pcm16.py: 16-bit and 24-bit forms
+         clean=198, others=384, forms=4,                           # no wrong find: clean clips, scoreboard sounds of the other families; pcm16.py: 16-bit and 24-bit forms
+         soft=((90, 36), (70, 9), (50, 0)), soft_n=36,             # softsweep.py: the mixing crusher, share of the sound that is crushed in % and how many of 36 sounds were read
+         late44=2.27, late96=1.04, tone_old=-12.1, tone_new=-84.7, tone_in=-12.0,   # Research/appcheck: the loader of build 0.4.6 against the new one (ms late, lagcheck.py on noise files: 109 and 50 samples at 48 kHz; a 30 kHz tone in a 96 kHz file, dB at 18 kHz)
+         exports=19, exports_rates=9)                              # Research/appcheck: the app's exports against the test renderer's, all equal to the last bit; of them at 44.1 or 96 kHz
 rows = lambda f: sorted((json.loads(l) for l in open(f) if l.strip()), key=lambda r: r['name'])
+assert S['soft'][0] == (90, S['soft_n']) and S['soft'][2] == (50, 0)          # the text says: all with 90 %, none with half
 old, new = rows(OLD), rows(NEW); assert len(old) == 136 and len(new) == 136 and [r['name'] for r in old] == [r['name'] for r in new]
 FIVE = [('haas', 'HAAS WIDTH'), ('width', 'STEREO WIDTH'), ('ringmod', 'RING MOD'), ('bitcrush', 'BITCRUSH'), ('stutter', 'STUTTER')]
 r0 = lambda v: '%.0f' % (round(v) + 0.0)
@@ -56,6 +60,8 @@ html = ('<section id="new047"><h2>Stereo width, ring modulation, bitcrush and st
  '<p><b>BITCRUSH.</b> A crusher rounds the samples to a grid of values and holds each value for several samples. Both are read exactly, and a second sound goes through the same crusher; Bit Depth and Sample Rate change its steps and its hold. '
  'Taking a crusher out is another matter: what the rounding and the hold threw away is gone, so on the sound itself the Amount fader does nothing left of the middle (example 37). '
  'One kind is the exception. A crusher that mixes plain sound back in loses nothing, and for it far left gives the sound before the crusher (two of the eight cases, example 36). '
+ 'It is read only when most of the sound went through the crusher: on test sounds of my own all %d were read with %d %% of the sound crushed, %d of %d with %d %%, and none with half. '
+ 'So a crusher behind a wet/dry mix set to the middle is not found. Its hold is read when it is a whole number of samples; with any other hold far left undoes the rounding and leaves the hold in the sound. '
  'Not read yet: a crusher with a filter after it. That is two of the eight cases; the group comes up on one of them, with its grid only.</p>'
  '<p><b>STUTTER.</b> A stutter plays a slice of the sound several times over, in place of what came after it. The engine finds every repeat to the sample: on the %d test sounds with a stutter of my own it read %s repeats, %s of them exactly right. '
  'On a second sound its own slices are played again at the same times, and Slice makes them shorter or longer. A stutter cannot be undone either, because what the repeats covered is not in the file. '
@@ -63,12 +69,22 @@ html = ('<section id="new047"><h2>Stereo width, ring modulation, bitcrush and st
  'A slice that is silent is not seen (example 39 has one).</p>'
  '<p><b>Files that are not at 48 kHz.</b> The app works at 48 kHz and converts other files on the way in. That conversion takes a crusher\'s values off their grid and makes a stutter\'s repeats unequal, '
  'so these two engines read such a file at its own rate (example 39).</p>'
+ '<p><b>The conversion itself was at fault, in every build so far.</b> It brought the sound in late, by %s ms for a file at 44.1 kHz and %s ms for one at 96 kHz, so every result of such a file sat that much late against the file, and a stutter\'s repeats, read in the file at its own rate, would have been put back that far off their places. '
+ 'And it brought a 96 kHz file down without filtering it first, so what such a file held above 24 kHz folded down into the hearing range at full level: a test tone at 30 kHz came out as a tone at 18 kHz, just as loud. '
+ 'Both came to light when files exported from the app\'s own window were compared with the test renderer\'s, sample by sample. The app now converts in place to the sample and filters first: the same test tone comes out %.0f dB down, '
+ 'and on %d such comparisons, %d of them with files at 44.1 or 96 kHz, the app\'s export and the test renderer\'s are equal to the last bit of a 24-bit file. A file at 48 kHz was never touched by this.</p>'
  '<p><b>Effects that are not there.</b> None of the five groups comes up on the %d clean test sounds, nor on the %d test sounds of the other effect types, and a crusher or a stutter is not read into an ordinary 16-bit or 24-bit file. '
  'Three groups that build 0.4.6 showed without cause are gone: a DELAY on a ring modulation, a COMB FILTER on a widener and a STUTTER on a saturation. '
  'One limit to know: a 16-bit file that was made louder by 18 dB or more and saved as it is counts as a light crusher.</p>'
- '<p><b>Also mended.</b> A file without any sound in it is refused with a message, and values in a file that are not numbers count as silence.</p>'
+ '<p><b>Also mended.</b> A file without any sound in it is refused with a message, and values in a file that are not numbers count as silence. '
+ 'Export said Saved even when the file could not be written; it now says that it could not, with the path. '
+ 'And with STUTTER Amount at far left the picture was an empty box; it now shows the slices, each played once, with the pattern as found faintly behind.</p>'
  '<p>The seven examples below were picked by fixed rules, not by ear. For HAAS WIDTH, STEREO WIDTH and RING MOD: of the cases on which the group is shown, the middle one by its score for taking the effect out. '
  'For the crusher that can be undone: the weaker of its two cases. For the other crushers and for the stutter: the middle case by its score on the second sound. The last example is a file of my own making at 44.1 kHz.</p></section>'
  % (worse_old, trs, S['haas_fresh'][0], S['wide_fresh'][0], S['wide_fresh'][1], r0(mono[0]), r0(mono[1]), r0(wide[0]), r0(wide[-1]),
-    S['ring_more'], {1: 'one'}[S['ring_missed']], S['ring_hz'], S['stut_clips'], '{:,}'.format(S['stut_read']), '{:,}'.format(S['stut_right']), S['clean'], S['others']))
+    S['ring_more'], {1: 'one'}[S['ring_missed']], S['ring_hz'],
+    S['soft'][0][1], S['soft'][0][0], S['soft'][1][1], S['soft_n'], S['soft'][1][0],
+    S['stut_clips'], '{:,}'.format(S['stut_read']), '{:,}'.format(S['stut_right']),
+    '%.1f' % S['late44'], '%.1f' % S['late96'], S['tone_in'] - S['tone_new'], S['exports'], S['exports_rates'],
+    S['clean'], S['others']))
 open(os.path.join(HERE, 'new047_head.html'), 'w').write(html); print(html.replace('</p>', '</p>\n'))
