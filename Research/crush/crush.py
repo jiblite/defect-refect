@@ -218,7 +218,8 @@ def soft(y, G):
         # With a hold the blend can be made exact: the half width ties mix and blend together, and of the pairs it
         # allows the right one leaves no trace of the hold in the undone sound: its second difference is as large
         # across the hold's boundaries as between them (any other pair leaves teeth, and the boundaries stand out).
-        yy = y if n <= 3 * SR else np.vstack([y[i:i + SR // 2] for i in (np.linspace(0, n - SR // 2, 6).astype(int) // int(P)) * int(P)]); src = source(len(yy), P, c); isb = src == np.arange(len(yy)); tb = isb[1:-1] | isb[2:]
+        pl = (SR // 2 // int(P)) * int(P)                                 # (six pieces of a long sound, each a whole number of holds long and starting on one: the hold's pattern goes on from one to the next)
+        yy = y if n <= 3 * SR else np.vstack([y[i:i + pl] for i in (np.linspace(0, n - pl, 6).astype(int) // int(P)) * int(P)]); src = source(len(yy), P, c); isb = src == np.arange(len(yy)); tb = isb[1:-1] | isb[2:]
         def teeth(a):
             o = soft_undo(yy, dict(mix=1.0 - 2.0 * hw / (1.0 - a), soft=a, step=st, offset=of, P=P, c=c)); e = ((o[2:] - 2 * o[1:-1] + o[:-2]) ** 2).sum(1); return float(e[tb].mean() / max(e[~tb].mean(), 1e-300))
         base = teeth(aa); best = (base, aa); span = 0.06
@@ -231,9 +232,21 @@ def soft(y, G):
         if best[0] < 0.98 * base: aa = best[1]; m = float(np.clip(1.0 - 2.0 * hw / (1.0 - aa), 0.3, 0.9995))
     return dict(kind='soft', mix=m, soft=aa, step=st, offset=of, P=P, c=c, rhythm=sh, half=hw, inside=inside, aa_mass=aa_mass, aa_lam=aa_lam, lam=lam, dense=float(np.min(dens)), bits=float(np.mean([np.log2(2.0 / v) for v in st])))
 
+LONG = 30 * SR
+def part(y):
+    """The stretch the settings are read from: the whole sound up to 30 s, of a longer one its loudest 30 s."""
+    n = len(y)
+    if n <= LONG: return 0
+    e = (y ** 2).sum(1); c = np.concatenate([[0.0], np.cumsum(e)]); a = np.arange(0, n - LONG + 1, SR); return int(a[np.argmax(c[a + LONG] - c[a])])
 def find(y):
     """dict(found, kind ('bare': the values lie on the grid; 'soft': plain sound mixed in), step and offset per
     channel, bits, P, c, ..)."""
+    a = part(y)
+    if len(y) <= LONG: return find_part(y)
+    f = find_part(y[a:a + LONG]); f['n'] = len(y); f['from'] = a
+    if f.get('found') and f['P'] > 1.0: c = f['c'] + a; f['c'] = float(c - f['P'] * np.floor(c / f['P']))      # the hold's pattern counted from the sound's own start
+    return f
+def find_part(y):
     out = dict(found=False, n=len(y))
     if len(y) < SR // 4: return out
     G = [grid(y[:, ch]) for ch in range(y.shape[1])]; H = hold(y); out.update(grids=G, hold=H)
@@ -246,17 +259,35 @@ def find(y):
         return out
     out.update(found=True, kind='bare', step=[g['step'] if o else 0.0 for g, o in zip(G, ok)], offset=[g['offset'] if o else 0.0 for g, o in zip(G, ok)], bits=float(np.mean([g['bits'] for g, o in zip(G, ok) if o])) if any(ok) else 24.0, P=H['P'] if hasHold else 1.0, c=H['c'] if hasHold else 0.0)
     return out
-def onto(z, f, s=1.0):
-    """The second sound through the same crusher: the same grid of values and the same hold. s: Amount (1 = as found)."""
-    if not f.get('found') or s < 1e-12: return z.copy()
-    if f.get('kind') == 'soft': q = soft_forward(z, f); return q if abs(s - 1.0) < 1e-12 else z + s * (q - z)
+def through(z, f, sf=1.0, hf=1.0):
+    """z through the found crusher, its steps sf times as large and its hold hf times as long (a crusher without a
+    hold gets one of hf samples)."""
+    g = dict(f); g['step'] = [v * sf for v in f['step']]; g['offset'] = [v * sf for v in f['offset']]; g['P'] = max(f['P'] * hf, 1.0)
+    if f.get('kind') == 'soft': return soft_forward(z, g)
     q = z.copy()
     for ch in range(z.shape[1]):
-        st = f['step'][min(ch, len(f['step']) - 1)]; of = f['offset'][min(ch, len(f['offset']) - 1)]
+        st = g['step'][min(ch, len(g['step']) - 1)]; of = g['offset'][min(ch, len(g['offset']) - 1)]
         if st > 0: q[:, ch] = of + st * np.round((z[:, ch] - of) / st)
-    q = held(q, f['P'], f['c'])
-    return q if abs(s - 1.0) < 1e-12 else z + s * (q - z)
+    return held(q, g['P'], g['c'])
+def onto(z, f, s=1.0, sf=1.0, hf=1.0):
+    """The second sound through the same crusher: the same grid of values and the same hold. s: Amount (1 = as found,
+    2 = what the crusher changes twice over); sf, hf: the steps and the hold against the found ones."""
+    if not f.get('found') or s < 1e-12: return z.copy()
+    q = through(z, f, sf, hf); return q if abs(s - 1.0) < 1e-12 else z + s * (q - z)
 
 def undo(y, f):
     """The sound before the crusher, where it can be had: exactly for the kind 'soft' (None otherwise)."""
     return soft_undo(y, f) if f.get('found') and f.get('kind') == 'soft' else None
+def own(y, f, s=1.0, sf=1.0, hf=1.0):
+    """The found sound with the faders moved. Kind 'soft': the sound before the crusher is known, so everything can be
+    had: Amount 0 = that sound, 1 = as found, 2 = what the crusher changed twice over; other steps or another hold:
+    that sound through the crusher so changed. Kind 'bare': what the rounding and the hold threw away is gone. Left
+    of the middle nothing happens; a finer grid or a shorter hold than the found one cannot be had; coarser steps and
+    a longer hold are put on the sound as it is; right of the middle: towards steps twice as large and a hold twice
+    as long (which doubles what the crusher did wrong)."""
+    if not f.get('found'): return y.copy()
+    if f.get('kind') == 'soft':
+        x = soft_undo(y, f); q = y if abs(sf - 1.0) < 1e-9 and abs(hf - 1.0) < 1e-9 else through(x, f, sf, hf); return x + s * (q - x)
+    sf = max(sf, 1.0); hf = max(hf, 1.0); q = y.copy() if abs(sf - 1.0) < 1e-9 and abs(hf - 1.0) < 1e-9 else through(y, f, sf, hf)
+    if s > 1.0 + 1e-12: q2 = through(q, f, 2.0 * sf, 2.0 * hf if f['P'] * hf > 1.0 else 1.0); q = q + (s - 1.0) * (q2 - q)
+    return q
