@@ -64,6 +64,19 @@ inline std::vector<float> to48k (const std::vector<float>& in, double rate)
     juce::WindowedSincInterpolator ip; ip.process (ratio, in.data(), o.data(), m, (int) in.size(), 0);
     return o;
 }
+// b as a 24-bit 48 kHz stereo WAV. false: the file could not be written (a folder without the right to write, a file
+// that another program holds open, a full disk).
+inline bool writeWav24 (const juce::File& f, const juce::AudioBuffer<float>& b)
+{
+    f.deleteFile();
+    auto os = std::make_unique<juce::FileOutputStream> (f); if (! os->openedOk()) return false;
+    juce::WavAudioFormat wav; std::unique_ptr<juce::AudioFormatWriter> w (wav.createWriterFor (os.get(), dr::SR, 2, 24, {}, 0));
+    if (w == nullptr) return false;        // no writer: the stream is still ours
+    os.release();                          // the writer owns the stream from here on
+    const bool ok = w->writeFromAudioSampleBuffer (b, 0, b.getNumSamples());
+    w.reset();                             // finishes the header and closes the file
+    return ok && f.existsAsFile();
+}
 // raw, rate: a file that is not at 48 kHz also gives its own samples and its rate (files up to 10 minutes). The crush
 // engine and the stutter engine read those: a grid of values and exact repeats do not survive the change of rate.
 inline bool loadStereo48k (const juce::File& f, dr::Stereo& out, juce::String& err, std::shared_ptr<const dr::Stereo>* raw = nullptr, double* rate = nullptr)
@@ -962,9 +975,7 @@ private:
             auto f = c.getResult(); if (f == juce::File()) return; f = f.withFileExtension ("wav");
             juce::AudioBuffer<float> b (2, (int) res->size()); const double g = res->peak() > 0.999 ? 0.999 / res->peak() : 1.0;
             for (int i = 0; i < b.getNumSamples(); ++i) { b.setSample (0, i, (float) (res->l[(size_t) i] * g)); b.setSample (1, i, (float) (res->r[(size_t) i] * g)); }
-            f.deleteFile(); juce::WavAudioFormat wav;
-            std::unique_ptr<juce::AudioFormatWriter> w (wav.createWriterFor (new juce::FileOutputStream (f), dr::SR, 2, 24, {}, 0));
-            if (w) { w->writeFromAudioSampleBuffer (b, 0, b.getNumSamples()); modeLabel.setText ("Saved " + f.getFileName(), juce::dontSendNotification); }
+            if (writeWav24 (f, b)) modeLabel.setText ("Saved " + f.getFileName(), juce::dontSendNotification);
             else modeLabel.setText ("Could not write " + f.getFullPathName(), juce::dontSendNotification);
         });
     }
@@ -993,11 +1004,8 @@ private:
             const dr::Stereo& h = ir.h; if (h.size() == 0) return;
             juce::AudioBuffer<float> b (2, (int) h.size());
             for (int i = 0; i < b.getNumSamples(); ++i) { b.setSample (0, i, (float) h.l[(size_t) i]); b.setSample (1, i, (float) h.r[(size_t) i]); }
-            f.deleteFile(); juce::WavAudioFormat wav;
-            std::unique_ptr<juce::AudioFormatWriter> w (wav.createWriterFor (new juce::FileOutputStream (f), dr::SR, 2, 24, {}, 0));
-            if (w)
+            if (writeWav24 (f, b))
             {
-                w->writeFromAudioSampleBuffer (b, 0, b.getNumSamples());
                 modeLabel.setText ("Saved " + f.getFileName() + ": the " + what + " as a filter without latency."
                                    + (ir.downDb > 0.05 ? " Turned down by " + juce::String (ir.downDb, 1) + " dB to fit the file: add that back after the convolution." : juce::String()), juce::dontSendNotification);
             }
@@ -1018,11 +1026,8 @@ private:
             const dr::Stereo& h = ir.h; if (h.size() == 0) return;
             juce::AudioBuffer<float> b (2, (int) h.size());
             for (int i = 0; i < b.getNumSamples(); ++i) { b.setSample (0, i, (float) h.l[(size_t) i]); b.setSample (1, i, (float) h.r[(size_t) i]); }
-            f.deleteFile(); juce::WavAudioFormat wav;
-            std::unique_ptr<juce::AudioFormatWriter> w (wav.createWriterFor (new juce::FileOutputStream (f), dr::SR, 2, 24, {}, 0));
-            if (w)
+            if (writeWav24 (f, b))
             {
-                w->writeFromAudioSampleBuffer (b, 0, b.getNumSamples());
                 modeLabel.setText ("Saved " + f.getFileName() + ": the echoes alone. For the echoes as found: wet and dry at the same level."
                                    + (ir.downDb > 0.05 ? " Turned down by " + juce::String (ir.downDb, 1) + " dB to fit the file: add that back to the wet level." : juce::String()), juce::dontSendNotification);
             }
@@ -1046,11 +1051,8 @@ private:
             const dr::Stereo& h = ir.h; if (h.size() == 0) return;
             juce::AudioBuffer<float> b (2, (int) h.size());
             for (int i = 0; i < b.getNumSamples(); ++i) { b.setSample (0, i, (float) h.l[(size_t) i]); b.setSample (1, i, (float) h.r[(size_t) i]); }
-            f.deleteFile(); juce::WavAudioFormat wav;
-            std::unique_ptr<juce::AudioFormatWriter> w (wav.createWriterFor (new juce::FileOutputStream (f), dr::SR, 2, 24, {}, 0));
-            if (w)
+            if (writeWav24 (f, b))
             {
-                w->writeFromAudioSampleBuffer (b, 0, b.getNumSamples());
                 modeLabel.setText ("Saved " + f.getFileName() + ": the room alone at unity level. For the room as found: wet " + juce::String (std::abs (ir.levelDb), 1) + " dB " + (ir.levelDb < 0 ? "under" : "over") + " dry.", juce::dontSendNotification);
             }
             else modeLabel.setText ("Could not write " + f.getFullPathName(), juce::dontSendNotification);
