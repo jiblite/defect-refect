@@ -547,6 +547,7 @@ private:
     std::shared_ptr<const dr::moving::Net> movingNet;           // the moving-tone engine's model (none: phaser and filter sweep are handled the old way)
     std::shared_ptr<const dr::moving::Found> movingFound;       // what the moving-tone engine found on it
     std::shared_ptr<const dr::chorus::Found> chorusFound;       // what the chorus engine found on it
+    dr::More moreFound;                                         // what the engines of build 0.4.7 found on it
     std::vector<dr::FoundFx> groups;                            // the groups shown: the effects found, and TONE MATCH when it is switched on (two sounds)
     dr::FoundFx matchShown;                                     // TONE MATCH as the last render used it, with its curves (for the picture and Export IR)
     std::weak_ptr<const dr::Stereo> pairA, pairB; bool pairSame = false;     // are the two sounds versions of one recording (worked out once per pair; weak: a new sound at an old address is still a new sound)
@@ -595,7 +596,7 @@ private:
     void clearSlot (int slot)
     {
         sound[slot].reset(); names[slot] = {}; (slot == 0 ? zoneA : zoneB).setSound ({}, nullptr);
-        if (slot == 0) { ++generation; busy = false; found.clear(); groups.clear(); inspected = false; roomFound.reset(); toneFound.reset(); echoFound.reset(); levelFound.reset(); sweepFound.reset(); movingFound.reset(); chorusFound.reset(); matchShown = {}; faders.clearSwitches(); faders.build ({}, false); result.reset(); updatePlayerBuffer(); updateUi(); }
+        if (slot == 0) { ++generation; busy = false; found.clear(); groups.clear(); inspected = false; roomFound.reset(); toneFound.reset(); echoFound.reset(); levelFound.reset(); sweepFound.reset(); movingFound.reset(); chorusFound.reset(); moreFound = {}; matchShown = {}; faders.clearSwitches(); faders.build ({}, false); result.reset(); updatePlayerBuffer(); updateUi(); }
         else modeChanged();
     }
     void swapSlots()
@@ -606,18 +607,18 @@ private:
     }
     void inspect()
     {
-        ++generation; busy = true; inspected = false; found.clear(); groups.clear(); cache.clear(); inspection.reset(); roomFound.reset(); toneFound.reset(); echoFound.reset(); levelFound.reset(); sweepFound.reset(); movingFound.reset(); chorusFound.reset(); matchShown = {}; faders.clearSwitches(); faders.build ({}, false); updateUi();
+        ++generation; busy = true; inspected = false; found.clear(); groups.clear(); cache.clear(); inspection.reset(); roomFound.reset(); toneFound.reset(); echoFound.reset(); levelFound.reset(); sweepFound.reset(); movingFound.reset(); chorusFound.reset(); moreFound = {}; matchShown = {}; faders.clearSwitches(); faders.build ({}, false); updateUi();
         zoneA.setStatus ("inspecting..."); modeLabel.setText ("Looking for effects on the first sound...", juce::dontSendNotification);
         auto src = sound[0]; auto M = models; auto M27 = models27; auto RN = roomNet; auto RN2 = roomNet2; auto out = std::make_shared<std::vector<dr::FoundFx>>();
         auto insp = std::make_shared<dr::Inspection>(); auto roomOut = std::make_shared<std::shared_ptr<const dr::room::Found>>(); const double c = cut();
         auto toneOut = std::make_shared<std::shared_ptr<const dr::tone::Found>>(); auto echoOut = std::make_shared<std::shared_ptr<const dr::echo::Found>>();
         auto levelOut = std::make_shared<std::shared_ptr<const dr::level::Movement>>(); auto sweepOut = std::make_shared<std::shared_ptr<const dr::sweep::Result>>();
-        auto MN = movingNet; auto movingOut = std::make_shared<std::shared_ptr<const dr::moving::Found>>(); auto chorusOut = std::make_shared<std::shared_ptr<const dr::chorus::Found>>();
+        auto MN = movingNet; auto movingOut = std::make_shared<std::shared_ptr<const dr::moving::Found>>(); auto chorusOut = std::make_shared<std::shared_ptr<const dr::chorus::Found>>(); auto moreOut = std::make_shared<dr::More>();
         const int gen = generation.load();
-        startWorker ([src, M, M27, RN, RN2, MN, out, insp, roomOut, toneOut, echoOut, levelOut, sweepOut, movingOut, chorusOut, c, gen, this]
+        startWorker ([src, M, M27, RN, RN2, MN, out, insp, roomOut, toneOut, echoOut, levelOut, sweepOut, movingOut, chorusOut, moreOut, c, gen, this]
                      {
                          auto alive = [this, gen] (float) { return generation.load() == gen; };
-                         // the level engine, the flanger engine, the moving-tone engine and the chorus engine need nothing from the others: they measure on threads of their own while the rest goes on here
+                         // the level engine, the flanger engine, the moving-tone engine, the chorus engine and the sides engine need nothing from the others: they measure on threads of their own while the rest goes on here
                          auto levelJob = std::async (std::launch::async, [this, gen, src]
                                                      {
                                                          std::shared_ptr<dr::level::Movement> m;
@@ -647,6 +648,13 @@ private:
                                                           catch (const std::exception&) { f.reset(); }        // the chorus engine failed: the detector's verdict and the old handling stay
                                                           return f;
                                                       });
+                         auto sidesJob = std::async (std::launch::async, [this, gen, src]
+                                                     {
+                                                         std::shared_ptr<dr::sides::Found> f;
+                                                         try { f = std::make_shared<dr::sides::Found> (dr::sides::find (*src, [this, gen] { return generation.load() != gen; })); }
+                                                         catch (const std::exception&) { f.reset(); }        // the sides engine failed: the detectors' verdicts and the old handling stay
+                                                         return f;
+                                                     });
                          auto I = dr::inspect (*M, *src, alive);
                          if (generation.load() != gen) return;
                          dr::mergeNew (I, dr::inspect (*M27, *src, alive, &I));
@@ -705,17 +713,22 @@ private:
                              if (generation.load() != gen) return;
                              if (f != nullptr) { dr::mergeChorus (I, *f, sweepOut->get()); *chorusOut = f; }
                          }
+                         {       // the sides engine: one side late, or a sound from the middle made wide (its verdict replaces the detectors' about haas and width)
+                             const std::shared_ptr<dr::sides::Found> f = sidesJob.get();
+                             if (generation.load() != gen) return;
+                             if (f != nullptr) { dr::mergeSides (I, *f, toneOut->get()); moreOut->sides = f; }
+                         }
                          if (*roomOut != nullptr && (*roomOut)->found && RN != nullptr && RN->ready())      // a room on a sound that shows other effects: is it still there with those taken out?
                          {
-                             try { dr::recheckRoomWithout (I, *src, *echoOut, *levelOut, *sweepOut, *movingOut, *chorusOut, *RN, RN2 != nullptr && RN2->ready() ? RN2.get() : nullptr, [this, gen] { return generation.load() != gen; }); }
+                             try { dr::recheckRoomWithout (I, *src, *echoOut, *levelOut, *sweepOut, *movingOut, *chorusOut, *moreOut, *RN, RN2 != nullptr && RN2->ready() ? RN2.get() : nullptr, [this, gen] { return generation.load() != gen; }); }
                              catch (const std::exception&) {}
                              if (generation.load() != gen) return;
                          }
-                         *out = dr::estimate (I, *src, c, nullptr, *roomOut, *toneOut, *echoOut, *levelOut, *sweepOut, *movingOut, *chorusOut); *insp = I;
+                         *out = dr::estimate (I, *src, c, nullptr, *roomOut, *toneOut, *echoOut, *levelOut, *sweepOut, *movingOut, *chorusOut, *moreOut); *insp = I;
                      },
-                     [this, out, insp, roomOut, toneOut, echoOut, levelOut, sweepOut, movingOut, chorusOut]
+                     [this, out, insp, roomOut, toneOut, echoOut, levelOut, sweepOut, movingOut, chorusOut, moreOut]
                      {
-                         busy = false; found = *out; inspected = true; inspection = insp; roomFound = *roomOut; toneFound = *toneOut; echoFound = *echoOut; levelFound = *levelOut; sweepFound = *sweepOut; movingFound = *movingOut; chorusFound = *chorusOut;
+                         busy = false; found = *out; inspected = true; inspection = insp; roomFound = *roomOut; toneFound = *toneOut; echoFound = *echoOut; levelFound = *levelOut; sweepFound = *sweepOut; movingFound = *movingOut; chorusFound = *chorusOut; moreFound = *moreOut;
                          for (auto& F : found) cache[F.name] = F;
                          zoneA.setStatus (juce::String ((int) found.size()) + (found.size() == 1 ? " effect found" : " effects found"));
                          emptyText = "No effects found on this sound (from the 19 it knows so far).";
@@ -740,8 +753,8 @@ private:
         };
         if (missing.empty()) { show(); return; }
         busy = true; ++generation; modeLabel.setText ("Reading the settings of the newly shown effects...", juce::dontSendNotification);
-        auto I = inspection; auto src = sound[0]; auto rf = roomFound; auto tf = toneFound; auto ef = echoFound; auto lf = levelFound; auto wf = sweepFound; auto mf = movingFound; auto cf = chorusFound; auto out = std::make_shared<std::vector<dr::FoundFx>>();
-        startWorker ([I, src, missing, out, rf, tf, ef, lf, wf, mf, cf] { *out = dr::estimate (*I, *src, 0.0, &missing, rf, tf, ef, lf, wf, mf, cf); },
+        auto I = inspection; auto src = sound[0]; auto rf = roomFound; auto tf = toneFound; auto ef = echoFound; auto lf = levelFound; auto wf = sweepFound; auto mf = movingFound; auto cf = chorusFound; auto more = moreFound; auto out = std::make_shared<std::vector<dr::FoundFx>>();
+        startWorker ([I, src, missing, out, rf, tf, ef, lf, wf, mf, cf, more] { *out = dr::estimate (*I, *src, 0.0, &missing, rf, tf, ef, lf, wf, mf, cf, more); },
                      [this, out, show] { busy = false; for (auto& F : *out) cache[F.name] = F; show(); updateUi(); });
     }
     // The picture for the selected effect: as the faders have it now, with the found state faintly behind.
@@ -793,6 +806,11 @@ private:
                         if (nb > 0 && (double) sp.first < nb) mb.push_back ({ (double) sp.first / nb, sp.second >= F->chorus->n ? 1.0 : juce::jmin (1.0, (double) sp.second / nb) });
                     }
                 }
+            }
+            if (F != nullptr && F->sides != nullptr && F->sides->found() && F->sides->n > 0)      // a delay or a widening between the sides on a part of the first sound (onto a second sound it goes all the way: no line there)
+            {
+                const auto spans = dr::sides::where (*F->sides); const double na = (double) F->sides->n / dr::SR; double in = 0; for (const auto& sp : spans) in += sp.second - sp.first;
+                if (in < 0.97 * na) for (const auto& sp : spans) ma.push_back ({ sp.first / na, sp.second / na });
             }
             zoneA.setMarks (ma); zoneB.setMarks (mb);
         }

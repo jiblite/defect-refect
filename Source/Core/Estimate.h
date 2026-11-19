@@ -9,6 +9,7 @@
 #include "Sweep.h"
 #include "Moving.h"
 #include "Chorus.h"
+#include "Sides.h"
 #include "Effects.h"
 #include "Hand.h"
 #include "Inspector.h"
@@ -317,6 +318,7 @@ struct FoundFx
     std::shared_ptr<const sweep::Result> sweep;     // the moving copy the flanger engine found: its faders work that engine (see flangerFx)
     std::shared_ptr<const moving::Found> moving;    // the moving tone curve the moving-tone engine found (PHASER, FILTER SWEEP): its faders work that engine (see movingFx)
     std::shared_ptr<const chorus::Found> chorus;    // the voices the chorus engine found (CHORUS): its faders work that engine (see chorusFx)
+    std::shared_ptr<const sides::Found> sides;      // what the sides engine found between the two sides (HAAS WIDTH, STEREO WIDTH): its fader works that engine (see sidesFx)
     Vec curveL, curveR;                        // TONE MATCH, for the picture and Export IR: the curves of the last render (left, right; Amount in the middle)
     Vec foundL, foundR;                        // the same with Detail in the middle too
 };
@@ -793,6 +795,47 @@ inline void mergeChorus (Inspection& I, const chorus::Found& f, const sweep::Res
     I.prob["chorus"] = f.found && ! (flanger != nullptr && flanger->found) ? f.sure : level::sureNone;
 }
 
+// ---------------------------------------------------------------- the sides engine's groups (Sides.h)
+// HAAS WIDTH (one side late) and STEREO WIDTH (a sound from the middle made wide), as the sides engine read them off
+// the sound: the two short filters through which one sound reaches the two sides, or the filter through which a copy of
+// the middle was put at the sides. Amount: on the sound itself 0 = taken out, 1 = untouched (bit for bit), 2 = twice;
+// on a second sound 0 = none, 1 = as found, 2 = twice. A plain delay between the sides moves in time with the fader
+// (the late side comes nearer and the levels come together), so that no comb is heard on the way.
+constexpr double sidesSure = 0.95;
+inline const char* sidesName (const sides::Found& f) { return f.kind == sides::HAAS ? "haas" : "width"; }
+inline FoundFx sidesFx (std::shared_ptr<const sides::Found> found, double prob)
+{
+    FoundFx F; F.name = sidesName (*found); F.title = titleFor (F.name); F.prob = prob; F.sides = std::move (found);
+    Knob a; a.id = F.name + ".amount"; a.label = "Amount"; a.neutral = 0; a.lo = 0; a.hi = 2; F.knobs = { a };
+    return F;
+}
+// The sides engine's verdict goes into the inspection and the detectors' own guesses about haas and width go out: the
+// engine reads the delay or the widening filters off the sound itself, or says that there is none it can read.
+// A pair's later taps are reflections on each side too, and where the two sides' do not cancel in the middle the tone
+// engine reports them as well. They are one thing: when every reflection it found sits at one of the pair's taps, the
+// COMB FILTER group is not shown (the pair says more: which side, and how loud on each).
+inline bool sidesHoldComb (const sides::Found& f, const tone::Found& t)
+{
+    if (f.mode != sides::PAIR || t.echoes.empty()) return false;
+    for (const auto& e : t.echoes)
+    {
+        bool at = false;
+        for (const auto* v : { &f.a, &f.b }) for (const auto& tap : *v) at = at || (tap.lag > 0 && std::abs (e.delay - (double) tap.lag) <= 2.0);
+        if (! at) return false;
+    }
+    return true;
+}
+inline void mergeSides (Inspection& I, const sides::Found& f, const tone::Found* tone = nullptr)
+{
+    I.prob["haas"] = f.kind == sides::HAAS ? sidesSure : level::sureNone; I.prob["width"] = f.kind == sides::WIDTH ? sidesSure : level::sureNone;
+    if (tone != nullptr && sidesHoldComb (f, *tone)) I.prob["comb"] = level::sureNone;
+}
+// What the engines added in build 0.4.7 found on the sound (each may be missing: then the detectors' verdict and the old handling stay).
+struct More
+{
+    std::shared_ptr<const sides::Found> sides;
+};
+
 // Settings of each found effect (estimate.estimate, without the slower sweep fit for now).
 inline bool isNewFx (const std::string& f) { return f == "saturation" || f == "exciter" || f == "ringmod" || f == "filter" || f == "stutter" || f == "gatedrhythm"; }
 // One cut for every effect: the Sureness slider. The six 0.2.0 additions needed a higher score while the detectors'
@@ -821,11 +864,12 @@ inline void pruneFound (std::vector<FoundFx>& out)
 // swp: what the flanger engine found on the sound; a moving copy found is the FLANGER group (flangerFx).
 // mov: what the moving-tone engine found on the sound; a moving filter found is the PHASER or FILTER SWEEP group (movingFx).
 // cho: what the chorus engine found on the sound; voices found are the CHORUS group (chorusFx).
+// more: what the engines of build 0.4.7 found: a delay or a widening between the sides is the HAAS WIDTH or STEREO WIDTH group (sidesFx).
 inline std::vector<FoundFx> estimate (const Inspection& I, const Stereo& y, double cut = 0.65, const std::set<std::string>* only = nullptr,
                                       const std::shared_ptr<const room::Found>& room = {}, const std::shared_ptr<const tone::Found>& tone = {},
                                       const std::shared_ptr<const echo::Found>& echo = {}, const std::shared_ptr<const level::Movement>& lvl = {},
                                       const std::shared_ptr<const sweep::Result>& swp = {}, const std::shared_ptr<const moving::Found>& mov = {},
-                                      const std::shared_ptr<const chorus::Found>& cho = {})
+                                      const std::shared_ptr<const chorus::Found>& cho = {}, const More& more = {})
 {
     std::vector<FoundFx> out;
     (void) est::pinkProbe ((size_t) (6 * SR));      // built once before the fits run in parallel
@@ -843,6 +887,7 @@ inline std::vector<FoundFx> estimate (const Inspection& I, const Stereo& y, doub
         if (swp != nullptr && f == "flanger") { if (swp->found) out.push_back (flangerFx (swp, pit->second)); continue; }
         if (mov != nullptr && (f == "phaser" || f == "filtersweep")) { if (mov->found && f == mov->kind) out.push_back (movingFx (mov, pit->second)); continue; }
         if (cho != nullptr && f == "chorus") { if (cho->found) out.push_back (chorusFx (cho, pit->second)); continue; }
+        if (more.sides != nullptr && (f == "haas" || f == "width")) { if (more.sides->found() && f == sidesName (*more.sides)) out.push_back (sidesFx (more.sides, pit->second)); continue; }
         FoundFx F; F.name = f; F.title = titleFor (f); F.prob = pit->second; F.knobs = knobsFor (f); Params& e = F.est;
         if (f == "haas") e["lag"] = (double) hand::gccPhat (y, 30.0).lag;
         else if (f == "width") e["amount"] = std::clamp (S (f, "amount", 0.5), 0.05, 1.2);
@@ -992,6 +1037,12 @@ inline Stereo applyTo (const Stereo& target, const std::vector<FoundFx>& found, 
             if (s > 1e-9) y = chorus::apply (y, *F.chorus, std::min (s, 2.0), chorusSpeed (p), chorusDepth (p), false);
             continue;
         }
+        if (F.sides != nullptr)     // the found delay or widening on this sound: each side through its own filter
+        {
+            const double s = amountOf (F, faders);
+            if (s > 1e-9) y = sides::onto (y, *F.sides, std::min (s, 2.0));
+            continue;
+        }
         y = applyAmount (F.name, y, scaled (F, faders), amountOf (F, faders));
     }
     for (auto& F : found)
@@ -1014,7 +1065,7 @@ inline Stereo applyTo (const Stereo& target, const std::vector<FoundFx>& found, 
 
 // One sound: take the found effects out (left), leave as is (middle) or double (right).
 inline bool canRemove (const std::string& f) { return f != "reverb" && f != "distortion" && f != "bitcrush" && ! isNewFx (f); }
-inline bool canRemove (const FoundFx& F) { return F.room != nullptr || F.tone != nullptr || F.echo != nullptr || F.level != nullptr || F.sweep != nullptr || F.moving != nullptr || F.chorus != nullptr || canRemove (F.name); }      // the room engine takes its reverb out, the tone engine its reflections, the echo engine its echoes, the level engine its movement, the flanger engine its moving copy, the moving-tone engine its curve, the chorus engine its voices
+inline bool canRemove (const FoundFx& F) { return F.room != nullptr || F.tone != nullptr || F.echo != nullptr || F.level != nullptr || F.sweep != nullptr || F.moving != nullptr || F.chorus != nullptr || F.sides != nullptr || canRemove (F.name); }      // the room engine takes its reverb out, the tone engine its reflections, the echo engine its echoes, the level engine its movement, the flanger engine its moving copy, the moving-tone engine its curve, the chorus engine its voices
 // The found effect turned down to s (0 = out as far as this effect allows, 1 = untouched).
 inline Stereo takeOut (const FoundFx& F, const Stereo& in, double s)
 {
@@ -1086,6 +1137,11 @@ inline Stereo reshape (const Stereo& src, const std::vector<FoundFx>& found, con
             // the found voices out (each range's own inverse) and what the faders give in; the chorus engine's answer belongs to this very sound (same length)
             if (F.chorus->n == y.size()) { const Params p = scaled (F, faders); y = chorus::apply (y, *F.chorus, std::min (s, 2.0) - 1.0, chorusSpeed (p), chorusDepth (p), true); }
         }
+        else if (F.sides != nullptr)
+        {
+            // the part of the sound that the found pair of filters (or the copy at the sides) explains, changed; the rest stays; the sides engine's answer belongs to this very sound (same length)
+            if (F.sides->n == y.size()) y = sides::own (y, *F.sides, std::clamp (s, 0.0, 2.0));
+        }
         else if (F.name == "tonematch") {}      // two sounds only
         else if (canRemove (F.name))
         {
@@ -1113,7 +1169,7 @@ inline Stereo reshape (const Stereo& src, const std::vector<FoundFx>& found, con
 // of a flanger or a chorus, a filter that sweeps, one side a few milliseconds behind the other: each of them can look
 // like a room to the room engine. So the room must still be there with those effects taken out. Echoes the echo
 // engine finds, and what the app shows at the default Sureness and can take out cleanly (level movement, flanger,
-// phaser, filter sweep, chorus, each by its engine, and the Haas delay by moving the late side back) are taken out,
+// phaser, filter sweep, chorus, a delay or a widening between the sides, each by its engine) are taken out,
 // the room engine looks at that sound as well, and the less sure of its two verdicts counts (returned: the second
 // one, or -1 when there was nothing to look at; what: the groups that were taken out). The room that is shown and
 // worked with is still the one found on the sound as it is. Costs one render of those groups and one more look of
@@ -1132,16 +1188,16 @@ inline Stereo reshape (const Stereo& src, const std::vector<FoundFx>& found, con
 constexpr double roomWithoutCut = 0.65;
 inline double recheckRoomWithout (Inspection& I, const Stereo& y, const std::shared_ptr<const echo::Found>& echo, const std::shared_ptr<const level::Movement>& lvl,
                                   const std::shared_ptr<const sweep::Result>& swp, const std::shared_ptr<const moving::Found>& mov, const std::shared_ptr<const chorus::Found>& cho,
-                                  const room::Net& net, const room::Net* second, const room::Stop& stop = {}, std::string* what = nullptr)
+                                  const More& more, const room::Net& net, const room::Net* second, const room::Stop& stop = {}, std::string* what = nullptr)
 {
     auto r = I.prob.find ("reverb"); if (r == I.prob.end() || ! (r->second > roomNone)) return -1.0;
     std::set<std::string> only;
-    for (const char* f : { "tremolo", "autopan", "gatedrhythm", "flanger", "phaser", "filtersweep", "chorus", "haas" }) { auto p = I.prob.find (f); if (p != I.prob.end() && p->second > roomWithoutCut) only.insert (f); }
+    for (const char* f : { "tremolo", "autopan", "gatedrhythm", "flanger", "phaser", "filtersweep", "chorus", "haas", "width" }) { auto p = I.prob.find (f); if (p != I.prob.end() && p->second > roomWithoutCut) only.insert (f); }
     if (echo != nullptr && echo->any() && I.prob.count ("delay")) only.insert ("delay");      // echoes: whenever the echo engine finds any
     if (only.empty()) return -1.0;
     std::vector<FoundFx> out; std::map<std::string, double> faders;
-    for (FoundFx& F : estimate (I, y, roomWithoutCut, &only, {}, {}, echo, lvl, swp, mov, cho))
-        if (F.echo != nullptr || F.level != nullptr || F.sweep != nullptr || F.moving != nullptr || F.chorus != nullptr || F.name == "haas")
+    for (FoundFx& F : estimate (I, y, roomWithoutCut, &only, {}, {}, echo, lvl, swp, mov, cho, more))
+        if (F.echo != nullptr || F.level != nullptr || F.sweep != nullptr || F.moving != nullptr || F.chorus != nullptr || F.sides != nullptr || F.name == "haas")
         {
             faders[F.name + ".amount"] = 0.0; if (what != nullptr) *what += (what->empty() ? "" : ",") + F.name;
             out.push_back (std::move (F));

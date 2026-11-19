@@ -364,6 +364,77 @@ inline Plot movingPlot (const FoundFx& F, const Params& p, double s, bool onSeco
     P.caption = c; return P;
 }
 
+// The sides engine's groups (HAAS WIDTH, STEREO WIDTH). The pair: how the one sound reaches each side as the Amount fader
+// has it: a bar per arrival, at its time and at its level against the plain sound (1 = the sound itself, under the line =
+// upside down); teal = left, orange = right. The copy: the short filter through which the middle is put at the sides,
+// drawn as what comes out of it for a single click.
+inline Plot sidesPlot (const FoundFx& F, double s, bool onSecond)
+{
+    using namespace disp;
+    Plot P; P.title = F.title; if (F.sides == nullptr || ! F.sides->found()) return P;
+    const sides::Found& f = *F.sides; const double amount = std::clamp (s, 0.0, 2.0); std::string c;
+    if (f.mode == sides::COPY)
+    {
+        const int KB = sides::KB; if ((int) f.h.size() != 2 * KB + 1) return P;
+        double top = 1e-9, all = 0; for (double v : f.h) { top = std::max (top, std::abs (v)); all += v * v; }
+        int half = 48; for (; half < KB; half += 24) { double in = 0; for (int i = KB - half; i <= KB + half; ++i) in += f.h[(size_t) i] * f.h[(size_t) i]; if (in >= 0.999 * all) break; }     // as wide as the filter has anything (1 ms at least)
+        half = std::min (half, KB); const double hi = 1.15 * top * std::max (1.0, amount);
+        P.x0 = -half / SR * 1e3; P.x1 = half / SR * 1e3; P.y0 = -hi; P.y1 = hi; P.xLabel = "ms"; P.yLabel = "level"; P.xTicks = ticks (P.x0, P.x1); P.yTicks = ticks (P.y0, P.y1);
+        Curve z; z.colour = 2; z.dim = true; z.pts = { { P.x0, 0.0 }, { P.x1, 0.0 } }; P.curves.push_back (z);
+        Curve cv; for (int i = KB - half; i <= KB + half; ++i) cv.pts.push_back ({ (i - KB) / SR * 1e3, amount * f.h[(size_t) i] }); P.curves.push_back (cv);
+        c = "The middle of the sound goes through this short filter (drawn: what a single click becomes) and is added on the left side and taken away on the right.";
+        if (amount >= 1e-3) c += " That puts the sides about " + num (std::abs (f.sideDb + 20 * std::log10 (amount)), 1) + " dB " + (f.sideDb + 20 * std::log10 (amount) <= 0 ? "under" : "over") + " the middle.";
+    }
+    else
+    {
+        const double lv = sides::levelOf (f.a, f.b); if (! (lv > 0)) return P;
+        sides::Taps a = f.a, b = f.b; for (auto& t : a) t.v /= lv; for (auto& t : b) t.v /= lv;
+        double da = 0, ga = 0, db = 0, gb = 0; const bool plain = sides::oneTap (a, da, ga) && sides::oneTap (b, db, gb) && ga > 0 && gb > 0;
+        auto arrivals = [&] (double q)                                  // every arrival of each side with Amount at q: ms, level
+        {
+            std::array<std::vector<std::pair<double, double>>, 2> out; const sides::At A = sides::pairAt (a, b, q, 1.0);
+            for (int ch = 0; ch < 2; ++ch)
+            {
+                if (A.warp) out[(size_t) ch].push_back ({ ((ch == 0 ? da : db) + A.move[ch]) / SR * 1e3, A.factor[ch] * (ch == 0 ? ga : gb) });
+                else for (const auto& t : A.taps[ch]) out[(size_t) ch].push_back ({ t.lag / SR * 1e3, t.v });
+            }
+            return out;
+        };
+        const auto now = arrivals (amount), was = arrivals (1.0); double last = 0, lo = 0, hi = 1;      // the axes hold the pair as found too
+        for (const auto* q : { &now, &was }) for (const auto& side : *q) for (const auto& [ms, v] : side) { last = std::max (last, ms); lo = std::min (lo, v); hi = std::max (hi, v); }
+        const double span = std::max (1.15 * last, 2.0);
+        P.x0 = -0.06 * span; P.x1 = span; P.y0 = lo < 0 ? 1.15 * lo : 0.0; P.y1 = 1.15 * hi; P.xLabel = "ms"; P.yLabel = "level"; P.xTicks = ticks (0, P.x1); P.yTicks = ticks (P.y0, P.y1);
+        const double w = 0.014 * (P.x1 - P.x0);
+        if (lo < 0) { Curve z; z.colour = 2; z.dim = true; z.pts = { { P.x0, 0.0 }, { P.x1, 0.0 } }; P.curves.push_back (z); }
+        for (int ch = 0; ch < 2; ++ch) for (const auto& [ms, v] : now[(size_t) ch]) if (std::abs (v) > 1e-4) P.bars.push_back ({ ms + (ch == 0 ? -0.55 : 0.55) * w, 0.0, v, w, ch });
+        if (plain && std::abs (db - da) >= 0.5)
+        {
+            const bool rightLate = db > da; const double ms = std::min (amount * std::abs (db - da), (double) sides::K) / SR * 1e3, dB = amount * 20 * std::log10 (rightLate ? gb / ga : ga / gb);
+            c = std::string (rightLate ? "The right" : "The left") + " side arrives " + num (ms, ms < 10 ? 2 : 1) + " ms after the " + (rightLate ? "left" : "right") + " one";
+            if (std::abs (dB) >= 0.5) c += ", " + num (std::abs (dB), 1) + " dB " + (dB < 0 ? "quieter" : "louder");
+            c += " (teal left, orange right).";
+        }
+        else
+        {
+            auto mainLag = [] (const sides::Taps& v) { int lag = 0; double m = -1; for (const auto& t : v) if (std::abs (t.v) > m) { m = std::abs (t.v); lag = t.lag; } return lag; };
+            int reach = 0; for (const auto* v : { &a, &b }) for (const auto& t : *v) reach = std::max (reach, t.lag);
+            const int la = mainLag (a), lb = mainLag (b);
+            if (f.kind == sides::HAAS) c = std::string ("The strongest part of the ") + (lb > la ? "right" : "left") + " side arrives " + num (std::abs (lb - la) / SR * 1e3, 1) + " ms after that of the " + (lb > la ? "left" : "right") + " one (teal left, orange right).";
+            else c = "One sound reaches both sides, with copies of itself up to " + num (reach / SR * 1e3, 1) + " ms later that differ between the sides (teal left, orange right).";
+            if (amount >= 1e-3 && std::abs (amount - 1.0) > 0.005) c += " Everything after the direct sound is at " + num (amount * 100, 0) + "% of the level found.";
+        }
+    }
+    const auto spans = sides::where (f); const double all = (double) f.n / SR; double in = 0; for (const auto& sp : spans) in += sp.second - sp.first;
+    if (! spans.empty() && in < 0.97 * all && all >= 1.0)               // where in the sound it is, when that is not all of it
+    {
+        const std::string where = onSecond ? "On the first sound it is there " : "It is there ", rest = onSecond ? "; it goes onto the whole of the second sound." : "; the rest of the sound is left alone.";
+        if (spans.size() == 1) c += " " + where + "from " + timeText (spans[0].first) + " to " + timeText (spans[0].second) + rest;
+        else c += " " + where + "on " + num (in, 0) + " of " + num (all, 0) + " s, in " + std::to_string (spans.size()) + " stretches" + rest;
+    }
+    if (amount < 1e-3) c = onSecond ? "Amount at zero: not put on the second sound." : "Amount at zero: the one sound behind both sides is left, in the middle.";
+    P.caption = c; return P;
+}
+
 // s: the effect's Amount fader (0..2); p: its settings with the settings faders applied. onSecond: the effect
 // goes onto a second sound (only the room's picture depends on it).
 inline Plot makePlot (const FoundFx& F, const Params& scaledP, double s, bool onSecond = false)
@@ -376,6 +447,7 @@ inline Plot makePlot (const FoundFx& F, const Params& scaledP, double s, bool on
     if (F.sweep != nullptr) return flangerPlot (F, scaledP, s, onSecond);
     if (F.moving != nullptr) return movingPlot (F, scaledP, s, onSecond);
     if (F.chorus != nullptr) return chorusPlot (F, scaledP, s, onSecond);
+    if (F.sides != nullptr) return sidesPlot (F, s, onSecond);
     const std::string& f = F.name; Plot P; P.title = F.title;
     bool fade = false; const Params e = mapAmount (f, scaledP, std::max (s, 0.0), fade); const double w = fade ? std::min (1.0, s) : 1.0;
     auto g = [&] (const char* k, double d) { return get (e, k, d); };
