@@ -192,12 +192,14 @@ def find(y):
     out.update(events=ev, share=float(cover), fades=bool(len(q) > 0 and np.mean(at0) >= 0.9), found=True)
     return out
 
-def scaled(events, s, n):
-    """The events with Amount at s: the stretch that the extra plays of each slice cover, times s (to whole plays), nothing beyond the sound's end."""
+def scaled(events, s, n, slice=1.0):
+    """The events with Amount at s: the stretch that the extra plays of each slice cover, times s (to whole plays),
+    nothing beyond the sound's end. Slice: the slice length times that (the stretch stays)."""
     out = []
     for s0, L, end in events:
         e = end if abs(s - 1.0) < 1e-12 else s0 + L * int(np.floor(1 + ((end - s0) / L - 1) * s + 0.5)); e = min(e, n)
-        if e > s0 + L and s0 + L <= n: out.append((s0, L, e))
+        L2 = L if abs(slice - 1.0) < 1e-12 else max(int(np.floor(L * slice + 0.5)), FADE)
+        if e > s0 + L2 and s0 + L2 <= n: out.append((s0, L2, e))
     return out
 def slice_of(z, s0, L, fades):
     sl = z[s0:s0 + L].copy()
@@ -210,20 +212,29 @@ def play(z, events, fades):
         if s0 < done or s0 + L > n: continue                             # an event that starts inside the one before (after a change of the fader): left out
         sl = slice_of(z, s0, L, fades); e = min(end, n); k = e - s0; o[s0:e] = np.tile(sl, (k // L + 1, 1))[:k]; done = e
     return o
-def onto(z, f, s=1.0):
+def onto(z, f, s=1.0, slice=1.0):
+    """The found events on another sound. Slice: the slices half to twice as long, over the same stretch."""
     if not f.get('found') or s < 1e-12: return z.copy()
-    return play(z, scaled(f['events'], s, len(z)), f['fades'])
-def own(y, f, s=1.0):
+    return play(z, scaled(f['events'], s, len(z), slice), f['fades'])
+def own(y, f, s=1.0, slice=1.0):
     """The found sound with Amount at s. Right of the middle: each slice is played more often (over what follows).
-    Left of it: fewer times, and since what the repeats covered is gone, the sound closes up and ends early."""
-    if not f.get('found') or abs(s - 1.0) < 1e-12: return y.copy()
-    n = len(y); ev = scaled(f['events'], s, n)
+    Left of it: fewer times, and since what the repeats covered is gone, the sound closes up and ends early.
+    Slice under 1: the first part of each slice is played instead of all of it (a longer slice than the found one is
+    not in the sound: what came after it is gone)."""
+    slice = min(slice, 1.0)
+    if not f.get('found') or (abs(s - 1.0) < 1e-12 and abs(slice - 1.0) < 1e-12): return y.copy()
+    n = len(y); ev = scaled(f['events'], s, n); now = ev                  # now: the events as they lie in the result
     if s > 1.0:
         o = y.copy(); was = {(a, b): c for a, b, c in f['events']}
         for s0, L, e in ev:
             e0 = was[(s0, L)]
             if e > e0: k = e - e0; o[e0:e] = np.tile(y[s0:s0 + L], (k // L + 2, 1))[(e0 - s0) % L:(e0 - s0) % L + k]
-        return o
-    keep = np.ones(n, bool); now = {(a, b): c for a, b, c in ev}
-    for s0, L, e0 in f['events']: keep[now.get((s0, L), s0 + L):e0] = False
-    o = np.zeros_like(y); k = int(keep.sum()); o[:k] = y[keep]; return o
+    elif abs(s - 1.0) >= 1e-12:
+        keep = np.ones(n, bool); to = {(a, b): c for a, b, c in ev}
+        for s0, L, e0 in f['events']: keep[to.get((s0, L), s0 + L):e0] = False
+        o = np.zeros_like(y); k = int(keep.sum()); o[:k] = y[keep]; at = np.concatenate([[0], np.cumsum(keep)])      # at[t]: where sample t went
+        now = [(int(at[s0]), L, int(at[s0]) + e - s0) for s0, L, e in ev]
+    else: o = y.copy()
+    if abs(slice - 1.0) >= 1e-12:
+        fine = [(s0, max(int(np.floor(L * slice + 0.5)), FADE), e) for s0, L, e in now]; o = play(o, [q for q, w in zip(fine, now) if q[1] < w[1]], f['fades'])
+    return o
