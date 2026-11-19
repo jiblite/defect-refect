@@ -809,8 +809,8 @@ private:
             }
             if (F != nullptr && F->sides != nullptr && F->sides->found() && F->sides->n > 0)      // a delay or a widening between the sides on a part of the first sound (onto a second sound it goes all the way: no line there)
             {
-                const auto spans = dr::sides::where (*F->sides); const double na = (double) F->sides->n / dr::SR; double in = 0; for (const auto& sp : spans) in += sp.second - sp.first;
-                if (in < 0.97 * na) for (const auto& sp : spans) ma.push_back ({ sp.first / na, sp.second / na });
+                const double na = (double) F->sides->n / dr::SR;
+                if (dr::sides::share (*F->sides) < 0.97) for (const auto& sp : dr::sides::where (*F->sides)) ma.push_back ({ sp.first / na, sp.second / na });
             }
             zoneA.setMarks (ma); zoneB.setMarks (mb);
         }

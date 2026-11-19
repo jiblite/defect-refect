@@ -425,7 +425,7 @@ inline Plot sidesPlot (const FoundFx& F, double s, bool onSecond)
         }
     }
     const auto spans = sides::where (f); const double all = (double) f.n / SR; double in = 0; for (const auto& sp : spans) in += sp.second - sp.first;
-    if (! spans.empty() && in < 0.97 * all && all >= 1.0)               // where in the sound it is, when that is not all of it
+    if (! spans.empty() && sides::share (f) < 0.97 && all >= 1.0)       // where in the sound it is, when a part of the sound (not of its silences) is without it
     {
         const std::string where = onSecond ? "On the first sound it is there " : "It is there ", rest = onSecond ? "; it goes onto the whole of the second sound." : "; the rest of the sound is left alone.";
         if (spans.size() == 1) c += " " + where + "from " + timeText (spans[0].first) + " to " + timeText (spans[0].second) + rest;

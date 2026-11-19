@@ -18,7 +18,7 @@ PIECES_MOST = 1800    # (A): pieces in the exact fit, at most (9 s; a longer sou
 KB = 240              # (B): taps of h at -5 .. +5 ms
 NF = 1 << 17          # transform size of the block work
 CB = NF // 2 - 2 * K  # samples per block of the correlations
-LONG = 60 * SR        # (A): a longer sound: the pair is looked for in the 60 s with the most energy, then checked on all of it
+LONG = 240 * SR       # (A): a longer sound: the pair is looked for in the 4 minutes with the most energy, then checked on all of it
 LEAST = K + WORD + 20 * BLK   # a sound under 180 ms: nothing is looked for
 
 # ---------------------------------------------------------------- small pieces
@@ -209,22 +209,34 @@ def the_one_sound(y, a, b, eps=1e-4):
     """The one sound behind both sides: X = (A* L + B* R) / (|A|^2 + |B|^2). With left = a * x, right = b * x it is x itself."""
     A = np.fft.rfft(a, NF); B = np.fft.rfft(b, NF); D = np.abs(A) ** 2 + np.abs(B) ** 2; W = 1.0 / (D + eps * float(D.max()))
     return filtered([y[:, 0], y[:, 1]], [np.conj(A) * W, np.conj(B) * W])
-def pieces(p, u, thr, close=50, least=4):
+def pieces(p, u, thr, close=50, least=4, strict=False):
     """Per piece of 5 ms: p its power, u what is unexplained of it. A piece obeys when u <= thr * p. Spans: runs of such
     pieces, holes of up to `close` pieces (quiet or not obeying) closed, runs under `least` pieces dropped.
+    strict: a run of obeying pieces that obeys far worse than the obeying pieces do as a whole (8 dB, and worse than
+    -20 dB) is not a part of a span: a few pieces of a sound without the effect obey a pair by chance (a low note in
+    the middle obeys many a delay), but only just.
     Returns the mask (bool per piece), the spans [(first piece, one past the last)], the share of the sound's power in obeying pieces,
     the unexplained share inside them."""
     live = p > 1e-7 * float(p.max()) if len(p) and p.max() > 0 else np.zeros(len(p), bool); ok = live & (u <= thr * p)
     covered = float(p[ok].sum() / max(float(p.sum()), 1e-30)); inside = float(u[ok].sum() / max(float(p[ok].sum()), 1e-30)) if ok.any() else 1.0
-    spans = []; i = 0; nb = len(ok)
+    spans = []; i = 0; nb = len(ok); sp = ok
+    if strict and ok.any():
+        sp = ok.copy(); lim = max(0.01, 10 ** 0.8 * inside); i = 0
+        while i < nb:
+            if not ok[i]: i += 1; continue
+            j = i
+            while j < nb and ok[j]: j += 1
+            if float(u[i:j].sum()) > lim * float(p[i:j].sum()): sp[i:j] = False
+            i = j
+        i = 0
     while i < nb:
-        if not ok[i]: i += 1; continue
+        if not sp[i]: i += 1; continue
         j = i
         while True:
-            while j < nb and ok[j]: j += 1
+            while j < nb and sp[j]: j += 1
             g = j
-            while g < nb and not ok[g] and g - j <= close: g += 1
-            if g < nb and ok[g] and g - j <= close: j = g
+            while g < nb and not sp[g] and g - j <= close: g += 1
+            if g < nb and sp[g] and g - j <= close: j = g
             else: break
         if j - i >= least: spans.append((i, j))
         i = j
@@ -236,7 +248,7 @@ def check_pair(y, a, b, thr=10 ** (-12 / 10)):
     pair close to that; a pair that is really there explains far more than the panned sound does."""
     x = the_one_sound(y, a, b); r = np.stack([y[:, 0] - sparse_conv(x, a), y[:, 1] - sparse_conv(x, b)], 1); nb = len(y) // BLK
     if nb == 0: return dict(x=x, rest=r, ok=np.zeros(0, bool), spans=[], covered=0.0, inside=1.0, beyond=0.0)
-    p = (y[:nb * BLK] ** 2).reshape(nb, BLK, 2).sum((1, 2)); u = (r[:nb * BLK] ** 2).reshape(nb, BLK, 2).sum((1, 2)); ok, spans, covered, inside = pieces(p, u, thr)
+    p = (y[:nb * BLK] ** 2).reshape(nb, BLK, 2).sum((1, 2)); u = (r[:nb * BLK] ** 2).reshape(nb, BLK, 2).sum((1, 2)); ok, spans, covered, inside = pieces(p, u, thr, strict=True)
     beyond = 0.0
     if ok.any():
         m = np.repeat(ok, BLK); L = y[:nb * BLK, 0][m]; R = y[:nb * BLK, 1][m]; ll = float(L @ L); rr = float(R @ R); lr = float(L @ R)
@@ -289,7 +301,7 @@ def find(y, rule=None):
     f = dict(kind=None, mode=None, n=len(y)); p = pair(y)
     if p is not None:
         sh = shape(p['a'], p['b']); ck = p['check']; f.update(pair=p, shape=sh, pair_check=ck)
-        if sh['taps'] <= R['taps'] and sh['reach'] >= R['reach'] and sh['made'] >= R['made'] and ck['covered'] >= R['covered'] and 10 * np.log10(max(ck['inside'], 1e-30)) <= R['inside'] and ck['beyond'] <= R['beyond']:
+        if sh['taps'] <= R['taps'] and sh['reach'] >= R['reach'] and sh['made'] >= R['made'] and ck['covered'] >= R['covered'] and 10 * np.log10(max(ck['inside'], 1e-30)) <= R['inside'] and ck['beyond'] <= R['beyond'] and ck['spans']:
             f.update(mode='pair', kind='haas' if sh['apart'] >= APART else 'width', spans=ck['spans']); return f
     g = side_copy(y)
     if g is not None:

@@ -25,7 +25,9 @@
 // levels come together, so that no comb is heard on the way. Anything else: a straight line between the plain sound and
 // the pair; to the right everything but each side's direct sound grows.
 // What cannot be read off a sound: a side that was simply made louder (nothing ties it to the middle).
-// A sound longer than 60 s: the pair is looked for in the 60 s with the most energy, then checked on all of it.
+// The effect may be on a part of the sound only (the fit leaves out what does not obey, up to half of the sound); the
+// Amount fader then works on that part and leaves the rest alone. A sound longer than 4 minutes: the pair is looked for
+// in the 4 minutes with the most energy, then checked on all of it.
 // A port of the Python prototype Research/sides/sides.py (Tools/sides_parity.py). 48 kHz; plain C++17, no JUCE.
 
 #include <algorithm>
@@ -53,7 +55,7 @@ constexpr int PIECES_MOST = 1800;                       // (A): pieces in the ex
 constexpr int KB = 240;                                 // (B): taps of h at -5 .. +5 ms
 constexpr int NF = 1 << 17;                             // transform size of the block work
 constexpr int CB = NF / 2 - 2 * K;                      // samples per block of the correlations
-constexpr long LONG = 60 * 48000;                       // (A): a longer sound: looked for in the 60 s with the most energy
+constexpr long LONG = 240 * 48000;                      // (A): a longer sound: looked for in the 4 minutes with the most energy
 constexpr long LEAST = K + WORD + 20 * BLK;             // a sound under 180 ms: nothing is looked for
 constexpr int APART = 60;                               // HAAS: the two sides' main taps at least 1.25 ms apart
 constexpr int HAAS = 1, WIDTH = 2;                      // Found::kind
@@ -461,24 +463,39 @@ inline bool theOneSound (Work& W, const Stereo& y, const Taps& a, const Taps& b,
 }
 // Per piece of 5 ms: p its power, u what is unexplained of it. A piece obeys when u <= thr * p. Spans: runs of such
 // pieces, holes of up to `close` pieces (quiet or not obeying) closed, runs under `least` pieces dropped.
+// strict: a run of obeying pieces that obeys far worse than the obeying pieces do as a whole (8 dB, and worse than
+// -20 dB) is not a part of a span: a few pieces of a sound without the effect obey a pair by chance (a low note in the
+// middle obeys many a delay), but only just.
 struct Pieces { std::vector<char> ok; Spans spans; double covered = 0.0, inside = 1.0; };
-inline Pieces pieces (const Vec& p, const Vec& u, double thr, int close = 50, int least = 4)
+inline Pieces pieces (const Vec& p, const Vec& u, double thr, bool strict = false, int close = 50, int least = 4)
 {
     const int nb = (int) p.size(); Pieces R; R.ok.assign ((size_t) nb, 0); double top = 0.0, all = 0.0, pin = 0.0, uin = 0.0; for (double v : p) { top = std::max (top, v); all += v; }
     bool some = false;
     for (int i = 0; i < nb; ++i) { const bool o = top > 0.0 && p[(size_t) i] > 1e-7 * top && u[(size_t) i] <= thr * p[(size_t) i]; R.ok[(size_t) i] = o ? 1 : 0; if (o) { pin += p[(size_t) i]; uin += u[(size_t) i]; some = true; } }
     R.covered = pin / std::max (all, 1e-30); R.inside = some ? uin / std::max (pin, 1e-30) : 1.0;
+    std::vector<char> sp = R.ok;
+    if (strict && some)
+    {
+        const double lim = std::max (0.01, std::pow (10.0, 0.8) * R.inside);
+        for (int i = 0; i < nb;)
+        {
+            if (! R.ok[(size_t) i]) { ++i; continue; }
+            int j = i; double pr = 0.0, ur = 0.0; while (j < nb && R.ok[(size_t) j]) { pr += p[(size_t) j]; ur += u[(size_t) j]; ++j; }
+            if (ur > lim * pr) for (int k = i; k < j; ++k) sp[(size_t) k] = 0;
+            i = j;
+        }
+    }
     int i = 0;
     while (i < nb)
     {
-        if (! R.ok[(size_t) i]) { ++i; continue; }
+        if (! sp[(size_t) i]) { ++i; continue; }
         int j = i;
         while (true)
         {
-            while (j < nb && R.ok[(size_t) j]) ++j;
+            while (j < nb && sp[(size_t) j]) ++j;
             int g = j;
-            while (g < nb && ! R.ok[(size_t) g] && g - j <= close) ++g;
-            if (g < nb && R.ok[(size_t) g] && g - j <= close) j = g; else break;
+            while (g < nb && ! sp[(size_t) g] && g - j <= close) ++g;
+            if (g < nb && sp[(size_t) g] && g - j <= close) j = g; else break;
         }
         if (j - i >= least) R.spans.push_back ({ i, j });
         i = j;
@@ -506,7 +523,7 @@ inline bool checkPair (Work& W, const Stereo& y, const Taps& a, const Taps& b, C
         }
         p[(size_t) q] = pp; u[(size_t) q] = uu;
     }
-    C.pc = pieces (p, u, thr); double ll = 0.0, rr = 0.0, lr = 0.0, uin = 0.0; bool some = false;
+    C.pc = pieces (p, u, thr, true); double ll = 0.0, rr = 0.0, lr = 0.0, uin = 0.0; bool some = false;
     for (int q = 0; q < nb; ++q)
     {
         if (! C.pc.ok[(size_t) q]) continue;
@@ -641,7 +658,7 @@ inline Found find (const Stereo& y, const Stop& stop = {}, const Rule& R = {})
     {
         const Shape sh = shape (P.a, P.b); F.hasPair = true; F.way = P.way; F.taps = sh.taps; F.apart = sh.apart; F.reach = sh.reach; F.made = sh.made; F.res = P.res; F.fits = P.fits;
         F.covered = P.check.pc.covered; F.inside = P.check.pc.inside; F.beyond = P.check.beyond; F.a = P.a; F.b = P.b;
-        if (sh.taps <= R.taps && sh.reach >= R.reach && sh.made >= R.made && F.covered >= R.covered && 10.0 * std::log10 (std::max (F.inside, 1e-30)) <= R.inside && F.beyond <= R.beyond)
+        if (sh.taps <= R.taps && sh.reach >= R.reach && sh.made >= R.made && F.covered >= R.covered && 10.0 * std::log10 (std::max (F.inside, 1e-30)) <= R.inside && F.beyond <= R.beyond && ! P.check.pc.spans.empty())
         {
             F.mode = PAIR; F.kind = sh.apart >= APART ? HAAS : WIDTH; F.spans = P.check.pc.spans; F.x.assign (P.check.x.begin(), P.check.x.end()); return F;
         }
@@ -660,6 +677,8 @@ inline Found find (const Stereo& y, const Stop& stop = {}, const Rule& R = {})
     }
     return F;
 }
+// How much of the sound has the effect: the share of its energy (silence between two notes is not a part without it).
+inline double share (const Found& F) { return F.mode == COPY ? F.copyCovered : F.mode == PAIR ? F.covered : 0.0; }
 // The stretches of the sound that have the effect, in seconds.
 inline std::vector<std::pair<double, double>> where (const Found& F)
 {
