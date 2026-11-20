@@ -650,9 +650,9 @@ the other effects, both described above):
 | every shown group far left: cases made worse than doing nothing  | 78 %     | 19 %    | 19 %    | 15 %   | 9 %    | 7 %   | 7 %   | 10 %  |
 | everything shown put onto a second sound: cases made worse       | 71 %     | 36 %    | 30 %    | 27 %   | 24 %   | 23 %  | 9 %   | 6 %   |
 
-(From 0.4.7 on the eight stutter cases are left out of the two far-left rows. Build 0.5.0 scores as 0.4.7 does. A stutter's far left closes the sound up,
-and the scoreboard compares with the dry sound at the same times; `Research/stutter/so1.py` scores it against the
-dry sound with the covered parts cut out.)
+(From 0.4.7 on the eight stutter cases are left out of the two far-left rows. Build 0.5.0 scores as 0.4.7 does. A
+stutter's far left closes the sound up, and the scoreboard compares with the dry sound at the same times;
+`Research/stutter/so1.py` scores it against the dry sound with the covered parts cut out.)
 
 What changed from 0.4.2 to 0.4.3 besides the scores of the four reworked groups: four flangers are found; a
 tremolo that 0.4.2 took for a gate is shown as a tremolo; another tremolo, which 0.4.2 showed and took out at 24
