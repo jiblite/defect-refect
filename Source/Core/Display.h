@@ -571,6 +571,73 @@ template <typename At> Curve timeCurve (size_t T, double step, double span, At&&
     }
     return c;
 }
+// The filter engine's group (FILTER): the filter's curve over the frequencies as the faders have it: moved along the
+// frequency axis by Cutoff, its peak scaled by Resonance, its depth by the Amount.
+inline Plot filterPlot (const FoundFx& F, const Params& p, double s, bool onSecond)
+{
+    using namespace disp;
+    Plot P; P.title = F.title; if (F.filter == nullptr || ! F.filter->found || F.filter->curve.size() != (size_t) reader::NBAND) return P;
+    const fixed::Found& f = *F.filter; const double amount = std::clamp (s, 0.0, 2.0);
+    fixed::Found q = f; q.curve = fixed::shaped (f, fixed::cutoffOctaves (get (p, "cutoff", 1.0)), get (p, "resonance", 1.0)); fixed::describe (q);     // the filter as Cutoff and Resonance have it
+    freqAxes (P, -60, 24);
+    Curve c; c.fill = true; auto at = [&] (int b) { return std::clamp (amount * q.curve[(size_t) b], P.y0 - 12.0, P.y1); };
+    c.pts.push_back ({ P.x0, at (0) }); for (int b = 0; b < reader::NBAND; ++b) c.pts.push_back ({ reader::bandHz (b), at (b) }); c.pts.push_back ({ P.x1, at (reader::NBAND - 1) });
+    P.curves.push_back (c);
+    auto fall = [] (double perOct) { return perOct > 51.0 ? std::string ("more than 48") : "about " + num (std::max (6.0, 6.0 * std::round (perOct / 6.0)), 0); };
+    std::string t; const double up = fixed::slopeOf (q, true), down = fixed::slopeOf (q, false);
+    if (q.kind == fixed::LOW) { t = "Low-pass at " + hz (q.cutHi); if (up > 0) t += ", falling " + fall (up) + " dB per octave"; }
+    else if (q.kind == fixed::HIGH) { t = "High-pass at " + hz (q.cutLo); if (down > 0) t += ", falling " + fall (down) + " dB per octave"; }
+    else if (q.kind == fixed::BAND) t = "Band-pass from " + hz (q.cutLo) + " to " + hz (q.cutHi);
+    else t = "A filter";
+    if (q.peakDb >= fixed::peakShown) t += ", with a peak of " + num (q.peakDb, 0) + " dB at " + hz (q.peakHz);
+    t += ". Drawn: its curve as read off the sound, band by band.";
+    bool hiss = false; if (f.lift.size() == f.curve.size()) for (size_t b = 0; b < f.curve.size(); ++b) hiss = hiss || (f.curve[b] < -3.0 && f.lift[b] < fixed::maxLift);
+    if (amount < 1e-3) t += onSecond ? " Amount at zero: not put on the second sound." : " Amount at zero: the filter is taken out, what it cut is lifted again by up to 40 dB.";
+    else if (std::abs (amount - 1.0) > 0.005) t += std::string (onSecond ? " On the second sound at " : " Here at ") + num (amount * 100, 0) + "% of its depth.";
+    if (! onSecond && amount < 1.0 - 0.005 && hiss) t += " Where what it cut holds only hiss, the lift stops at 12 dB.";
+    P.caption = t; return P;
+}
+
+// The bend engine's groups (DISTORTION, SATURATION): the curve the sound's values go through, as the Amount has it.
+// Across: a value before the bend, against the loudest the sound has there; up: what the curve makes of it, against
+// the loudest that comes out. The grey line from corner to corner is no bend at all. Each half of the wave (the values
+// above the middle line and those under it) has its own curve and is drawn as far as the sound reaches.
+inline Plot bendPlot (const FoundFx& F, double s, bool onSecond)
+{
+    using namespace disp;
+    Plot P; P.title = F.title; if (F.bend == nullptr || ! F.bend->found) return P;
+    const bend::Found& f = *F.bend; const double amount = std::clamp (s, 0.0, 2.0);
+    const bend::Curve cp (f.S[0], f.vp[0]), cn (f.S[1], f.vp[1]); const double top = std::max (cp.top, cn.top), g = bend::drive (amount, top);
+    P.x0 = -1.1; P.x1 = 1.1; P.y0 = -1.15; P.y1 = 1.15; P.xLabel = "in"; P.yLabel = "out"; P.xTicks = { -1.0, -0.5, 0.0, 0.5, 1.0 }; P.yTicks = { -1.0, -0.5, 0.0, 0.5, 1.0 };
+    Curve line; line.colour = 2; line.dim = true; line.pts = { { -1.0, -1.0 }, { 1.0, 1.0 } }; P.curves.push_back (line);
+    Curve c;
+    if (g > 1e-9)
+    {
+        const double xa = g * cp.xp, xb = g * cn.xp, X = std::max (xa, xb), Y = std::max ({ cp.fwd (xa), cn.fwd (xb), 1e-30 });
+        c.pts.push_back ({ -xb / X, -cn.fwd (xb) / Y });
+        for (int i = -400; i <= 400; ++i)
+        {
+            const double t = (double) i / 400.0, a = t * std::abs (t), x = a * X;       // closer together near the middle, where a hard bend does all its work
+            if (x <= -xb || x >= xa) continue;
+            c.pts.push_back ({ a, (x >= 0.0 ? cp.fwd (x) : -cn.fwd (-x)) / Y });
+        }
+        c.pts.push_back ({ xa / X, cp.fwd (xa) / Y });
+    }
+    else c.pts = { { -1.0, -1.0 }, { 1.0, 1.0 } };
+    P.curves.push_back (c);
+    // in words: how far the loudest values were squeezed, and from which level on the curve bends
+    const int h = cp.top >= cn.top ? 0 : 1; double r[bend::NG]; bend::tidy (f.S[h], bend::spreadMost, r);
+    double from = bend::GRID[0]; const bool allOfIt = r[0] >= 1.0;
+    for (int i = 1; i < bend::NG && ! allOfIt; ++i) if (r[i] >= 1.0) { from = bend::GRID[i - 1] + (1.0 - r[i - 1]) / std::max (r[i] - r[i - 1], 1e-9) * (bend::GRID[i] - bend::GRID[i - 1]); break; }
+    std::string t = "The loudest values were squeezed by " + num (top, 0) + " dB";
+    if (std::abs (cp.top - cn.top) >= 1.5) t += " (those above the middle line by " + num (cp.top, 0) + ", those under it by " + num (cn.top, 0) + ")";
+    t += allOfIt ? "; the curve bends even the quiet values." : "; the curve starts to bend " + num (-from, 0) + " dB under them.";
+    t += " Drawn: what goes in against what comes out (grey: no bend).";
+    if (amount < 1e-3) t += onSecond ? " Amount at zero: not put on the second sound." : " Amount at zero: the bend is walked back as far as the sound still shows how.";
+    else if (! onSecond && amount < 1.0 - 0.005 && f.hard()) t += " Tops that were pressed flat stay flat.";
+    P.caption = t; return P;
+}
+
 inline double reach (const Curve& c, double m = 0) { for (auto& q : c.pts) m = std::max (m, std::abs (q.second)); return m; }
 inline std::string percent (double share) { return num (100.0 * share, 0) + " %"; }
 } // namespace disp
@@ -711,6 +778,8 @@ inline Plot makePlot (const FoundFx& F, const Params& scaledP, double s, bool on
     if (F.ring != nullptr) return ringPlot (F, scaledP, s, onSecond);
     if (F.crush != nullptr) return crushPlot (F, scaledP, s, onSecond);
     if (F.stutter != nullptr) return stutterPlot (F, scaledP, s, onSecond);
+    if (F.filter != nullptr) return filterPlot (F, scaledP, s, onSecond);
+    if (F.bend != nullptr) return bendPlot (F, s, onSecond);
     const std::string& f = F.name; Plot P; P.title = F.title;
     bool fade = false; const Params e = mapAmount (f, scaledP, std::max (s, 0.0), fade); const double w = fade ? std::min (1.0, s) : 1.0;
     auto g = [&] (const char* k, double d) { return get (e, k, d); };

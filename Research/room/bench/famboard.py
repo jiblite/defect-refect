@@ -8,6 +8,8 @@
 #   out_all    one sound: every shown group at Amount far left
 #   onto       two sounds: only the family's group put on dry B                          (100 = B through the real effect, 0 = dry B)
 #   onto_all   two sounds: everything the app shows put on dry B (what a user gets by default)
+# DISTORTION and SATURATION are one engine's two names for a curve (Bend.h: by how far the loudest values were squeezed), so
+# on the cases of these two families either group counts as the family's own.
 # A STUTTER group at far left closes the sound up (what the repeats covered is gone), and these scores compare at the same
 # times: where that group is shown, out and out_all are not scored (null; the measured numbers are kept as out_measured and
 # out_all_measured). Research/stutter/so1.py scores the far left against the dry sound with the covered parts cut out.
@@ -37,6 +39,7 @@ EXE, RES = sys.argv[1], sys.argv[2]; want = sys.argv[3:]; OUT = os.environ.get('
 done = {json.loads(l)['name'] for l in open(OUT)} if os.path.exists(OUT) else set()
 tmp = tempfile.mkdtemp()
 ALL = 'flanger chorus phaser haas width delay reverb distortion bitcrush filtersweep tremolo autopan saturation exciter ringmod filter stutter gatedrhythm comb'.split()
+SAME = {'distortion': ('distortion', 'saturation'), 'saturation': ('distortion', 'saturation')}
 def run(first, blocks):
     """One analysis of the first sound, several renders (blocks: (second or '-', out, [fader=value ...])). Returns the groups the app shows."""
     args = []
@@ -57,9 +60,10 @@ for fam in sorted(os.listdir(SETS)):
         d = os.path.join(SETS, fam, name) + '/'; cA = truth.load(d, 'A'); cB = truth.load(d, 'B')
         pa, pb = os.path.join(tmp, 'a.wav'), os.path.join(tmp, 'b.wav'); po = [os.path.join(tmp, 'o%d.wav' % i) for i in range(4)]
         sf.write(pa, cA['wet'], SR, subtype='FLOAT'); sf.write(pb, cB['dry'], SR, subtype='FLOAT')
-        g = run(pa, [('-', po[0], [fam + '.amount=0']), ('-', po[1], [k + '.amount=0' for k in ALL]), (pb, po[2], []), (pb, po[3], [k + '.amount=0' for k in ALL if k != fam])])
-        found = fam in g; others = sorted(k for k in g if k != fam); nA, nB = len(cA['wet']), len(cB['dry'])
-        row = dict(fam=fam, name=name, effect=cA['meta']['effect'], found=found, p=g.get(fam), others=others, shown=g)
+        own = SAME.get(fam, (fam,))
+        g = run(pa, [('-', po[0], [k + '.amount=0' for k in own]), ('-', po[1], [k + '.amount=0' for k in ALL]), (pb, po[2], []), (pb, po[3], [k + '.amount=0' for k in ALL if k not in own])])
+        found = any(k in g for k in own); others = sorted(k for k in g if k not in own); nA, nB = len(cA['wet']), len(cB['dry']); p_own = max([g[k] for k in own if k in g], default=None)
+        row = dict(fam=fam, name=name, effect=cA['meta']['effect'], found=found, p=p_own, others=others, shown=g)
         row['out'] = score.removed(cA['dry'], cA['wet'], rd(po[0], nA))[0] if found else 0.0
         row['out_all'] = score.removed(cA['dry'], cA['wet'], rd(po[1], nA))[0] if g else 0.0
         row['onto_all'] = score.removed(cB['wet'], cB['dry'], rd(po[2], nB))[0] if g else 0.0
@@ -69,5 +73,5 @@ for fam in sorted(os.listdir(SETS)):
             if fam == 'stutter': row['out_measured'] = row['out']; row['out'] = None
         open(OUT, 'a').write(json.dumps(row) + '\n')
         num = lambda v: '   n/a' if v is None else '%6.1f' % v
-        print('%-12s %-26s found %d (p %s) out %s out_all %s onto %6.1f onto_all %6.1f others %s' % (fam, name, found, '%.2f' % g[fam] if found else '-', num(row['out']), num(row['out_all']), row['onto'], row['onto_all'], ' '.join(others)), flush=True)
+        print('%-12s %-26s found %d (p %s) out %s out_all %s onto %6.1f onto_all %6.1f others %s' % (fam, name, found, '%.2f' % p_own if found else '-', num(row['out']), num(row['out_all']), row['onto'], row['onto_all'], ' '.join(others)), flush=True)
 show(OUT)

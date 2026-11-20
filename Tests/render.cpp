@@ -13,6 +13,10 @@
 //   The crush engine always runs: a grid of values or a hold is the BITCRUSH group (faders: bitcrush.amount, bitcrush.bits, bitcrush.down).
 //   The stutter engine always runs: slices played again are the STUTTER group (faders: stutter.amount, stutter.slice).
 //   A sound that is not at 48 kHz is brought there for everything else, and those two engines read it at its own rate (as in the app).
+//   The filter engine runs when ResourcesDir holds filter.bin (as in the app): a fixed filter's curve is the FILTER group
+//   (faders: filter.amount, filter.cutoff, filter.resonance).
+//   The bend engine runs when ResourcesDir holds bend.bin (as in the app): a curve the values were pushed through is the DISTORTION
+//   or the SATURATION group (fader: distortion.amount or saturation.amount). It too reads a file at its own rate.
 //   The moving-tone engine runs when ResourcesDir holds moving.bin (as in the app): a found moving filter is the PHASER or FILTER SWEEP
 //   group (faders: <group>.amount, <group>.speed).
 //   The verifier's models are read from ResourcesDir/verify.bin (Source/Core/Verify.h): the scores are its scores, as in the app.
@@ -157,6 +161,30 @@ int main (int argc, char** argv)
         if (st->found) { std::cout << " events=" << st->events.size() << " slice_ms=" << st->slice() * 1e3 << " plays=" << st->plays() << " fades=" << (st->fades ? 1 : 0) << " share=" << st->share << " at_s="; for (size_t i = 0; i < st->events.size() && i < 12; ++i) std::cout << (i ? "," : "") << (double) st->events[i].s0 / 48000.0 << ".." << (double) st->events[i].end / 48000.0; std::cout << " each_ms="; for (size_t i = 0; i < st->events.size() && i < 12; ++i) std::cout << (i ? "," : "") << (double) st->events[i].L / 48.0; }
         std::cout << "\n";
     }
+    {
+        std::ifstream fb (dir + "/filter.bin", std::ios::binary);
+        if (fb)
+        {
+            const std::vector<char> b ((std::istreambuf_iterator<char> (fb)), {}); dr::reader::Reader rd; rd.load (b.data(), b.size());
+            const auto fl = std::make_shared<const dr::fixed::Found> (dr::fixed::find (src, rd)); dr::mergeFixed (I, *fl, mf.get()); more.filter = fl;
+            std::cout << "filter: found=" << (fl->found ? 1 : 0);
+            if (fl->looked) std::cout << " frames=" << fl->frames << " logit=" << fl->logit << " sure=" << fl->sure << " depth_db=" << fl->depth;
+            if (fl->kind != dr::fixed::NONE) std::cout << " kind=" << (fl->kind == dr::fixed::LOW ? "low" : fl->kind == dr::fixed::HIGH ? "high" : "band") << " lo_hz=" << fl->cutLo << " hi_hz=" << fl->cutHi << " peak_db=" << fl->peakDb << " peak_hz=" << fl->peakHz << " fall_up=" << dr::fixed::slopeOf (*fl, true) << " fall_down=" << dr::fixed::slopeOf (*fl, false);
+            std::cout << "\n";
+        }
+    }
+    {
+        std::ifstream fb (dir + "/bend.bin", std::ios::binary);
+        if (fb)
+        {
+            const std::vector<char> b ((std::istreambuf_iterator<char> (fb)), {}); dr::bend::Meter mt; mt.load (b.data(), b.size());
+            const auto bd = std::make_shared<const dr::bend::Found> (other ? dr::bend::findAt (raw, sr, src.size(), mt) : dr::bend::find (src, mt)); dr::mergeBend (I, *bd); more.bend = bd;
+            std::cout << "bend: found=" << (bd->found ? dr::bendName (*bd) : "0");
+            if (bd->looked) { std::cout << " logit=" << bd->logit << " sure=" << bd->sure << " top_db=" << bd->top << " upper="; for (int i = 0; i < dr::bend::NG; ++i) std::cout << (i ? "," : "") << bd->S[0][i]; std::cout << " lower="; for (int i = 0; i < dr::bend::NG; ++i) std::cout << (i ? "," : "") << bd->S[1][i]; }
+            std::cout << "\n";
+        }
+    }
+    dr::dropExciter (I);        // EXCITER is not shown (Estimate.h)
     {       // an echo on a sound that is multiplied by a tone: is it still there with the tone taken out?
         const double s = dr::recheckEchoWithout (I, ef, more);
         if (s >= 0) std::cout << "echo without the tone: sureness=" << s << " counts=" << I.prob.at ("delay") << "\n";

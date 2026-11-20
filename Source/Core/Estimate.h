@@ -2,7 +2,8 @@
 // Reading each found effect's settings from the source sound (port of estimate.py, revest.py), the controls
 // that take an effect back out of the source (uneffect.py, "do its best"), and the fader layout: per effect an
 // Amount fader plus its most useful settings. Reverb, comb filter, tone match and delay are the work of their
-// own engines (RoomEngine.h, Tone.h, Echo.h); their groups are built here.
+// own engines (RoomEngine.h, Tone.h, Echo.h); their groups are built here, and so are those of the engines that came
+// after them (one header each, from Level.h to Bend.h).
 
 #include "Echo.h"
 #include "Level.h"
@@ -14,6 +15,8 @@
 #include "Crush.h"
 #include "Stutter.h"
 #include "Movement.h"
+#include "Filter.h"
+#include "Bend.h"
 #include "Effects.h"
 #include "Hand.h"
 #include "Inspector.h"
@@ -327,6 +330,8 @@ struct FoundFx
     std::shared_ptr<const ring::Found> ring;        // the tone the ring engine found the sound multiplied by (RING MOD): its faders work that engine (see ringFx)
     std::shared_ptr<const crush::Found> crush;      // the grid of values and the hold the crush engine found (BITCRUSH): its faders work that engine (see crushFx)
     std::shared_ptr<const stutter::Found> stutter;  // the slices the stutter engine found played again (STUTTER): its faders work that engine (see stutterFx)
+    std::shared_ptr<const fixed::Found> filter;     // the curve the filter engine found (FILTER): its faders work that engine (see filterFx)
+    std::shared_ptr<const bend::Found> bend;        // the curve the bend engine found the sound's values pushed through (DISTORTION, SATURATION): its fader works that engine (see bendFx)
     std::shared_ptr<const move::Found> moveOwn, moveOther;   // the MOVEMENT group: what moves in the sound worked on, and in the other sound (two sounds); see movementFx
     Vec curveL, curveR;                        // TONE MATCH, for the picture and Export IR: the curves of the last render (left, right; Amount in the middle)
     Vec foundL, foundR;                        // the same with Detail in the middle too
@@ -928,13 +933,81 @@ inline double stutterSlice (const Params& p) { return std::pow (2.0, std::clamp 
 // The stutter engine's verdict goes into the inspection and the detector's own guess about a stutter goes out.
 inline void mergeStutter (Inspection& I, const stutter::Found& f) { I.prob["stutter"] = f.found ? stutterSure : level::sureNone; }
 
-// What the engines added in build 0.4.7 found on the sound (each may be missing: then the detectors' verdict and the old handling stay).
+// ---------------------------------------------------------------- the filter engine's group (Filter.h)
+// FILTER: the curve of a fixed low-pass, high-pass or band-pass, as the filter engine read it off the sound. Amount: on
+// the sound itself 0 = the filter out (what it cut lifted again, as far as the engine's caps allow), 1 = untouched,
+// 2 = the filter twice; on a second sound 0 = none, 1 = the same curve, 2 = the curve twice. Cutoff: the whole curve
+// two octaves down to two up. Resonance: the peak at the corner from none to twice as high; shown when there is one.
+// On the sound itself moved faders mean the found curve out and the one the faders give in, as one filter.
+inline const char* filterTitle (const fixed::Found& f) { return f.kind == fixed::LOW ? "LOW-PASS FILTER" : f.kind == fixed::HIGH ? "HIGH-PASS FILTER" : f.kind == fixed::BAND ? "BAND-PASS FILTER" : "FILTER"; }
+inline FoundFx filterFx (std::shared_ptr<const fixed::Found> found, double prob)
+{
+    FoundFx F; F.name = "filter"; F.title = filterTitle (*found); F.prob = prob; F.est = { { "cutoff", 1.0 }, { "resonance", 1.0 } };
+    const bool peak = found->peakDb >= fixed::peakShown; F.filter = std::move (found);
+    Knob a; a.id = "filter.amount"; a.label = "Amount"; a.neutral = 0; a.lo = 0; a.hi = 2; a.ownTip = true;
+    a.tip = "Middle = as found. Left = take the filter out, far left = the sound before it: what the filter cut is lifted again, by up to 40 dB. What it cut deeper than that stays down, and so does hiss that came after the filter. Right = more of it, up to the filter twice.";
+    a.tip2 = "How much of the found filter goes onto the second sound. Middle = the same curve as on the first sound. Left = not applied. Right = the curve twice.";
+    Knob c; c.key = "cutoff"; c.id = "filter.cutoff"; c.label = "Cutoff"; c.neutral = 0; c.lo = 0; c.hi = 2; c.ownTip = true;
+    c.tip = "Where the filter sits. Middle = as found. Left = lower, down to two octaves. Right = higher, up to two octaves. Away from the middle the found filter comes out and the moved one goes in.";
+    c.tip2 = "Where the filter sits on the second sound. Middle = as found. Left = lower, down to two octaves. Right = higher, up to two octaves.";
+    F.knobs = { a, c };
+    if (peak)
+    {
+        Knob r; r.key = "resonance"; r.id = "filter.resonance"; r.label = "Resonance"; r.neutral = 0; r.lo = 0; r.hi = 2; r.ownTip = true;
+        r.tip = "The peak at the filter's corner. Middle = as found. Left = lower, far left = none. Right = higher, up to twice as high.";
+        F.knobs.push_back (r);
+    }
+    return F;
+}
+// The filter engine's verdict goes into the inspection and the detector's own guess about a filter goes out. A filter
+// that moves is the moving-tone engine's: where that one found a FILTER SWEEP, its curve's resting place is not shown
+// as a fixed filter beside it.
+inline void mergeFixed (Inspection& I, const fixed::Found& f, const moving::Found* mov = nullptr)
+{
+    const bool sweeps = mov != nullptr && mov->found && mov->kind == "filtersweep";
+    I.prob["filter"] = f.found && ! sweeps ? f.sure : level::sureNone;
+}
+
+// ---------------------------------------------------------------- the bend engine's group (Bend.h)
+// DISTORTION, SATURATION: the curve the sound's values were pushed through, as the bend engine read it off the sound:
+// DISTORTION where the loudest values were squeezed by 10 dB or more, SATURATION under that. One fader, the Amount, as
+// a drive: on the sound itself 0 = the bend walked back (the squeezed levels spread out again, as far as the engine's
+// cap allows), 1 = untouched (bit for bit), 2 = pushed as far again into the same curve; on a second sound 0 = none,
+// 1 = its loudest values pushed as far into the curve as the first sound's were, 2 = as far again.
+inline const char* bendName (const bend::Found& f) { return f.hard() ? "distortion" : "saturation"; }
+inline FoundFx bendFx (std::shared_ptr<const bend::Found> found, double prob)
+{
+    const bool hard = found->hard(); FoundFx F; F.name = bendName (*found); F.title = titleFor (F.name); F.prob = prob; F.bend = std::move (found);
+    Knob a; a.id = F.name + ".amount"; a.label = "Amount"; a.neutral = 0; a.lo = 0; a.hi = 2; a.ownTip = true;
+    a.tip = hard ? "Middle = as found. Left = the bend walked back: the squeezed levels are spread out again. Tops that were pressed flat stay flat: nothing in the sound says how high each of them stood. Right = pushed further into the same curve, up to as far again."
+                 : "Middle = as found. Left = take it out, far left = the sound before it: the squeezed levels are spread out again. Right = pushed further into the same curve, up to as far again.";
+    a.tip2 = "How far the second sound is pushed into the found curve. Middle = its loudest values as far as the first sound's were. Left = less far, far left = not at all. Right = further, up to as far again.";
+    F.knobs = { a }; return F;
+}
+// The bend engine's verdict goes into the inspection and the detectors' own guesses about distortion and saturation go out.
+inline void mergeBend (Inspection& I, const bend::Found& f)
+{
+    I.prob["distortion"] = f.found && f.hard() ? f.sure : level::sureNone;
+    I.prob["saturation"] = f.found && ! f.hard() ? f.sure : level::sureNone;
+}
+
+// EXCITER is not shown. What an exciter adds are highs, and highs it made are not told from highs the sound has by
+// itself or from an equaliser's lift: of 40 sounds through three outside exciters a reader taught for exactly this
+// (Research/exciter) found 8, all of them heavy-handed ones, and it also found 2 of the same 40 sounds before the
+// exciter and some clean sounds. The detectors' own guess did no better (one true find in eight, and false ones on
+// filtered sounds), so it goes out. With two sounds, TONE MATCH carries the first sound's highs over, an exciter's
+// among them.
+inline void dropExciter (Inspection& I) { I.prob["exciter"] = level::sureNone; }
+
+// What the engines added in builds 0.4.7 and 0.5.1 found on the sound (each may be missing: then the detectors' verdict and the old handling stay).
 struct More
 {
     std::shared_ptr<const sides::Found> sides;
     std::shared_ptr<const ring::Found> ring;
     std::shared_ptr<const crush::Found> crush;
     std::shared_ptr<const stutter::Found> stutter;
+    std::shared_ptr<const fixed::Found> filter;
+    std::shared_ptr<const bend::Found> bend;
 };
 
 // Settings of each found effect (estimate.estimate, without the slower sweep fit for now).
@@ -967,7 +1040,8 @@ inline void pruneFound (std::vector<FoundFx>& out)
 // cho: what the chorus engine found on the sound; voices found are the CHORUS group (chorusFx).
 // more: what the engines of build 0.4.7 found: a delay or a widening between the sides is the HAAS WIDTH or STEREO WIDTH group (sidesFx),
 // a tone the sound was multiplied by is the RING MOD group (ringFx), a grid of values or a hold is the BITCRUSH group (crushFx),
-// slices played again are the STUTTER group (stutterFx).
+// slices played again are the STUTTER group (stutterFx); and those of build 0.5.1: a fixed filter's curve is the FILTER group (filterFx),
+// a curve the values were pushed through is the DISTORTION or the SATURATION group (bendFx).
 inline std::vector<FoundFx> estimate (const Inspection& I, const Stereo& y, double cut = 0.65, const std::set<std::string>* only = nullptr,
                                       const std::shared_ptr<const room::Found>& room = {}, const std::shared_ptr<const tone::Found>& tone = {},
                                       const std::shared_ptr<const echo::Found>& echo = {}, const std::shared_ptr<const level::Movement>& lvl = {},
@@ -994,6 +1068,8 @@ inline std::vector<FoundFx> estimate (const Inspection& I, const Stereo& y, doub
         if (more.ring != nullptr && f == "ringmod") { if (more.ring->found) out.push_back (ringFx (more.ring, pit->second)); continue; }
         if (more.crush != nullptr && f == "bitcrush") { if (more.crush->found) out.push_back (crushFx (more.crush, pit->second)); continue; }
         if (more.stutter != nullptr && f == "stutter") { if (more.stutter->found) out.push_back (stutterFx (more.stutter, pit->second)); continue; }
+        if (more.filter != nullptr && f == "filter") { if (more.filter->found) out.push_back (filterFx (more.filter, pit->second)); continue; }
+        if (more.bend != nullptr && (f == "distortion" || f == "saturation")) { if (more.bend->found && f == bendName (*more.bend)) out.push_back (bendFx (more.bend, pit->second)); continue; }
         FoundFx F; F.name = f; F.title = titleFor (f); F.prob = pit->second; F.knobs = knobsFor (f); Params& e = F.est;
         if (f == "haas") e["lag"] = (double) hand::gccPhat (y, 30.0).lag;
         else if (f == "width") e["amount"] = std::clamp (S (f, "amount", 0.5), 0.05, 1.2);
@@ -1217,6 +1293,18 @@ inline Stereo applyTo (const Stereo& target, const std::vector<FoundFx>& found, 
             if (s > 1e-9) y = ring::onto (y, *F.ring, std::min (s, 2.0), ringCarrier (scaled (F, faders)));
             continue;
         }
+        if (F.bend != nullptr)      // this sound pushed through the found curve
+        {
+            const double s = amountOf (F, faders);
+            if (s > 1e-9) y = bend::onto (y, *F.bend, std::min (s, 2.0), cancelled);
+            continue;
+        }
+        if (F.filter != nullptr)    // this sound through the found filter
+        {
+            const double s = amountOf (F, faders); const Params p = scaled (F, faders);
+            if (s > 1e-9) y = fixed::onto (y, *F.filter, std::min (s, 2.0), fixed::cutoffOctaves (get (p, "cutoff", 1.0)), get (p, "resonance", 1.0), cancelled);
+            continue;
+        }
         y = applyAmount (F.name, y, scaled (F, faders), amountOf (F, faders));
     }
     for (auto& F : found)       // this sound through the found crusher
@@ -1251,7 +1339,7 @@ inline Stereo applyTo (const Stereo& target, const std::vector<FoundFx>& found, 
 
 // One sound: take the found effects out (left), leave as is (middle) or double (right).
 inline bool canRemove (const std::string& f) { return f != "reverb" && f != "distortion" && f != "bitcrush" && ! isNewFx (f); }
-inline bool canRemove (const FoundFx& F) { return F.room != nullptr || F.tone != nullptr || F.echo != nullptr || F.level != nullptr || F.sweep != nullptr || F.moving != nullptr || F.chorus != nullptr || F.sides != nullptr || F.ring != nullptr || (F.crush != nullptr && F.crush->soft) || canRemove (F.name); }      // the room engine takes its reverb out, the tone engine its reflections, the echo engine its echoes, the level engine its movement, the flanger engine its moving copy, the moving-tone engine its curve, the chorus engine its voices, the sides engine its delay or widening, the ring engine its tone, the crush engine a crusher that mixed plain sound in
+inline bool canRemove (const FoundFx& F) { return F.room != nullptr || F.tone != nullptr || F.echo != nullptr || F.level != nullptr || F.sweep != nullptr || F.moving != nullptr || F.chorus != nullptr || F.sides != nullptr || F.ring != nullptr || (F.crush != nullptr && F.crush->soft) || F.filter != nullptr || F.bend != nullptr || canRemove (F.name); }      // the room engine takes its reverb out, the tone engine its reflections, the echo engine its echoes, the level engine its movement, the flanger engine its moving copy, the moving-tone engine its curve, the chorus engine its voices, the sides engine its delay or widening, the ring engine its tone, the crush engine a crusher that mixed plain sound in, the filter engine its curve, the bend engine its bend (as far as the sound still says how)
 // The found effect turned down to s (0 = out as far as this effect allows, 1 = untouched).
 inline Stereo takeOut (const FoundFx& F, const Stereo& in, double s)
 {
@@ -1271,9 +1359,10 @@ inline Stereo takeOut (const FoundFx& F, const Stereo& in, double s)
     return y;
 }
 // The found crusher is worked first: it was the last thing the sound went through, and its engine's answer belongs to
-// the sound as it was found. The found stutter is worked last: with fewer plays the sound closes up, and the other
-// engines' answers belong to the sound's own times. limited: the result is held under full scale (not wanted where it
-// is only measured).
+// the sound as it was found. The found bend comes right after it for the same reason: its curve is told by the height
+// of each value in the sound as found, and a bend that the wave still shows had little after it. The found stutter is
+// worked last: with fewer plays the sound closes up, and the other engines' answers belong to the sound's own times.
+// limited: the result is held under full scale (not wanted where it is only measured).
 inline Stereo reshape (const Stereo& src, const std::vector<FoundFx>& found, const std::map<std::string, double>& faders, const std::function<bool()>& cancelled = {}, bool limited = true)
 {
     Stereo y = src;
@@ -1284,11 +1373,17 @@ inline Stereo reshape (const Stereo& src, const std::vector<FoundFx>& found, con
         const Params p = scaled (F, faders);
         if (F.crush->n == y.size()) y = crush::own (y, *F.crush, std::clamp (amountOf (F, faders), 0.0, 2.0), crushSteps (F, p), crushHold (p));
     }
+    for (const FoundFx& F : found)
+    {
+        if (F.bend == nullptr || (cancelled && cancelled())) continue;
+        // the bend walked back, or the sound pushed further into the found curve; the bend engine's answer belongs to this very sound (same length)
+        if (F.bend->n == y.size()) y = bend::own (y, *F.bend, std::clamp (amountOf (F, faders), 0.0, 2.0), cancelled);
+    }
     for (auto it = found.rbegin(); it != found.rend(); ++it)      // undo in reverse chain order
     {
         if (cancelled && cancelled()) break;
         const FoundFx& F = *it; const double s = amountOf (F, faders); const bool moved = settingsMoved (F, faders);
-        if (F.crush != nullptr || F.stutter != nullptr || F.name == "movement") continue;
+        if (F.crush != nullptr || F.bend != nullptr || F.stutter != nullptr || F.name == "movement") continue;
         if (! moved && std::abs (s - 1.0) < 1e-9) continue;
         if (F.room != nullptr)
         {
@@ -1344,6 +1439,11 @@ inline Stereo reshape (const Stereo& src, const std::vector<FoundFx>& found, con
         {
             // the sound without the found gain, times the difference between the gain the faders give and the found one, added; the ring engine's answer belongs to this very sound (same length)
             if (F.ring->n == y.size()) y = ring::own (y, *F.ring, std::clamp (s, 0.0, 2.0), ringCarrier (scaled (F, faders)));
+        }
+        else if (F.filter != nullptr)
+        {
+            // the found curve out and the one the faders give in, as one filter; the filter engine's answer belongs to this very sound (same length)
+            if (F.filter->n == y.size()) { const Params p = scaled (F, faders); y = fixed::own (y, *F.filter, std::clamp (s, 0.0, 2.0), fixed::cutoffOctaves (get (p, "cutoff", 1.0)), get (p, "resonance", 1.0), cancelled); }
         }
         else if (F.name == "tonematch") {}      // two sounds only
         else if (canRemove (F.name))

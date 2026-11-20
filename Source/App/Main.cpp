@@ -609,7 +609,13 @@ public:
                              auto mn = std::make_shared<dr::moving::Net>();
                              try { mn->load (BinaryData::moving_bin, (size_t) BinaryData::moving_binSize); }
                              catch (const std::exception&) { mn.reset(); }      // no usable model: phaser and filter sweep are handled the old way
-                             movingNet = mn; roomNet = rn; roomNet2 = rn2; models27 = m27; models = m; },
+                             auto fr = std::make_shared<dr::reader::Reader>();
+                             try { fr->load (BinaryData::filter_bin, (size_t) BinaryData::filter_binSize); }
+                             catch (const std::exception&) { fr.reset(); }      // no usable reader: a fixed filter is handled the old way
+                             auto bm = std::make_shared<dr::bend::Meter>();
+                             try { bm->load (BinaryData::bend_bin, (size_t) BinaryData::bend_binSize); }
+                             catch (const std::exception&) { bm.reset(); }      // no usable meter: distortion and saturation are handled the old way
+                             filterReader = fr; bendMeter = bm; movingNet = mn; roomNet = rn; roomNet2 = rn2; models27 = m27; models = m; },
                      [this] { busy = false; updateUi(); if (pending[0].exists()) load (0, pending[0]); if (pending[1].exists()) load (1, pending[1]); });
         startTimerHz (20);
     }
@@ -672,7 +678,9 @@ private:
     std::shared_ptr<const dr::moving::Net> movingNet;           // the moving-tone engine's model (none: phaser and filter sweep are handled the old way)
     std::shared_ptr<const dr::moving::Found> movingFound;       // what the moving-tone engine found on it
     std::shared_ptr<const dr::chorus::Found> chorusFound;       // what the chorus engine found on it
-    dr::More moreFound;                                         // what the engines of build 0.4.7 found on it
+    std::shared_ptr<const dr::reader::Reader> filterReader;     // the filter engine's reader (none: a fixed filter is handled the old way)
+    std::shared_ptr<const dr::bend::Meter> bendMeter;           // the bend engine's meter (none: distortion and saturation are handled the old way)
+    dr::More moreFound;                                         // what the engines of builds 0.4.7 and 0.5.1 found on it
     std::vector<dr::FoundFx> groups;                            // the groups shown: MOVEMENT (always), the effects found, and TONE MATCH when it is switched on (two sounds)
     std::shared_ptr<const dr::move::Found> moves[2];            // what moves in each sound by itself, for the MOVEMENT faders (none: not measured yet; its pitch part stays empty until the reader is through)
     std::shared_ptr<const dr::move::Pitch> pitches[2];          // how each sound's pitch moves, as the reader gave it (none: not read yet)
@@ -748,11 +756,11 @@ private:
         auto toneOut = std::make_shared<std::shared_ptr<const dr::tone::Found>>(); auto echoOut = std::make_shared<std::shared_ptr<const dr::echo::Found>>();
         auto levelOut = std::make_shared<std::shared_ptr<const dr::level::Movement>>(); auto sweepOut = std::make_shared<std::shared_ptr<const dr::sweep::Result>>();
         auto MN = movingNet; auto movingOut = std::make_shared<std::shared_ptr<const dr::moving::Found>>(); auto chorusOut = std::make_shared<std::shared_ptr<const dr::chorus::Found>>(); auto moreOut = std::make_shared<dr::More>();
-        const int gen = generation.load(); auto raw = rawSound[0]; const double rawSr = rawRate[0];
-        startWorker ([src, raw, rawSr, M, M27, RN, RN2, MN, out, insp, roomOut, toneOut, echoOut, levelOut, sweepOut, movingOut, chorusOut, moreOut, c, gen, this]
+        const int gen = generation.load(); auto raw = rawSound[0]; const double rawSr = rawRate[0]; auto FR = filterReader; auto BM = bendMeter;
+        startWorker ([src, raw, rawSr, M, M27, RN, RN2, MN, FR, BM, out, insp, roomOut, toneOut, echoOut, levelOut, sweepOut, movingOut, chorusOut, moreOut, c, gen, this]
                      {
                          auto alive = [this, gen] (float) { return generation.load() == gen; };
-                         // the level engine, the flanger engine, the moving-tone engine, the chorus engine, the sides engine, the ring engine, the crush engine and the stutter engine need nothing from the others: they measure on threads of their own while the rest goes on here
+                         // the level engine, the flanger engine, the moving-tone engine, the chorus engine, the sides engine, the ring engine, the crush engine, the stutter engine, the filter engine and the bend engine need nothing from the others: they measure on threads of their own while the rest goes on here
                          auto levelJob = std::async (std::launch::async, [this, gen, src]
                                                      {
                                                          std::shared_ptr<dr::level::Movement> m;
@@ -825,6 +833,27 @@ private:
                                                            catch (const std::exception&) { f.reset(); }        // the stutter engine failed: the detector's verdict and the old handling stay
                                                            return f;
                                                        });
+                         auto filterJob = std::async (std::launch::async, [this, gen, src, FR]
+                                                      {
+                                                          std::shared_ptr<dr::fixed::Found> f;
+                                                          if (FR == nullptr || ! FR->ready()) return f;
+                                                          try { f = std::make_shared<dr::fixed::Found> (dr::fixed::find (*src, *FR, [this, gen] { return generation.load() != gen; })); }
+                                                          catch (const std::exception&) { f.reset(); }        // the filter engine failed: the detector's verdict and the old handling stay
+                                                          return f;
+                                                      });
+                         auto bendJob = std::async (std::launch::async, [this, gen, src, raw, rawSr, BM]
+                                                    {
+                                                        std::shared_ptr<dr::bend::Found> f;
+                                                        if (BM == nullptr || ! BM->ready()) return f;
+                                                        try
+                                                        {
+                                                            const dr::bend::Stop stop = [this, gen] { return generation.load() != gen; };
+                                                            if (raw == nullptr) f = std::make_shared<dr::bend::Found> (dr::bend::find (*src, *BM, stop));
+                                                            else f = std::make_shared<dr::bend::Found> (dr::bend::findAt (*raw, rawSr, src->size(), *BM, stop));      // a file at another rate: read at its own, where its values still lie on the curve
+                                                        }
+                                                        catch (const std::exception&) { f.reset(); }        // the bend engine failed: the detectors' verdicts and the old handling stay
+                                                        return f;
+                                                    });
                          auto I = dr::inspect (*M, *src, alive);
                          if (generation.load() != gen) return;
                          dr::mergeNew (I, dr::inspect (*M27, *src, alive, &I));
@@ -903,6 +932,17 @@ private:
                              if (generation.load() != gen) return;
                              if (f != nullptr) { dr::mergeStutter (I, *f); moreOut->stutter = f; }
                          }
+                         {       // the filter engine: a fixed low-pass, high-pass or band-pass (its verdict replaces the detector's about a filter)
+                             const std::shared_ptr<dr::fixed::Found> f = filterJob.get();
+                             if (generation.load() != gen) return;
+                             if (f != nullptr && ! f->stopped) { dr::mergeFixed (I, *f, movingOut->get()); moreOut->filter = f; }
+                         }
+                         {       // the bend engine: a curve the sound's values were pushed through (its verdict replaces the detectors' about distortion and saturation)
+                             const std::shared_ptr<dr::bend::Found> f = bendJob.get();
+                             if (generation.load() != gen) return;
+                             if (f != nullptr && ! f->stopped) { dr::mergeBend (I, *f); moreOut->bend = f; }
+                         }
+                         dr::dropExciter (I);        // EXCITER is not shown: an exciter's highs are not told from a sound's own (Estimate.h)
                          if (moreOut->ring != nullptr && moreOut->ring->found && *echoOut != nullptr)      // an echo on a sound that is multiplied by a tone: is it still there with the tone taken out?
                          {
                              try { dr::recheckEchoWithout (I, *echoOut, *moreOut, [this, gen] { return generation.load() != gen; }); }
@@ -1502,6 +1542,56 @@ inline void dumpPlots (const juce::File& dir)
             p.set (dr::makePlot (S, dr::scaled (S, v), dr::amountOf (S, v), second), kind ? dr::makePlot (S, S.est, 1.0, second) : dr::Plot());
             juce::Image img = p.createComponentSnapshot (p.getLocalBounds(), true, 2.0f);
             juce::File out = dir.getChildFile (kind == 0 ? "stutter-engine.png" : kind == 1 ? "stutter-engine-moved.png" : kind == 2 ? "stutter-engine-second.png" : kind == 3 ? "stutter-engine-zero.png" : "stutter-engine-second-zero.png"); out.deleteFile();
+            juce::FileOutputStream os (out); juce::PNGImageFormat png; if (os.openedOk()) png.writeImageToStream (img, os);
+        }
+    }
+    // the filter engine's group: a low-pass at 1.5 kHz that falls 24 dB an octave with a peak at its corner, and a band-pass from 300 Hz to 3 kHz (as found, with the faders moved, with Amount at zero, and going onto a second sound)
+    for (int kind = 0; kind < 2; ++kind)
+    {
+        auto ff = std::make_shared<dr::fixed::Found>(); const size_t NB = (size_t) dr::reader::NBAND; ff->found = ff->looked = true; ff->n = (size_t) (8.0 * dr::SR); ff->frames = 180; ff->logit = 6.0; ff->sure = 0.9;
+        ff->curve.resize (NB); ff->lift.assign (NB, dr::fixed::maxLift); ff->apart.assign (NB, 0.0);
+        for (int b = 0; b < dr::reader::NBAND; ++b)
+        {
+            const double hz = dr::reader::bandHz (b), o = std::log2 (hz / 1500.0);
+            const double v = kind == 0 ? -10.0 * std::log10 (1.0 + std::pow (hz / 1500.0, 8.0)) + 8.0 * std::exp (-0.5 * o * o / 0.03)
+                                       : -10.0 * std::log10 (1.0 + std::pow (300.0 / hz, 4.0)) - 10.0 * std::log10 (1.0 + std::pow (hz / 3000.0, 4.0));
+            ff->curve[(size_t) b] = std::max (v, -dr::fixed::maxCut);
+        }
+        if (kind == 0) for (int b = 80; b < dr::reader::NBAND; ++b) ff->lift[(size_t) b] = dr::fixed::noiseLift;      // hiss in what it cut
+        ff->depth = 40.0; dr::fixed::describe (*ff);
+        const dr::FoundFx V = dr::filterFx (ff, 0.9);
+        for (int state = 0; state < 4; ++state)
+        {
+            DisplayPanel p; p.setSize (420, 330); const bool second = state == 3;
+            std::map<std::string, double> v; for (auto& k : V.knobs) v[k.id] = 1.0;
+            if (state == 1) { v["filter.amount"] = 0.5; v["filter.cutoff"] = 1.3; if (v.count ("filter.resonance")) v["filter.resonance"] = 1.7; }
+            if (state == 2) v["filter.amount"] = 0.0;
+            if (state == 3) { v["filter.amount"] = 1.5; v["filter.cutoff"] = 0.7; }
+            p.set (dr::makePlot (V, dr::scaled (V, v), dr::amountOf (V, v), second), state ? dr::makePlot (V, V.est, 1.0, second) : dr::Plot());
+            juce::Image img = p.createComponentSnapshot (p.getLocalBounds(), true, 2.0f);
+            juce::File out = dir.getChildFile (juce::String (kind ? "filter-band-engine" : "filter-engine") + (state == 0 ? "" : state == 1 ? "-moved" : state == 2 ? "-zero" : "-second") + ".png"); out.deleteFile();
+            juce::FileOutputStream os (out); juce::PNGImageFormat png; if (os.openedOk()) png.writeImageToStream (img, os);
+        }
+    }
+    // the bend engine's groups: a soft curve that squeezes the loudest values by 7 dB above the middle line and by 4.5 dB under it (SATURATION), and a hard one that lets nothing past 16 dB under the loudest value (DISTORTION); as found, pushed further, walked back, with Amount at zero, and going onto a second sound
+    for (int kind = 0; kind < 2; ++kind)
+    {
+        auto bf = std::make_shared<dr::bend::Found>(); bf->found = bf->looked = true; bf->n = (size_t) (8.0 * dr::SR); bf->logit = 5.0; bf->sure = 0.9; bf->vp[0] = 0.5; bf->vp[1] = kind == 0 ? 0.46 : 0.5;
+        for (int h = 0; h < 2; ++h) for (int i = 0; i < dr::bend::NG; ++i)
+        {
+            const double l = dr::bend::GRID[i];
+            bf->S[h][i] = kind == 0 ? (h == 0 ? 7.0 : 4.5) * std::pow (10.0, l / 14.0) : std::max (0.0, l + 16.0);
+        }
+        double r[dr::bend::NG]; for (int h = 0; h < 2; ++h) { dr::bend::tidy (bf->S[h], dr::bend::spreadMost, r); bf->top = std::max (bf->top, r[dr::bend::NG - 1]); }
+        const dr::FoundFx B = dr::bendFx (bf, 0.9);
+        for (int state = 0; state < 5; ++state)
+        {
+            DisplayPanel p; p.setSize (420, 330); const bool second = state == 4;
+            std::map<std::string, double> v; for (auto& k : B.knobs) v[k.id] = 1.0;
+            v[B.name + ".amount"] = state == 0 ? 1.0 : state == 1 ? 1.6 : state == 2 ? 0.5 : state == 3 ? 0.0 : 1.4;
+            p.set (dr::makePlot (B, dr::scaled (B, v), dr::amountOf (B, v), second), state ? dr::makePlot (B, B.est, 1.0, second) : dr::Plot());
+            juce::Image img = p.createComponentSnapshot (p.getLocalBounds(), true, 2.0f);
+            juce::File out = dir.getChildFile (juce::String (B.name) + "-engine" + (state == 0 ? "" : state == 1 ? "-moved" : state == 2 ? "-back" : state == 3 ? "-zero" : "-second") + ".png"); out.deleteFile();
             juce::FileOutputStream os (out); juce::PNGImageFormat png; if (os.openedOk()) png.writeImageToStream (img, os);
         }
     }

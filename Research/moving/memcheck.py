@@ -1,7 +1,7 @@
 # Memory check of the app's whole processing (drrender built with -fsanitize=address,undefined): every engine's group on
 # short and long first sounds, alone and with a second sound that is shorter, as long and longer, the faders in the middle
 # and at both ends.
-#   python3 memcheck.py [jobs] [rest|room|long|new|tiny|soft|move|movefx]    writes /dev/shm/mc/<name>.log, prints one line per run
+#   python3 memcheck.py [jobs] [rest|room|long|new|tiny|soft|move|movefx|four]    writes /dev/shm/mc/<name>.log, prints one line per run
 # Two stages side by side: give each a folder of its own (MC_DIR=/dev/shm/mc2/ in the environment).
 # Another build of the render test: MC_EXE=/path/to/drrender_asan in the environment.
 import sys, os, json, subprocess, numpy as np, soundfile as sf
@@ -9,7 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 sys.path[:0] = ['/tmp/claude-0/v2/sweep']; from lab import load
 EXE = os.environ.get('MC_EXE', '/tmp/claude-0/lvx/drrender_asan'); RES = '/home/claude/defect-refect/Resources'; D = os.environ.get('MC_DIR', '/dev/shm/mc/'); SETS = '/tmp/claude-0/v2/bench/sets/'
 ALL = 'flanger chorus phaser haas width delay reverb distortion bitcrush filtersweep tremolo autopan saturation exciter ringmod filter stutter gatedrhythm comb'.split()
-MOVE = ['tremolo.speed', 'autopan.speed', 'gatedrhythm.speed', 'flanger.speed', 'flanger.sweep', 'flanger.feedback', 'chorus.speed', 'chorus.depth', 'phaser.speed', 'filtersweep.speed', 'delay.time', 'delay.feedback', 'delay.bright', 'reverb.length', 'reverb.bright', 'reverb.width', 'ringmod.carrier', 'bitcrush.bits', 'bitcrush.down', 'stutter.slice', 'comb.delay', 'tonematch.detail']
+MOVE = ['tremolo.speed', 'autopan.speed', 'gatedrhythm.speed', 'flanger.speed', 'flanger.sweep', 'flanger.feedback', 'chorus.speed', 'chorus.depth', 'phaser.speed', 'filtersweep.speed', 'delay.time', 'delay.feedback', 'delay.bright', 'reverb.length', 'reverb.bright', 'reverb.width', 'ringmod.carrier', 'bitcrush.bits', 'bitcrush.down', 'stutter.slice', 'comb.delay', 'tonematch.detail', 'filter.cutoff', 'filter.resonance']
 def w(name, x): p = D + name + '.wav'; sf.write(p, x, 48000, subtype='FLOAT'); return p
 firsts = []
 fb = {}
@@ -91,5 +91,14 @@ if 'movefx' in sys.argv:         # the MOVEMENT faders next to every effect type
              ('mixed', ['movement.pitch=0.5', 'movement.loudness=1.5', 'movement.tone=0.37', 'movement.stereo=1.63', 'movement.spectral=0.2'] + [k + '.amount=0.5' for k in ALL])]
     rest = [(fam + 'R', w(fam + 'R', load(sorted(glob.glob(SETS + fam + '/*/'))[0], 'A')['wet'])) for fam in ('tone', 'distortion', 'bitcrush', 'ringmod', 'stutter', 'exciter', 'saturation', 'filter')]
     jobs = [('mx_' + n, q, None, [seconds[0], seconds[2]], msets) for n, q in [f for f in firsts if f[0].endswith('6')] + rest] + [('mx_sweepHalf', '/dev/shm/mvl/swH01_wet.wav', None, [seconds[0]], msets[:2])]
+if 'four' in sys.argv:           # the engines of build 0.5.1 (filter, bend; sounds from Research/filter/mkcheck.py): outside cases of each kind, long sounds, sounds at the limits of what is read, files at 44.1, 96 and 192 kHz, mono files, both on one sound; alone and onto second sounds, also with the MOVEMENT faders
+    N = '/tmp/claude-0/v2/newfx/mc/'; Q = '/tmp/claude-0/v2/four/mc/'; case = lambda fam, name, side='A': w(name, load(SETS + fam + '/' + name + '/', side)['wet'])
+    MV = ['movement.pitch', 'movement.loudness', 'movement.tone', 'movement.stereo', 'movement.spectral']
+    seconds = [seconds[0], seconds[2], seconds[3], ('s44', N + 'sec44.wav'), ('ten', N + 'secTen.wav'), ('mono', N + 'secMono.wav')]
+    sets = sets + [('withMoves', [k + '=1.6' for k in MV] + [k + '.amount=0' for k in ALL]), ('odd', ['filter.amount=0.3', 'filter.cutoff=1.9', 'filter.resonance=0', 'distortion.amount=0.01', 'saturation.amount=1.99'])]
+    four = [(n, case(f, n)) for f, n in (('filter', 'fil_calf_00'), ('filter', 'fil_sox_00'), ('filter', 'fil_pb_ladder_00'), ('filter', 'fil_swh_ls_01'), ('distortion', 'dist_sox_00'), ('distortion', 'dist_pedalboard_01'),
+                                          ('distortion', 'dist_caps_00'), ('saturation', 'sat_calf_tape_00'), ('saturation', 'sat_tap_tube_01'), ('saturation', 'sat_swh_valve_00'))]
+    four += [(n, Q + n + '.wav') for n in 'filtLong filt1s filt0s9 filt44 filtMono bendLong bendShort bendHalf bend44 bend96 bend192 bend44pcm bendMono both bothOther'.split()]
+    jobs = [(n, p, None) for n, p in four] + [(n + '_s5', p, 5) for n, p in four if n in ('fil_calf_00', 'fil_swh_ls_01', 'dist_caps_00', 'sat_swh_valve_00', 'filt1s', 'bendHalf', 'bend192', 'both', 'bothOther')]
 with ThreadPoolExecutor(int(sys.argv[1]) if len(sys.argv) > 1 else 3) as ex:
     for line in ex.map(one, jobs): print(line, flush=True)
