@@ -1,6 +1,6 @@
 #pragma once
-// The curve reader: what the FILTER engine (Filter.h) and the EXCITER engine (Exciter.h) look at, and the small net
-// that reads a curve over the bands from it.
+// The curve reader: what the FILTER engine (Filter.h) looks at, and the small net that reads a curve over the bands
+// from it. (A reader of the same kind was taught an exciter's lift and withdrawn: Research/exciter.)
 //   energies()   a sound's band energies frame by frame: 104 bands a twelfth of an octave apart, 50 Hz .. 19 kHz,
 //                both sides together (Hann frames of 8192 every 2048, none hanging over either end)
 //   curves()     six curves over the bands from them: per band its mean level and its level in the quietest frame,

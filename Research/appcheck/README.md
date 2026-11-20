@@ -120,6 +120,58 @@ The memory check ran its two new stages for this build (`Research/moving/memchec
 no movement and runs the code of 0.4.7, and gives the same files bit for bit (`Research/movement/same.py`, 38 cases);
 they were not run again.
 
+## Build 0.5.1: FILTER, DISTORTION and SATURATION
+New in the app's own code: two more analysis jobs beside the worker (`filterJob`, `bendJob` in `Main.cpp`; a file at
+another rate gets its bend read off its own samples), the two groups in the fader panel (FILTER with two or three
+faders, DISTORTION or SATURATION with one), their pictures, and no EXCITER group.
+
+- `scen.sh` has the scenario `four` for a sound that shows SATURATION and a FILTER group, with a second sound:
+  every fader of both groups to its ends, MOVEMENT's Loudness and Tone, Result and Play, Swap twice, Reset, Tone
+  Match, the second sound away and the faders on the sound itself, each group switched off and on, Sureness to
+  both ends, Export. `monkey` takes the rows of the sound's own faders (`FROWS`, and `HY2` for the second group's
+  title).
+- `exp_051.py` has the cases f1 .. f5, b1 .. b5, c1 .. c3 and y21 .. y23; the made sounds come from
+  `Research/filter/mkcheck.py`.
+
+Sanitizer: nothing, in any run, and the app ended by itself with exit code 0 every time: asked to close 3, 9 and
+25 s after the start (two sounds, and a long distorted one), the first sound taken away and Swap pressed 6 s
+after the start, all while the first analysis ran; `four` (23 steps); `monkey` twice (150 actions on the sound
+with both groups and a revving engine as the second sound, 120 on a distorted file at 44.1 kHz with a filtered
+mono file as the second); the picture hook (93 pictures, 21 of them the new groups'); 16 export runs. The app was
+gone within 4 to 8 s of being asked, with one exception: asked 3 s after the start it took 92 s, at a moment when
+the machine's four cores were shared with seven other jobs at full load and a second copy of the app that had just
+started. The same run again with fewer of them took 8 s. The app waits for its analysis threads, and each of them
+stops only where it looks whether it should.
+
+One fault in the scenario itself, none in the app: two pulls of `four` started 18 points beside a fader that
+stood at its far left and moved nothing, which showed in the pictures (both Amounts still at 0 %). They start on
+the fader now, and the run was made again: both at 200 %.
+
+The app's exports against the render test's. Every difference is one unit of the 24-bit file at the most (143
+to 147 dB under full scale); the figure is that difference against the level of the file, so a quiet file reads
+higher:
+
+| sounds | faders | difference |
+|---|---|---|
+| a low-pass with a peak, alone | Amount far left | -121.7 dB |
+| the same | Cutoff and Resonance far right | -121.7 dB |
+| the same onto a second sound | middle | -117.0 dB |
+| a high-pass onto a second sound | Amount and Cutoff far right (a file at -48 dB) | -95.3 dB |
+| a high-pass that is read as a band-pass, alone | Amount and Cutoff far left | -128.3 dB |
+| a distortion, alone | Amount far left | -118.7 dB |
+| another distortion, alone | Amount far right | -138.9 dB |
+| a distortion onto a second sound | middle | -127.3 dB |
+| a saturation, alone | Amount far left | -121.6 dB |
+| the same onto a second sound | Amount far right | -130.1 dB |
+| a low-pass and a saturation on one sound, alone | both Amounts far left | -125.3 dB |
+| the same onto a mono second sound | Cutoff far right; MOVEMENT's Loudness and Tone far right | -124.2 dB |
+| the same, alone | the filter's Amount and Cutoff far right; MOVEMENT's Pitch far left | -129.9 dB |
+| 44.1 kHz: a low-pass, alone | Amount far left | -121.9 dB |
+| 44.1 kHz: a distortion, alone | Amount far left | -129.9 dB |
+| 44.1 kHz: the same onto a 44.1 kHz second sound | Amount far right | -131.0 dB |
+
+MEMCHECK_PLACEHOLDER
+
 ## What it does not cover
 Dropping a file onto the window and the Open dialog (the sounds come in on the command line), playback (no sound
 device here), the Export IR dialogs, and anything that only Windows or the Mac does differently. The JUCE objects

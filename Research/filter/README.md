@@ -114,7 +114,26 @@ The readers alone and together, at the default (a verdict of 2.5):
 With the slider down the difference is larger: one reader alone or the mean of both makes 3 of the cases it
 then shows worse when the filter is taken out, the least of both none.
 
-BOARD_PLACEHOLDER
+Through the whole app on the scoreboard's eight filter cases (`Research/room/bench/famboard.py`; "sure" and
+"read as" from `both.py`, which runs with the slider down):
+
+| case | the real filter (measured with a click) | read as | sure | shown at the default | taken out | onto a second sound |
+|---|---|---|---|---|---|---|
+| `fil_calf_00` | low-pass, 3 dB down at 3 kHz, peak of 11.8 dB at 2 kHz | low-pass | 0.93 | yes | 62 | 87 |
+| `fil_calf_01` | high-pass, 570 Hz, peak of 3.7 dB at 900 Hz | high-pass | 0.98 | yes | 31 | 79 |
+| `fil_pb_ladder_00` | low-pass, 2.9 kHz, peak of 13 dB at 1.3 kHz | low-pass | 0.94 | yes | 31 | 61 |
+| `fil_pb_ladder_01` | low-pass, 2 kHz, peak of 6.1 dB at 950 Hz | low-pass | 0.42 | no |  |  |
+| `fil_sox_00` | high-pass, 700 Hz, peak of 9.7 dB at 1.1 kHz | high-pass | 0.95 | yes | 82 | 87 |
+| `fil_sox_01` | high-pass, 930 Hz, peak of 11.1 dB at 1.4 kHz | band-pass | 0.98 | yes | 69 | 78 |
+| `fil_swh_ls_00` | low-pass, 1.2 kHz, peak of 4.5 dB at 760 Hz | low-pass | 0.50 | no |  |  |
+| `fil_swh_ls_01` | high-pass, 170 Hz, peak of 14.5 dB at 300 Hz | high-pass | 0.91 | yes | 23 | 23 |
+
+Shown on 6 of 8 at the default and on all 8 with the slider down; over the six, taken out 50 on average and onto
+a second sound 69, none worse than nothing. Build 0.5.0, without the engine, showed a filter on one of the eight
+(the second in the table), could not take it out and put a stand-in on the second sound (43). On that same case
+the app also shows a REVERB that is not there, as 0.5.0 did; with both groups at far left the case comes out at
+-3 (0.5.0: -29), and everything put on a second sound at 38 (-3). The sixth is a high-pass that is read as a
+band-pass.
 
 ## What it does not do
 

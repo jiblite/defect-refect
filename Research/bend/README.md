@@ -137,10 +137,16 @@ Scores over the cases the app shows at the default (33 of 48; 100 = the truth, 0
 | DISTORTION | 24 | 34 / 53 | 5 | 20 / 17 | 6 |
 | SATURATION | 9 | 54 / 51 | 0 | 29 / 16 | 1 |
 
-Through the whole app on the scoreboard's 16 cases: DISTORTION shown on 7 of 8, onto a second sound 49 on average
-and 56 in the median, taken out 9 on average; SATURATION shown on 3 of 8 (onto a second sound 45, 85 and 61, taken
-out 15, 12 and 52). The detector of build 0.5.0 showed 4 of the 8 distortions and none of the saturations, put a
-made-up curve on the second sound (10 on average) and could not take anything out.
+Through the whole app on the scoreboard's 16 cases (all eight of a type counted, a case that is not shown as 0):
+DISTORTION shown on 7 of 8, onto a second sound 49 on average and 56 in the median, taken out 9 on average;
+SATURATION shown on 3 of 8 (onto a second sound 45, 85 and 61, taken out 15, 12 and 52). Of the seven distortions
+one goes onto a second sound a little worse than nothing (-6), and three come out a little worse than left alone
+when the bend is walked back (-7, -10, -11); none of the saturations does. The detector of build 0.5.0 showed 4
+of the 8 distortions and none of the saturations, put a made-up curve on the second sound (10 on average) and
+could not take anything out. Beside its own cases the group comes up on two of the scoreboard's other 120: as
+DISTORTION on an exciter that overdrives the highs and mixes them under the sound, where what it does is worse
+than nothing both ways (-13 taken out, -29 on a second sound), and as SATURATION next to the DELAY of one delay
+case (everything at far left 39, where build 0.5.0 had 49).
 
 ## What it does not do
 

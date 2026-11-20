@@ -536,7 +536,15 @@ textbook shapes, as a minimum-phase filter (so taking it off also undoes the fil
 - two sounds: the second sound goes through the found curve, with the same three faders;
 - the display shows the curve, and with a fader moved the curve that results.
 
-@@FB@@
+On the scoreboard's eight filter cases (0.5.0 in brackets) the group is shown on 6 (1) where the Sureness slider
+stands at first and on all 8 with the slider down. Over the six, taking the filter out scores 50 on average (23 to
+82) and putting it on a second sound 69 (23 to 87), and no case is worse than doing nothing; the one filter 0.5.0
+found could not be taken out and went onto the second sound at 43. On one of the six, a high-pass with a peak, a
+REVERB that is not there is shown as well, as in 0.5.0, and with both groups at far left that case comes out a
+little worse than nothing (-3). On all 32 outside cases (these eight and 24 more, from four outside effects) the
+group is shown on 22, and on 28 with the slider down. Over the 22: taken out 50 on average (median 58), none worse
+than nothing; onto a second sound 63 (median 78), one worse (-73), a high-pass at 190 Hz whose corner is read 0.6
+octave too high.
 
 Known limits: a sound that is dull or thin by itself is not told from a filtered one beyond a point, both ways. A
 filter that is not there is shown on none of the 198 clean clips and on 9 of the 624 scoreboard sounds of the
@@ -573,7 +581,20 @@ loudest values were squeezed by 10 dB or more and SATURATION under that, and has
   So the way back takes three quarters of the read squeeze, less 1 dB;
 - the display shows the curve for both half-waves, and left of the middle what is left of the bend.
 
-@@BB@@
+On the scoreboard (eight cases each, 0.5.0 in brackets) DISTORTION is shown on 7 of 8 (4). On a second sound
+the seven score 56 on average: six lie between 34 and 95, and one comes out a little worse than nothing (-6; a
+saturation plugin driven hard, whose effect is more than a curve). The four that 0.5.0 showed went on at 20 on
+average, with a made-up curve. Taken out, the seven score 10 on average: four gain (1 to 45) and three come out a
+little worse than left alone (-7, -10, -11), which is the first limit below; 0.5.0 did not take a distortion out
+at all. SATURATION is shown on 3 of 8 (0): onto a second sound at 45, 61 and 85, taken out at 15, 52 and 12. The
+five that are not shown squeeze the loudest values by 1.6 to 7.2 dB.
+
+Blind, on 96 sounds of 48 cases from eight outside effects (four that distort, four that saturate; these 16
+cases and 32 more): the squeeze at the peak is read 1.8 dB off (rms; 1.2 in the median) and the name is right on
+85. Shown where the slider stands at first: 45 of the 48 distorted sounds, 21 of the 25 that are saturated by 6 dB
+or more, 3 of the 23 that are saturated by less. Of the 48 cases 33 are shown: onto a second sound they score 40
+on average (median 51; 5 worse than nothing), taken out 22 (7 worse). A bend that is not there is shown on 4 of
+the 198 clean clips and on 12 of 608 scoreboard sounds of the other effects.
 
 Known limits: a hard bend is not undone. Taking a DISTORTION out puts the level relations right and scores about
 20 of 100 on the outside cases; the flat tops are not filled in (a declipper, which makes up what the tops were
@@ -620,16 +641,16 @@ And the whole app on the scoreboard (`Research/room/bench/famboard.py`, `famsum.
 was the look with silence after the sound, the drop in 0.4.5 is the room model trained again and the look without
 the other effects, both described above):
 
-| 136 cases, 17 effects from outside tools                        | 0.4.1    | 0.4.2   | 0.4.3   | 0.4.4  | 0.4.5  | 0.4.6 | 0.4.7 |
-|------------------------------------------------------------------|----------|---------|---------|--------|--------|-------|-------|
-| the case's own effect shown                                      | 77       | 75      | 79      | 89     | 89     | 89    | 92    |
-| other groups shown: REVERB / the rest                            | 63 / 156 | 19 / 12 | 19 / 10 | 19 / 7 | 13 / 7 | 9 / 7 | 9 / 4 |
-| cases with no other group shown                                  | 16       | 107     | 109     | 112    | 116    | 120   | 123   |
-| own group far left: cases made worse than doing nothing          | 12 %     | 3 %     | 3 %     | 1 %    | 1 %    | 1 %   | 1 %   |
-| every shown group far left: cases made worse than doing nothing  | 78 %     | 19 %    | 19 %    | 15 %   | 9 %    | 7 %   | 7 %   |
-| everything shown put onto a second sound: cases made worse       | 71 %     | 36 %    | 30 %    | 27 %   | 24 %   | 23 %  | 9 %   |
+| 136 cases, 17 effects from outside tools                        | 0.4.1    | 0.4.2   | 0.4.3   | 0.4.4  | 0.4.5  | 0.4.6 | 0.4.7 | 0.5.1 |
+|------------------------------------------------------------------|----------|---------|---------|--------|--------|-------|-------|-------|
+| the case's own effect shown                                      | 77       | 75      | 79      | 89     | 89     | 89    | 92    | 102   |
+| other groups shown: REVERB / the rest                            | 63 / 156 | 19 / 12 | 19 / 10 | 19 / 7 | 13 / 7 | 9 / 7 | 9 / 4 | 9 / 3 |
+| cases with no other group shown                                  | 16       | 107     | 109     | 112    | 116    | 120   | 123   | 125   |
+| own group far left: cases made worse than doing nothing          | 12 %     | 3 %     | 3 %     | 1 %    | 1 %    | 1 %   | 1 %   | 3 %   |
+| every shown group far left: cases made worse than doing nothing  | 78 %     | 19 %    | 19 %    | 15 %   | 9 %    | 7 %   | 7 %   | 10 %  |
+| everything shown put onto a second sound: cases made worse       | 71 %     | 36 %    | 30 %    | 27 %   | 24 %   | 23 %  | 9 %   | 6 %   |
 
-(0.4.7: the eight stutter cases are left out of the two far-left rows. A stutter's far left closes the sound up,
+(From 0.4.7 on the eight stutter cases are left out of the two far-left rows. Build 0.5.0 scores as 0.4.7 does. A stutter's far left closes the sound up,
 and the scoreboard compares with the dry sound at the same times; `Research/stutter/so1.py` scores it against the
 dry sound with the covered parts cut out.)
 
@@ -671,6 +692,21 @@ faders in the middle it measures the sound and leaves it alone. Two cases of eve
 alone and onto a second sound, come out of 0.5.0 the same as out of 0.4.7 to the last bit
 (`Research/movement/same.py`).
 
+What changed from 0.5.0 to 0.5.1: the three groups with new engines, the EXCITER group, and three cases beside
+them. FILTER is shown on 6 of 8 cases (1), DISTORTION on 7 of 8 (4), SATURATION on 3 of 8 (0); in the median of
+all eight a filter now goes onto a second sound at 69 (0) and a distortion at 56 (0). The one exciter that 0.5.0
+showed, and put onto the second sound far worse than nothing, is not shown any more, and three EXCITER groups that
+were not there are gone with it (on a filter, a phaser and a tremolo). New and not theirs: DISTORTION on an
+exciter that overdrives the highs and mixes them under the sound, worse than nothing both ways (-13 taken out, -29
+on a second sound), and SATURATION beside the DELAY of one delay case (everything at far left 39, where it was
+49). The other 101 cases of the remaining 13 effect types score exactly as before. The last row falls from 12
+cases to 8. Six that 0.5.0 made worse are no longer made worse: the exciter, two filters, a saturation, and the
+phaser and the tremolo with the false EXCITER. Two are new: one distortion that goes on a little worse than
+nothing (-6), and the exciter read as a distortion. Six of the eight carry a REVERB that is not there. The two
+far-left rows rise, from 1 case to 4 and from 9 to 13 of the 128 that are scored there. A distortion could not be
+taken out before, which counts as 0. Walking the bend back gains on four of the seven that are shown and loses a
+little on three (-7, -10, -11), and the fourth new case is the exciter read as a distortion.
+
 The price is in the third row of the first table, and it is uneven: flanger, phaser, filter sweep and a fixed filter are found less
 often than before (9, 39, 39 and 9 % against 36, 73, 61 and 34 %), because most of their earlier finds came with
 as many false ones; ring mod and stutter are found far more often (82 and 93 % against 23 and 52 %). The
@@ -683,7 +719,8 @@ their own engines' verdicts. Method and tables: `Research/detect/README.md`.
 
 Effects it knows so far (19): flanger, chorus, phaser, Haas width, stereo width, comb filter, delay, reverb,
 distortion, bitcrush, filter sweep, tremolo, auto pan; added in 0.2.0: saturation, exciter, ring mod,
-filter, stutter, gated rhythm (from a larger 27-effect detector).
+filter, stutter, gated rhythm (from a larger 27-effect detector). Since 0.5.1 the exciter is not shown (18): see
+above.
 
 ## Layout
 - `Source/Core/` plain C++17, no JUCE: features, detector (small CNN), hand checks, tree models,
@@ -712,6 +749,12 @@ filter, stutter, gated rhythm (from a larger 27-effect detector).
   mixes plain sound in and its undoing, the faders for steps and hold, files at their own sample rate).
   The stutter engine: `Stutter.h` (the table of windows, stretches, events, what repeats exactly and is no event,
   the events played on a sound, cut out of it or moved to another sample rate).
+  The filter engine (a fixed low-pass, high-pass or band-pass): `Reader.h` (the band energies, the six curves
+  over the frames, the small nets that read a curve from them, a curve over the bands as a minimum-phase filter)
+  and `Filter.h` (the two looks, the skirt carried on where nothing is left, what counts as found, corners and
+  peak, the lift's caps, the curve taken out, moved or put onto a second sound).
+  The bend engine (distortion, saturation): `Bend.h` (what is read per half-wave, the meter of four nets, the
+  curve from the read squeeze, how sure, the careful way back, the drive, files at their own sample rate).
   `Verify.h` the check of every effect against the whole sound before it is shown.
   `Resample.h` the change of sample rate for a file that is not at 48 kHz (no delay, low-passed at the lower
   rate), used by the app's loader and by the tests.
@@ -720,6 +763,8 @@ filter, stutter, gated rhythm (from a larger 27-effect detector).
 - `Resources/room.bin` and `room2.bin` the reverb engine's model (first and second look), written by `Tools/export_room_model.py`.
 - `Resources/verify.bin` the verifier's models, written by `Research/detect/export_verify.py`.
 - `Resources/moving.bin` the moving-tone engine's model, written by `Tools/export_moving_model.py`.
+- `Resources/filter.bin` the filter engine's two readers, written by `Tools/export_reader_model.py`, and
+  `Resources/bend.bin` the bend engine's meter, written by `Tools/export_bend_model.py`.
 - `Tests/render.cpp` the app's processing without the UI: `drrender Resources first.wav [second.wav|-] out.wav [id=value ...]`
   (out `-` only prints what was found; `ir=file.wav` writes what Export IR writes, `echoir=file.wav` the same for
   the DELAY group; `match=1` switches Tone Match on;
@@ -742,6 +787,9 @@ filter, stutter, gated rhythm (from a larger 27-effect detector).
   `drsides|drring|drcrush|drstutter a.wav b.wav prefix` and `... find a.wav ...` (see the top of each file);
   `Tools/sides_parity.py`, `ring_parity.py`, `crush_parity.py` and `stutter_parity.py` compare them with the
   prototypes.
+- `Tests/filter.cpp` and `Tests/bend.cpp` the two engines of 0.5.1 alone: `drfilter filter.bin a.wav b.wav|- prefix
+  amount cutoff resonance`, `drbend bend.bin a.wav b.wav|- prefix amount` (see the top of each file);
+  `Tools/filter_parity.py` and `bend_parity.py` compare them with the prototypes.
 - `Research/room/` the Python side of the reverb engine as it was run: the scoreboard, the reference engine the
   C++ matches, training and the experiments (see its README).
 - `Research/tone/` the Python side of the tone engine: the prototype the C++ matches, its scores and the report.
@@ -765,6 +813,13 @@ filter, stutter, gated rhythm (from a larger 27-effect detector).
 - `Research/crush/` and `Research/stutter/` the Python side of the crush and the stutter engine: the prototypes
   the C++ matches, the fresh cases, every clip with a stutter put on, the far left, the false-find checks and
   the files at other sample rates (several scripts serve both engines and sit in `Research/stutter/`).
+- `Research/filter/` the Python side of the filter engine: what is read, the family of curves it was taught, the
+  two readers, the engine the C++ matches, the outside cases, the filters shown on other effects' sounds, and the
+  rule between a fixed filter and a sweep.
+- `Research/bend/` the Python side of the bend engine: what is read, the examples and the training of the meter,
+  the engine the C++ matches, the blind test on outside effects, the made tones, the limits.
+- `Research/exciter/` the study that ended with the EXCITER group taken out: two ways of reading an exciter off
+  one sound, and what they found on sounds before and after three outside exciters.
 - `Research/listening/` the scripts that make the listening page: its examples are rendered by `drrender`.
 - `Research/appcheck/` the app itself under the address sanitizer, driven with the mouse on a display of its
   own: every fader, Swap, Export, closing and clearing in the middle of an analysis, random clicks; and its

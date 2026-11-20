@@ -9,6 +9,7 @@
 #            exp     the found effects' fader rows ROWS and MOVEMENT's rows MROWS pulled to one end (END, MEND: left,
 #                    right or middle), then Export to a file, close
 #            monkey  N random clicks, drags and wheel turns on the controls (SEED), then close
+#            four    build 0.5.1: SATURATION and a FILTER group with two sounds: every fader of both, Swap twice, one sound alone, Export, close
 #            watch   a picture every 2 s (N of them), then close: shows when the Pitch fader says "reading"
 # The places are those of the window as it opens (1200 x 820 on a screen of 1280 x 860): MOVEMENT in the left column
 # of faders, the found effects in the right one.
@@ -90,6 +91,34 @@ two)
     import -window root $O/${T}_export.png; click 885 656; sleep 5; import -window root $O/${T}_exported.png; idle s18 || exit 1
     ls -la $O/export_$T.wav 2>&1
     closeapp ;;
+four)       # build 0.5.1: a sound that shows SATURATION (one fader, row 422) and a FILTER group under it (title 461, Amount 486, Cutoff 510), with a second sound
+    idle s0 || exit 1
+    drag $FX 422 $(endx $FX left); idle s1 || exit 1                 # SATURATION Amount far left (the second sound not pushed into the curve)
+    drag $((FX - 71)) 422 $(endx $FX right); idle s2 || exit 1       # far right (as far again); the thumb at far left stands 71 to the left of the middle
+    click $FHEAD 461; drag $FX 486 $(endx $FX left); idle s3 || exit 1   # FILTER: Amount far left
+    drag $FX 510 $((FX + 66)); idle s4 || exit 1                     # Cutoff right
+    drag $((FX - 71)) 486 $(endx $FX right); idle s5 || exit 1       # Amount far right (the curve twice)
+    drag $MX 446 $((MX + 87)); idle s5b || exit 1                    # MOVEMENT: Loudness far right
+    drag $MX 470 $((MX - 40)); idle s5c || exit 1                    # Tone part of the way left
+    click 189 322; click 96 322; sleep 3; click 96 322; click 189 322; idle s6 || exit 1    # Result / Original, Play and stop
+    click 640 166; idle s7 || exit 1                                 # Swap
+    click 640 166; idle s8 || exit 1                                 # Swap back
+    click 973 322; idle s9 || exit 1                                 # Reset Faders
+    click 292 322; idle s10 || exit 1                                # Tone Match on
+    click 1205 55; idle s11 || exit 1                                # second sound away: one sound
+    drag $FX 486 $(endx $FX left); idle s12 || exit 1                # FILTER Amount far left on the sound itself (the filter taken out)
+    drag $FX 510 $(endx $FX left); idle s13 || exit 1                # Cutoff far left
+    drag $FX 422 $(endx $FX left); idle s13a || exit 1               # SATURATION walked back
+    click $FSW 397; idle s14 || exit 1                               # SATURATION off
+    click $FSW 397; click $FSW 461; idle s14a || exit 1              # on again; FILTER off
+    click $FSW 461; drag 298 359 165; idle s15 || exit 1             # on again; Sureness far left
+    drag 165 359 430; idle s16 || exit 1                             # Sureness far right
+    drag 430 359 298; idle s17 || exit 1                             # and back
+    rm -f $O/export_$T.wav
+    click 1179 322; sleep 3; click 640 617; xdotool key ctrl+a; sleep 0.3; xdotool type --delay 25 "$O/export_$T.wav"; sleep 0.5; xdotool key Return; sleep 2
+    import -window root $O/${T}_export.png; click 885 656; sleep 5; import -window root $O/${T}_exported.png; idle s18 || exit 1
+    ls -la $O/export_$T.wav 2>&1
+    closeapp ;;
 quit)
     pause ${WAIT:-12}; import -window root $O/${T}_busy.png; closeapp ;;
 clear)
@@ -113,12 +142,12 @@ exp)        # ROWS: the found effects' fader rows to pull to one end (END); MROW
     closeapp ;;
 monkey)
     idle m0 || exit 1
-    RANDOM=${SEED:-7}; N=${N:-150}; ROWS=(422 446 470 534 558 582 606); MROWS=($MY)
+    RANDOM=${SEED:-7}; N=${N:-150}; ROWS=(${FROWS:-422 446 470 534 558 582 606}); MROWS=($MY)      # FROWS: the found effects' fader rows of this sound; HY2: its second group's title
     for i in $(seq 1 $N); do
         kill -0 $PID 2>/dev/null || { say "APP GONE at action $i"; break; }
         a=$((RANDOM % 40)); c=$((RANDOM % 5)); o1=$((RANDOM % 139 - 69)); o2=$((RANDOM % 139 - 69))
         if [ $c -lt 2 ]; then y=${MROWS[$((RANDOM % 5))]}; x1=$((MX + o1)); x2=$((MX + o2)); sw=$MSW; hd=$MHEAD; hy=397      # two times in five: MOVEMENT's column
-        else y=${ROWS[$((RANDOM % 7))]}; x1=$((FX + o1)); x2=$((FX + o2)); sw=$FSW; hd=$FHEAD; hy=$((RANDOM % 2 ? 397 : 509)); fi
+        else y=${ROWS[$((RANDOM % ${#ROWS[@]}))]}; x1=$((FX + o1)); x2=$((FX + o2)); sw=$FSW; hd=$FHEAD; hy=$((RANDOM % 2 ? 397 : ${HY2:-509})); fi
         case $a in
             0|1) say "$i swap"; click 640 166 ;;
             2|3) say "$i play"; click 96 322 ;;
