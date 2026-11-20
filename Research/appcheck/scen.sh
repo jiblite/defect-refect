@@ -10,6 +10,8 @@
 #                    right or middle), then Export to a file, close
 #            monkey  N random clicks, drags and wheel turns on the controls (SEED), then close
 #            four    build 0.5.1: SATURATION and a FILTER group with two sounds: every fader of both, Swap twice, one sound alone, Export, close
+#            flat    build 0.5.2: a sound whose tops were cut flat (DISTORTION, one fader) with a second sound: the fader's tip, the fader to both
+#                    ends and part of the way, Swap twice, one sound alone (the tops rebuilt), Export, close
 #            watch   a picture every 2 s (N of them), then close: shows when the Pitch fader says "reading"
 # The places are those of the window as it opens (1200 x 820 on a screen of 1280 x 860): MOVEMENT in the left column
 # of faders, the found effects in the right one.
@@ -117,6 +119,33 @@ four)       # build 0.5.1: a sound that shows SATURATION (one fader, row 422) an
     rm -f $O/export_$T.wav
     click 1179 322; sleep 3; click 640 617; xdotool key ctrl+a; sleep 0.3; xdotool type --delay 25 "$O/export_$T.wav"; sleep 0.5; xdotool key Return; sleep 2
     import -window root $O/${T}_export.png; click 885 656; sleep 5; import -window root $O/${T}_exported.png; idle s18 || exit 1
+    ls -la $O/export_$T.wav 2>&1
+    closeapp ;;
+flat)       # build 0.5.2: a sound whose tops were cut flat and are rebuilt (DISTORTION, one fader, row 422), with a second sound
+    idle s0 || exit 1
+    xdotool mousemove $FX 422; sleep 3; import -window root $O/${T}_tip2.png                  # the fader's tip with two sounds
+    drag $FX 422 $(endx $FX left); idle s1 || exit 1                 # Amount far left (the second sound not pushed into the cut)
+    drag $((FX - 71)) 422 $((FX - 30)); idle s2 || exit 1            # part of the way back
+    drag $((FX - 30)) 422 $(endx $FX right); idle s3 || exit 1       # far right (as far again)
+    drag $MX 446 $((MX + 87)); idle s4 || exit 1                     # MOVEMENT: Loudness far right
+    drag $MX 470 $((MX - 40)); idle s5 || exit 1                     # Tone part of the way left
+    click 189 322; click 96 322; sleep 3; click 96 322; click 189 322; idle s6 || exit 1    # Result / Original, Play and stop
+    click 640 166; idle s7 || exit 1                                 # Swap: the cut sound is the second one now
+    click 640 166; idle s8 || exit 1                                 # Swap back
+    click 973 322; idle s9 || exit 1                                 # Reset Faders
+    click 292 322; idle s10 || exit 1                                # Tone Match on
+    click 1205 55; idle s11 || exit 1                                # second sound away: one sound
+    xdotool mousemove $FX 422; sleep 3; import -window root $O/${T}_tip1.png                  # the fader's tip with one sound
+    drag $FX 422 $(endx $FX left); idle s12 || exit 1                # Amount far left on the sound itself: the rebuilt tops
+    drag $((FX - 71)) 422 $((FX - 36)); idle s13 || exit 1           # half way
+    drag $((FX - 36)) 422 $(endx $FX right); idle s14 || exit 1      # far right: cut as deep again
+    click $FSW 397; idle s15 || exit 1                               # the group off
+    click $FSW 397; drag 298 359 165; idle s16 || exit 1             # on again; Sureness far left
+    drag 165 359 430; idle s17 || exit 1                             # Sureness far right
+    drag 430 359 298; drag $((FX + 71)) 422 $(endx $FX left); idle s18 || exit 1     # and back; Amount far left again
+    rm -f $O/export_$T.wav
+    click 1179 322; sleep 3; click 640 617; xdotool key ctrl+a; sleep 0.3; xdotool type --delay 25 "$O/export_$T.wav"; sleep 0.5; xdotool key Return; sleep 2
+    import -window root $O/${T}_export.png; click 885 656; sleep 5; import -window root $O/${T}_exported.png; idle s19 || exit 1
     ls -la $O/export_$T.wav 2>&1
     closeapp ;;
 quit)

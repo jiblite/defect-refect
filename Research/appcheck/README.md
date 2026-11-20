@@ -184,6 +184,62 @@ once made to work on a sound in which it finds nothing: 156 runs, no report. The
 once as well (a sound with a low-pass and a saturation, onto a mono second sound with both groups' faders far
 right, and alone with them far left; 15 minutes): no report, and all memory given back at the end.
 
+## Build 0.5.2: the declipper
+New in the app's own code: `bendJob` in `Main.cpp` hands the found bend to the declipper (`bend::addFlat`: the tops
+that were cut or pressed flat are rebuilt, in a file at another rate from the file's own samples); the distortion
+picture draws a rebuilt half-wave's own curve and says in words what was done; the Amount fader's tip.
+
+- `scen.sh` has the scenario `flat` for a sound whose tops are rebuilt (one group, one fader), with a second sound:
+  the fader to both ends and part of the way back, MOVEMENT's Loudness and Tone, Result and Play, Swap twice, Reset,
+  Tone Match, the second sound away and the fader on the sound itself (far left: the rebuilt tops), the group
+  switched off and on, Sureness to both ends, Export. 20 steps.
+- `exp_052.py` has the cases d1 .. d14, c1, c2 and y31 .. y35; the made sounds come from `Research/declip/mkcheck.py`.
+
+Sanitizer: nothing, in any run, and the app ended by itself with exit code 0 every time: asked to close 3, 9, 25 and
+40 s after the start (a cut and a soft flat top with a second sound, a minute of soft flat tops, a long cut: gone
+within 4 to 8 s), the first sound taken away and Swap pressed 6 s after the start, all while the tops were being
+rebuilt; `flat` three times (a cut with a mono second sound, a soft flat top with a revving engine, a dense sound cut
+on one side only with a mono second sound); `monkey` twice (150 actions on a cut with the engine as the second sound,
+120 on a soft flat top at 44.1 kHz with a filtered mono file); the picture hook (93 pictures, the same as build
+0.5.1's: its made-up finds have no flat tops); 21 export runs.
+
+One flaw, in the picture and not in the sound: a plain cut on a dense sound is not rebuilt (the declipper tries its
+rebuilding one step down first and refuses where that fails), and left of the middle the engine leaves such a
+half-wave as it is. The picture drew the straight line there all the same, as if the tops were back, next to words
+that said "left of the middle nothing changes". `bendPlot` now draws a half-wave that stays as found; where only
+one side is cut, the other side is walked back the meter's way and drawn so. Seen in the window on a noise with three
+tenths of its values cut and on one cut on one side only (the new sound `cutNoiseUp`).
+
+Two of the made sounds (`softMono`, `soft96`) are read with 41 % and so are not shown at the default Sureness: their
+exports prove only that a group that is not shown does nothing. `softMonoP` and `soft96P` are the same kind of sound
+read with 100 %, and are rebuilt.
+
+The app's exports against the render test's:
+
+| sounds | faders | difference |
+|---|---|---|
+| a plain cut, alone | Amount far left (the tops rebuilt) | -127.6 dB |
+| a soft flat top, alone | Amount far left | -129.1 dB |
+| a plain cut onto a mono second sound | middle | -124.9 dB |
+| a soft flat top onto a mono second sound | Amount far right | -134.4 dB |
+| a plain cut, alone | Amount far right (cut as deep again) | -138.0 dB |
+| a dense sound with a cut that is not rebuilt, alone | Amount far left (the export is the sound itself) | -141.1 dB |
+| a dense sound cut on one side only, not rebuilt, alone (a file at -26 dB) | Amount far left | -116.2 dB |
+| a 16 bit file cut into full scale, alone | Amount far left | -128.4 dB |
+| a mono file with a cut onto a 44.1 kHz second sound | Amount far right | -128.0 dB |
+| another level of cut on each channel, alone | Amount far left | -123.0 dB |
+| a minute of soft flat tops, alone | Amount far left | -127.3 dB |
+| a plain cut, alone | Amount far left; MOVEMENT's Loudness and Tone far left | -127.3 dB |
+| a mono soft flat top, alone | Amount far left; MOVEMENT's Pitch far right | -129.2 dB |
+| a mono soft flat top that is not shown, alone | MOVEMENT's Pitch far right | -142.2 dB |
+| a low-pass and a saturation on one sound, alone | both Amounts far left | -125.3 dB |
+| the same onto a mono second sound | Cutoff far right; MOVEMENT's Loudness and Tone far right | -124.2 dB |
+| 44.1 kHz: a plain cut, alone | Amount far left | -126.8 dB |
+| 44.1 kHz, 16 bit: a plain cut onto a 44.1 kHz second sound | Amount far right | -132.9 dB |
+| 22.05 kHz: a plain cut onto a mono second sound | middle | -124.1 dB |
+| 96 kHz: soft flat tops, alone | Amount far left | -128.8 dB |
+| 96 kHz: soft flat tops that are not shown, alone | none | -130.6 dB |
+
 ## What it does not cover
 Dropping a file onto the window and the Open dialog (the sounds come in on the command line), playback (no sound
 device here), the Export IR dialogs, and anything that only Windows or the Mac does differently. The JUCE objects

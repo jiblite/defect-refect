@@ -16,7 +16,7 @@ def cut(x, share=0.05, lv=0.7):         # a plain cut that takes this share of t
 def soft(x, drive=20.0): return 0.9 * np.tanh(unit(x) * 10 ** (drive / 20))
 def over(x, drive, k=4): return 0.9 * unit(ss.resample_poly(np.tanh(ss.resample_poly(unit(x), k, 1, axis=0) * 10 ** (drive / 20)), 1, k, axis=0))     # a clipper that works at k times the rate: ripple on the tops
 P = truth.load(SETS + 'distortion/dist_pedalboard_00/', 'A')['dry']; Q = truth.load(SETS + 'distortion/dist_sox_00/', 'A')['dry']; rng = np.random.default_rng(52); n = len(P)
-# rebuilt
+# rebuilt (cut, soft); a quarter of the values cut, which the self-test refuses (cutDeep); a light soft clipping without a pile at the top, nothing to rebuild (softOther)
 w('cut', cut(P)); w('cutDeep', cut(Q, 0.25)); w('soft', soft(P)); w('softOther', soft(Q, 14.0))
 # refused: a dense sound (the self-test), nearly a square wave, a clipper at four times the rate (its second pass)
 w('cutNoise', cut(rng.standard_normal((n, 2)), 0.3)); w('softSquare', soft(P, 50.0)); w('softOver', over(P, 20.0)); w('softOver2', over(Q, 26.0, 2))
@@ -35,6 +35,8 @@ y = cut(P); y[96000:144000] = np.abs(y).max(); w('cutHeld', y)                  
 y = cut(P); w('cutGap', np.vstack([y, np.zeros((480000, 2)), y]))                                                                   # ten seconds of nothing between two takes
 y = cut(P); y[:, 1] = y[:, 0]; w('cutTwin', y); y = y.copy(); y[::1000, 1] *= 0.999; w('cutNearTwin', y)                            # both channels alike, and all but
 w('cutFull', np.clip(unit(P) * 4.0, -1.0, 1.0), sub='PCM_16')                                                                       # into full scale of a 16 bit file
+z = unit(np.random.default_rng(53).standard_normal((n, 2))); c = np.quantile(z, 0.75); z = np.minimum(z, c); w('cutNoiseUp', 0.9 * z / np.abs(z).max())      # a dense sound cut on one side only: refused, the cut half stays as it is and the other is walked back the meter's way
+w('softMonoP', soft(P.mean(1))); w('soft96P', soft(at(P, 96000)), 96000)                                                             # soft flat tops the app shows at its default Sureness, mono and at 96 kHz (softMono and soft96 are read with 41 %: not shown)
 for name, src in (('trSpread', 'dmany/m_erf_1_05'), ('trRank', 'dmany/m_tanh_1_02'), ('trSides', 'dmany/m_alg_4_01'), ('trRough', 'dall/board_dist_pedalboard_01'), ('trOneSoft', 'dall/clip_clip_ff_cubic_00')):
     if os.path.exists(T + src + '_wet.wav'): shutil.copy(T + src + '_wet.wav', D + name + '.wav'); print(name, 'copied', flush=True)
 for name, k in (('trOneSoft', 8), ('trSpread', 5)):      # the same several times in a row: the first pass works on parts, and what it tells sends the engine back (the first pass on the whole sound after all; nothing rebuilt)

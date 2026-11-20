@@ -614,6 +614,7 @@ inline Plot bendPlot (const FoundFx& F, double s, bool onSecond)
     const bend::Flat* A = f.flat != nullptr && f.flat->did ? f.flat.get() : nullptr;
     const bool tab[2] = { A != nullptr && A->tab[0] != nullptr, A != nullptr && A->tab[1] != nullptr };
     const bool plain = A != nullptr && (A->kind[0] == 1 || A->kind[1] == 1), cutBack = plain && A->rebuilt, cutStays = plain && ! A->rebuilt && tab[0] && tab[1], softBack = A != nullptr && A->rebuilt && ! plain;
+    const bool stays = plain && ! A->rebuilt;       // a cut whose tops are not rebuilt: on the sound itself its half-waves stay as found left of the middle (both cut: nothing changes at all)
     const bend::Curve cp = bend::curveOf (f, 0, ! onSecond), cn = bend::curveOf (f, 1, ! onSecond); const double top = std::max (cp.top, cn.top), g = bend::drive (amount, top);
     P.x0 = -1.1; P.x1 = 1.1; P.y0 = -1.15; P.y1 = 1.15; P.xLabel = "in"; P.yLabel = "out"; P.xTicks = { -1.0, -0.5, 0.0, 0.5, 1.0 }; P.yTicks = { -1.0, -0.5, 0.0, 0.5, 1.0 };
     Curve line; line.colour = 2; line.dim = true; line.pts = { { -1.0, -1.0 }, { 1.0, 1.0 } }; P.curves.push_back (line);
@@ -622,12 +623,13 @@ inline Plot bendPlot (const FoundFx& F, double s, bool onSecond)
     {
         // what is left of the bend on the sound itself: the found curve, the way back as the engine goes it
         // (bend::careful), and from there the part of the drive that the fader leaves. A half-wave with a curve of its
-        // own: that curve at the part of the drive the fader leaves (none of it: the line)
+        // own: that curve at the part of the drive the fader leaves (none of it: the line). A cut that was not rebuilt has
+        // no way back: the engine only turns such a half-wave down with the drive, and the picture shows it as found
         double sp[bend::NG], sn[bend::NG]; bend::careful (f.S[0], sp); bend::careful (f.S[1], sn); const bend::Curve bp (sp, f.vp[0]), bn (sn, f.vp[1]);
         auto through = [&] (double x)
         {
             const bool up = x >= 0.0; const double a = std::abs (x); const bend::Curve& own = up ? cp : cn; const bend::Curve& safe = up ? bp : bn; double o;
-            if (tab[up ? 0 : 1]) o = g <= 1e-9 ? a : own.fwd (g * a);
+            if (tab[up ? 0 : 1]) o = stays ? (g <= 1e-9 ? 1.0 : g) * own.fwd (a) : g <= 1e-9 ? a : own.fwd (g * a);
             else { const double u = safe.back (own.fwd (a)); o = g <= 1e-9 ? u : safe.fwd (g * u); }
             return up ? o : -o;
         };
