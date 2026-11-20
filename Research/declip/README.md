@@ -241,7 +241,7 @@ clean clips, `second.py` a found cut on a second sound (the whole app against bu
 `fullscale.py` clipped files brought to full scale. Before a build: `mkcheck.py` makes 43 sounds that take every path of the engine or could trip it
 (nothing known, one side or one channel cut, a dense sound cut on one side only, a cut that holds for a second,
 files at 22 to 192 kHz), `check.sh` runs the engine's own test program on them under the address and thread
-sanitizers and under valgrind, and the stage `flat` of `Research/moving/memcheck.py` runs them through the whole
-app. For build 0.5.2: 220 runs under the address sanitizer, 16 under the thread sanitizer, 43 under valgrind and
+sanitizers and under valgrind, `vg_render.sh` runs the whole render test under valgrind on a cut and on a soft
+flat top, and the stage `flat` of `Research/moving/memcheck.py` runs all the sounds through the whole app. For build 0.5.2: 220 runs under the address sanitizer, 16 under the thread sanitizer, 43 under valgrind and
 56 runs (1,626 renders) of the stage `flat`, none with a report. The scripts expect the working folders where they
 were on the machine that made them.
