@@ -15,7 +15,7 @@ def rd(p):
     return x[:, :2] if x.shape[1] > 1 else np.repeat(x, 2, 1)
 
 def main():
-    exe, model = sys.argv[1], sys.argv[2]; paths = sys.argv[3:]; tmp = tempfile.mkdtemp(dir='/dev/shm' if os.path.isdir('/dev/shm') else None); pre = os.path.join(tmp, 'x'); bad = 0; worst = -999.0; env = dict(os.environ, DR_BEND_ANY='1')
+    exe, model = sys.argv[1], sys.argv[2]; paths = sys.argv[3:]; tmp = tempfile.mkdtemp(dir='/dev/shm' if os.path.isdir('/dev/shm') else None); pre = os.path.join(tmp, 'x'); bad = 0; worst = -999.0; env = dict(os.environ, DR_BEND_ANY='1', DR_BEND_PLAIN='1')         # the meter's curve alone; the declipper has its own comparison (Tools/declip_parity.py)
     def app(pa, pb, amount, n):
         r = subprocess.run([exe, model, pa, pb, pre, str(amount)], capture_output=True, text=True, env=env)
         if r.returncode: raise RuntimeError(r.stderr)

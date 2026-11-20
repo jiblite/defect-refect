@@ -178,8 +178,14 @@ int main (int argc, char** argv)
         if (fb)
         {
             const std::vector<char> b ((std::istreambuf_iterator<char> (fb)), {}); dr::bend::Meter mt; mt.load (b.data(), b.size());
-            const auto bd = std::make_shared<const dr::bend::Found> (other ? dr::bend::findAt (raw, sr, src.size(), mt) : dr::bend::find (src, mt)); dr::mergeBend (I, *bd); more.bend = bd;
+            dr::bend::Found bf = other ? dr::bend::findAt (raw, sr, src.size(), mt) : dr::bend::find (src, mt); const double meterTop = bf.top; dr::bend::addFlat (bf, src, other ? &raw : nullptr, sr);
+            const auto bd = std::make_shared<const dr::bend::Found> (std::move (bf)); dr::mergeBend (I, *bd); more.bend = bd;
             std::cout << "bend: found=" << (bd->found ? dr::bendName (*bd) : "0");
+            if (bd->flat != nullptr && (bd->flat->kind[0] != 0 || bd->flat->kind[1] != 0))
+            {
+                const dr::bend::Flat& A = *bd->flat; const char* names[3] = { "none", "cut", "soft" };
+                std::cout << " tops=" << names[A.kind[0]] << "/" << names[A.kind[1]] << " rebuilt=" << (int) A.rebuilt << " second=" << (int) A.second << " test=" << A.test << " ratio=" << A.ratio << " meter_top_db=" << meterTop;
+            }
             if (bd->looked) { std::cout << " logit=" << bd->logit << " sure=" << bd->sure << " top_db=" << bd->top << " upper="; for (int i = 0; i < dr::bend::NG; ++i) std::cout << (i ? "," : "") << bd->S[0][i]; std::cout << " lower="; for (int i = 0; i < dr::bend::NG; ++i) std::cout << (i ? "," : "") << bd->S[1][i]; }
             std::cout << "\n";
         }

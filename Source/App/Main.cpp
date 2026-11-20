@@ -850,6 +850,7 @@ private:
                                                             const dr::bend::Stop stop = [this, gen] { return generation.load() != gen; };
                                                             if (raw == nullptr) f = std::make_shared<dr::bend::Found> (dr::bend::find (*src, *BM, stop));
                                                             else f = std::make_shared<dr::bend::Found> (dr::bend::findAt (*raw, rawSr, src->size(), *BM, stop));      // a file at another rate: read at its own, where its values still lie on the curve
+                                                            dr::bend::addFlat (*f, *src, raw.get(), rawSr, stop);       // tops that were cut flat are rebuilt (they are flat only in the file's own samples)
                                                         }
                                                         catch (const std::exception&) { f.reset(); }        // the bend engine failed: the detectors' verdicts and the old handling stay
                                                         return f;

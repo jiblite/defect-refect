@@ -11,18 +11,25 @@
 //               nets are taught alike from different starts and their answers averaged: on a real bend they agree, on
 //               a chance find they do not
 //   find()      the meter's answer for one sound
+//   addFlat()   a sound whose tops were cut flat: the cut-off tops are rebuilt from the sound around them (the
+//               declipper: "flat tops" below, and Declip.h). A plain cut is found by this alone, whatever the meter says
 //   own()       the sound itself with the group's Amount at s: 0 = the bend walked back (three quarters of what was
-//               read, less 1 dB: careful()), 1 = untouched (bit for bit), 2 = pushed as far again
+//               read, less 1 dB: careful(); flat tops as rebuilt), 1 = untouched (bit for bit), 2 = pushed as far again
 //   onto()      another sound through the found curve: 0 = none, 1 = its peak pushed as far into the curve as the
-//               first sound's was, 2 = as far again
+//               first sound's was (a plain cut: as many of its values cut as of the first sound's), 2 = as far again
 // The curve is not one of a few textbook shapes: it is the eleven numbers per half-wave, joined smoothly, so a tube's
 // uneven halves, a tape's soft shoulder and a clipper's corner are each what they were read as.
-// The way back spreads values apart again. Where the curve pressed many levels into one (flat tops), nothing in the
-// sound says which was which: there the way back spreads only as far as spreadMost allows, and the tops stay flat.
+// The way back spreads values apart again. Where the curve pressed many levels into one (flat tops), nothing in a
+// value says how high it stood: along the meter's curve alone such values are spread only as far as spreadMost allows.
+// The sound around a flat top does say it, and from that the declipper rebuilds the tops (flat tops, below).
 // What it does not do: a box whose bend is hidden behind a strong filter or a room (the wave no longer shows it); a
 // limiter or a compressor (a level held down by a moving gain leaves the wave's shape alone: the level engine's work).
 #include "Tone.h"
+#include "Declip.h"
+#include "Resample.h"
 #include <cstring>
+#include <limits>
+#include <memory>
 #include <stdexcept>
 
 namespace dr
@@ -222,6 +229,20 @@ struct Curve
 {
     static constexpr int N = 1729;
     double vp = 0, xp = 0, top = 0; std::vector<double> inn, out;
+    Curve() = default;
+    // A curve from nodes (a value before the bend -> the bent value, both rising): the line out = in under the first
+    // node, straight pieces between the nodes, flat above the last. The table lies around ref. xpeak: the loudest value
+    // before the bend, peak: the loudest bent value (a rebuilt half-wave's curve: flat tops, below).
+    static Curve nodes (double ref, const Vec& xn, const Vec& yn, double xpeak, double peak)
+    {
+        Curve c; c.vp = peak; c.xp = xpeak; c.top = std::max (20.0 * std::log10 (std::max (xpeak, 1e-30) / std::max (peak, 1e-30)), 0.0); c.inn.resize ((size_t) N); c.out.resize ((size_t) N);
+        for (int i = 0; i < N; ++i)
+        {
+            const double v = ref * std::pow (10.0, (-96.0 + (double) i / 16.0) / 20.0); c.inn[(size_t) i] = v; c.out[(size_t) i] = v < xn.front() ? v : declip::lin (xn, yn, v);
+            if (i > 0) c.out[(size_t) i] = std::max (c.out[(size_t) i], c.out[(size_t) (i - 1)]);
+        }
+        return c;
+    }
     Curve (const double* S, double peak, double K = spreadMost) : vp (peak), inn ((size_t) N), out ((size_t) N)
     {
         double r[NG]; tidy (S, K, r); top = r[NG - 1]; xp = vp * std::pow (10.0, top / 20.0);
@@ -247,6 +268,19 @@ struct Curve
 };
 
 // ---------------------------------------------------------------- one sound's bend
+// What the declipper made of a sound whose tops were cut flat (flat tops, below).
+struct Flat
+{
+    bool did = false;                   // false: nothing of the declipper, the meter's curve alone
+    bool rebuilt = false, second = false, tested = false;       // tops were rebuilt; a second pass was made and kept; the self-test was run
+    bool whole = true;                  // a soft top's first pass worked on the whole sound (false: on a part of a long one)
+    int kind[2] = { 0, 0 };             // per half-wave (the upper first): 0 no flat top, 1 a plain cut, 2 a soft flat top
+    double c[2] = { 0, 0 };             // each half-wave's top value in the sound
+    double test = 0, ratio = 0;         // the self-test's score; how densely the second pass fills its picture against the first
+    double share = 0, cut = 0;          // the share of all values that were unknown in the first pass; the share that sit at a plain cut
+    std::shared_ptr<const Curve> tab[2];        // a half-wave's own curve (a plain cut, or a soft flat top), none where kind is 0
+    std::vector<float> dl, dr;          // the sound before the bend less the sound in hand, at the app's rate, where this engine made it (0 elsewhere)
+};
 struct Found
 {
     bool found = false, looked = false, stopped = false;
@@ -255,7 +289,9 @@ struct Found
     double S[2][NG] = {};               // the squeeze per half-wave (the upper first) and level, as the meter read it (dB)
     double vp[2] = { 0, 0 };            // each half-wave's peak in the sound
     double top = 0;                     // how far the loudest values were squeezed, the stronger half-wave's (dB, made fit for use)
-    bool hard() const { return top >= hardAt; }
+    std::shared_ptr<const Flat> flat;   // the declipper's part (none: not looked at)
+    bool cut = false;                   // a plain cut whose cut-off peaks were rebuilt: DISTORTION whatever the squeeze
+    bool hard() const { return cut || top >= hardAt; }
 };
 // How sure a bend is: the weaker of two witnesses, the meter's verdict and the squeeze it reads at the peak. The
 // verdict alone is cautious (it was taught to say no where a bend cannot be heard, and says no to many a soft one
@@ -306,11 +342,284 @@ inline double drive (double s, double top) { return s <= 1.0 ? s * s : std::pow 
 // scores more than twice what the plain reading does and harms fewer of them (Research/bend).
 inline void careful (const double* S, double* r) { for (int i = 0; i < NG; ++i) r[i] = std::max (backPart * std::min (std::max (S[i], 0.0), maxSqueeze) - backLess, 0.0); }
 
-// The sound itself. s: 0 = the bend walked back (as far as careful() goes), 1 = untouched, 2 = pushed as far again.
-// The sound's peak stays where it was.
+// ---------------------------------------------------------------- flat tops: the declipper
+// A sound whose tops were cut flat. Where the curve pressed many levels into one, nothing in a value says how high it
+// stood, but the sound around it does: a real sound is made of few partials that last a while, and the cut-off tops
+// are what is missing for them to go on smoothly (the rebuilding itself and its tools: Declip.h; the prototype and the
+// numbers: Research/declip). Each half-wave is looked at by itself:
+//   a plain cut      many values sit exactly at its top, and the values just under them are no denser than further
+//                    down. Nothing under the cut is touched; the values at the cut are rebuilt above it. This is found
+//                    whatever the meter says: the meter reads a soft curve where there is a sharp cut, and walking that
+//                    curve back spreads values apart that were never squeezed (build 0.5.1 did so, and did harm).
+//   a soft flat top  a pile of values under the top with a knee below it, and the meter has found a bend. The meter's
+//                    reading is walked back up to a first height (where it turns flat), the rest is rebuilt; the
+//                    rebuilt values then tell how the curve runs above that height (per level of the bent sound their
+//                    middle value); the lower part of the zone is walked back along this curve and only the very top
+//                    is rebuilt once more.
+//   neither          the curve as the meter read it, walked back the careful way: nothing of this section.
+// Two tests on the sound itself keep the rebuilding from doing harm. It is tried one step down first (the known values
+// cut again 3 dB lower, rebuilt, and held against what was there): a dense, noise-like sound fails, and is left as it
+// is. And a second pass that fills its picture more densely than the first is thrown away: such flat tops were not a
+// curve's work (a clipper that works at a higher rate and comes back down, for one).
+constexpr double flatSlope = 0.5;               // the first height: where the bent value moves less than this many dB per dB of the value before the bend
+constexpr double flatKeep = 0.8;                // the part of the zone above the first height that the second pass walks back along the curve the first one told
+constexpr size_t zoneMin = 256, lowMin = 128;   // values a zone and its lower part must have for a curve to be read from them
+constexpr double testMin = 20.0;                // the self-test's score under which nothing is rebuilt
+constexpr double denseMax = 1.2;                // a second pass is kept if it fills its picture at most this many times as densely as the first
+constexpr double sureCut = 0.9, topCut = 0.5;   // a plain cut shows by itself: how sure, and from how many dB of rebuilt peak above the cut
+constexpr double flatLongest = 1200.0;          // seconds: a longer sound is not rebuilt (the rebuilding takes about a tenth of the sound's length, and its result as much memory again as a third of the sound)
+constexpr int budHard[2] = { 8, 12 }, budFirst[2] = { 16, 25 }, budSecond[2] = { 8, 12 };      // rounds (steps of the schedule, rounds per step) for a plain cut and for a soft top's two passes: the first must settle, it tells the curve
+constexpr int NO = NG + 2;
+
+// One half-wave's reading over the bent sound's own levels: o = the level of a bent value in dB under the half-wave's
+// peak (rising), q = by how many dB it was squeezed. The reading may not rise faster than the level.
+inline void outSide (const double* S, double* o, double* q)
+{
+    double r[NG], lev[NO], run = 0.0;
+    for (int i = 0; i < NG; ++i) { run = std::max (run, std::min (std::max (S[i], 0.0), maxSqueeze)); r[i] = run; }
+    for (int i = 1; i < NG; ++i) r[i] = std::min (r[i], r[i - 1] + (GRID[i] - GRID[i - 1]));
+    lev[0] = -90.0; lev[1] = SMALL - 3.0; q[0] = q[1] = 0.0;
+    for (int i = 0; i < NG; ++i) { lev[i + 2] = GRID[i]; q[i + 2] = r[i]; }
+    for (int i = 0; i < NO; ++i) o[i] = lev[i] - q[i] + q[NO - 1];
+    for (int i = 1; i < NO; ++i) o[i] = std::max (o[i], o[i - 1] + 1e-6);
+}
+// The height (dB under the peak) up to which the reading is walked back. False: all the way up.
+inline bool trustAt (const double* o, const double* q, double& at)
+{
+    int i = NO - 1;
+    while (i > 0 && (o[i] - o[i - 1]) / std::max ((o[i] + q[i]) - (o[i - 1] + q[i - 1]), 1e-9) < flatSlope) --i;
+    if (i == NO - 1) return false;
+    at = o[i]; return true;
+}
+// Where a pass starts from.
+struct FlatStart
+{
+    Stereo x;                           // the values walked back where they are trusted; at the others their bound (its sign: the side)
+    declip::Flags u[2];                 // where the value is not known
+    double bp = std::numeric_limits<double>::infinity(), bn = -std::numeric_limits<double>::infinity();     // the bounds above and below zero (infinite: that side has none)
+    struct Half { double os = 0, o[NO] = {}, q[NO] = {}; } half[2];      // a soft half-wave: the first height (dB under the peak) and the reading's curve
+    int kind[2] = { 0, 0 }; size_t unknown = 0;
+};
+inline FlatStart flatStart (const Stereo& y, const Found& F, const declip::Stat* st, const int* kinds)
+{
+    FlatStart W; W.kind[0] = kinds[0]; W.kind[1] = kinds[1]; W.x = y; const size_t n = y.size(); W.u[0].assign (n, 0); W.u[1].assign (n, 0);
+    double b[2] = { 0, 0 }, Sc[2][NG];
+    for (int h = 0; h < 2; ++h)
+    {
+        if (W.kind[h] == 2)
+        {
+            FlatStart::Half& H = W.half[h]; outSide (F.S[h], H.o, H.q); double os = 0.0; bool has = trustAt (H.o, H.q, os);
+            if (declip::tied (st[h])) { os = std::min (20.0 * std::log10 (st[h].c / F.vp[h]) - declip::TIE_DB, has ? os : 0.0); has = true; }
+            if (! has) W.kind[h] = 0;      // no height from which the reading is flat: nothing to rebuild
+            else { H.os = os; b[h] = F.vp[h] * declip::db (os + declip::lin (H.o, H.q, (size_t) NO, os)); }
+        }
+        if (W.kind[h] == 1) b[h] = st[h].c * declip::db (-declip::TIE_DB);
+        careful (F.S[h], Sc[h]);
+    }
+    const Curve cp (Sc[0], F.vp[0]), cn (Sc[1], F.vp[1]); const Curve* cv[2] = { &cp, &cn }; Vec* xs[2] = { &W.x.l, &W.x.r }; bool any[2] = { false, false };
+    for (int c = 0; c < 2; ++c)
+        for (size_t i = 0; i < n; ++i)
+        {
+            const double v = (*xs[c])[i]; if (v == 0.0) continue;
+            const int h = v > 0.0 ? 0 : 1; const double pol = h == 0 ? 1.0 : -1.0, a = pol * v; double x = a; bool unk = false;
+            if (W.kind[h] == 1) unk = a >= b[h];
+            else if (W.kind[h] == 2)
+            {
+                const double lv = 20.0 * std::log10 (std::max (a, 1e-30) / F.vp[h]);
+                if (lv >= W.half[h].os) unk = true; else x = a * declip::db (declip::lin (W.half[h].o, W.half[h].q, (size_t) NO, lv));
+            }
+            else x = cv[h]->back (a);
+            if (unk) { x = b[h]; W.u[c][i] = 1; any[h] = true; ++W.unknown; }
+            (*xs[c])[i] = pol * x;
+        }
+    if (any[0]) W.bp = b[0];
+    if (any[1]) W.bn = -b[1];
+    return W;
+}
+// A half-wave's unknown values as pairs (bent value, rebuilt value), in the order of the samples. seen: only where
+// these flags are set (null: everywhere).
+inline std::vector<std::pair<double, double>> flatPairs (const Stereo& y, const Stereo& out, const declip::Flags* u, double pol, const declip::Flags* seen = nullptr)
+{
+    std::vector<std::pair<double, double>> pr; const size_t n = y.size();
+    for (size_t i = 0; i < n; ++i)
+    {
+        if (u[0][i] && pol * y.l[i] > 0.0 && (seen == nullptr || seen[0][i])) pr.push_back ({ pol * y.l[i], pol * out.l[i] });
+        if (u[1][i] && pol * y.r[i] > 0.0 && (seen == nullptr || seen[1][i])) pr.push_back ({ pol * y.r[i], pol * out.r[i] });
+    }
+    return pr;
+}
+// The second pass's start, from the first rebuild. For the soft half-waves the curve above the first height is read
+// from the rebuilt values (from the zone's lower part, never from the ties); those values are walked back along it and
+// count as known, the rest of the zone stays unknown above the curve's last value. cy, cx: the curves' nodes (bent
+// value, value before the bend). seen: where the first pass has worked (null: everywhere); the curve is read there
+// and serves the whole sound. False: no soft half-wave had enough of a zone.
+inline bool flatSecond (const Stereo& y, const FlatStart& W, const Stereo& out, const declip::Stat* st, FlatStart& W2, Vec* cy, Vec* cx, const declip::Flags* seen = nullptr)
+{
+    W2 = W; bool did = false; const size_t n = y.size(); const Vec* ys[2] = { &y.l, &y.r }; Vec* xs[2] = { &W2.x.l, &W2.x.r };
+    for (int h = 0; h < 2; ++h)
+    {
+        if (W.kind[h] != 2) continue;
+        const double pol = h == 0 ? 1.0 : -1.0; std::vector<std::pair<double, double>> pr = flatPairs (y, out, W.u, pol, seen), low;
+        if (pr.size() < zoneMin) continue;
+        Vec yy; yy.reserve (pr.size()); double y0 = pr[0].first, x0 = pr[0].second;
+        for (const auto& p : pr) { yy.push_back (p.first); y0 = std::min (y0, p.first); x0 = std::min (x0, p.second); }
+        double th = declip::quantile (yy, flatKeep); if (declip::tied (st[h])) th = std::min (th, st[h].c * declip::db (-declip::TIE_DB));
+        for (const auto& p : pr) if (p.first < th) low.push_back (p);
+        if (low.size() < lowMin) continue;
+        declip::curveFrom (low, y0, x0, cy[h], cx[h]); did = true;
+        for (int c = 0; c < 2; ++c)
+            for (size_t i = 0; i < n; ++i)
+            {
+                const double a = pol * (*ys[c])[i]; if (! W.u[c][i] || ! (a > 0.0)) continue;
+                if (a < th) { (*xs[c])[i] = pol * declip::lin (cy[h], cx[h], a); W2.u[c][i] = 0; --W2.unknown; }
+                else (*xs[c])[i] = pol * cx[h].back();
+            }
+    }
+    return did;
+}
+// A rebuilt half-wave's curve from what the engine did: under the first height the walk that was made, above it the
+// curve the rebuilt values tell. A plain cut: the line up to the cut, flat from there. xhat: the sound before the bend,
+// u: what was still unknown in the last pass, cy, cx: the second pass's curve (empty: none).
+inline std::shared_ptr<const Curve> flatTable (int h, const Stereo& y, const Stereo& xhat, const declip::Flags* u, const FlatStart::Half& H, const Vec& cy, const Vec& cx, int kind, const declip::Stat& st, double vp)
+{
+    const double pol = h == 0 ? 1.0 : -1.0, xp = peakOf (xhat, pol);
+    if (kind == 1) return std::make_shared<const Curve> (Curve::nodes (st.c, Vec { st.c }, Vec { st.c }, xp, st.c));
+    Vec xn, yn; const long len = (long) std::ceil ((H.os + 96.0) * 16.0);
+    for (long i = 0; i <= len; ++i) { const double lb = i < len ? -96.0 + (double) i / 16.0 : H.os; xn.push_back (vp * declip::db (lb + declip::lin (H.o, H.q, (size_t) NO, lb))); yn.push_back (vp * declip::db (lb)); }
+    xn.insert (xn.end(), cx.begin(), cx.end()); yn.insert (yn.end(), cy.begin(), cy.end());
+    std::vector<std::pair<double, double>> pr = flatPairs (y, xhat, u, pol);
+    if (pr.size() >= (size_t) declip::LEAST)
+    {
+        Vec ym, xm; declip::curveFrom (pr, yn.back(), xn.back(), ym, xm);
+        xn.insert (xn.end(), xm.begin() + 1, xm.end()); yn.insert (yn.end(), ym.begin() + 1, ym.end());
+    }
+    Vec X { xn[0] }, Y { yn[0] };          // both rising: a node that does not lie further out than the one before it is left out
+    for (size_t i = 1; i < xn.size(); ++i) if (xn[i] > X.back() * (1.0 + 1e-9) && yn[i] >= Y.back()) { X.push_back (xn[i]); Y.push_back (yn[i]); }
+    return std::make_shared<const Curve> (Curve::nodes (xp, X, Y, xp, vp));
+}
+// What the declipper makes of a sound. y: the sound's own samples at `rate`; F: the meter's answer for it. xhat: the
+// sound before the bend at that rate, in the scale where small values pass as they are (when the answer says did; a
+// half-wave without a flat top is walked back the careful way in it). Null: given up.
+// A soft flat top's first pass costs the most rounds, and its use is to tell the curve: on a long sound it works on
+// parts spread evenly over the sound (first hops per channel in all: declip::choose), the curve it tells serves the
+// whole sound, and the second pass rebuilds all of it. Should the second pass not be kept, the first is made on the
+// whole sound after all. A sound of more than flatLongest seconds is not rebuilt at all (as if the self-test had failed).
+// look: for studies, what each pass made.
+struct FlatLook { Stereo first, second; };
+inline std::shared_ptr<Flat> flatTops (const Stereo& y, double rate, const Found& F, Stereo& xhat, const Stop& stop = {}, int first = declip::FIRST, int part = declip::PART, FlatLook* look = nullptr)
+{
+    auto R = std::make_shared<Flat>(); const int N = declip::window (rate); const size_t n = y.size();
+    if (! F.looked || n < (size_t) (4 * N)) return R;
+    const declip::Stat st[2] = { declip::stats (y, 1.0, F.vp[0]), declip::stats (y, -1.0, F.vp[1]) }; int kinds[2] = { declip::regime (st[0], F.found), declip::regime (st[1], F.found) };
+    R->c[0] = st[0].c; R->c[1] = st[1].c;
+    if (kinds[0] == 0 && kinds[1] == 0) return R;
+    FlatStart W = flatStart (y, F, st, kinds); R->kind[0] = W.kind[0]; R->kind[1] = W.kind[1]; R->share = (double) W.unknown / (double) (2 * n);
+    R->cut = (double) ((W.kind[0] == 1 ? st[0].tn : 0) + (W.kind[1] == 1 ? st[1].tn : 0)) / (double) (2 * n);
+    if (W.unknown == 0) return R;
+    const bool soft = W.kind[0] == 2 || W.kind[1] == 2; const int* bud = soft ? budFirst : budHard;
+    const bool tooLong = (double) n > flatLongest * rate;
+    if (! tooLong) { if (! declip::selfTest (W.x, W.bp, W.bn, bud[0], bud[1], rate, N, R->test, stop)) return nullptr; R->tested = true; }
+    if (tooLong || R->test < testMin)       // rebuilding would do harm: a plain cut stays as it is, a soft top goes the careful way
+    {
+        const int k2[2] = { W.kind[0] == 1 ? 1 : 0, W.kind[1] == 1 ? 1 : 0 }; R->kind[0] = k2[0]; R->kind[1] = k2[1];
+        if (k2[0] == 0 && k2[1] == 0) return R;
+        W = flatStart (y, F, st, k2); xhat = W.x;
+        for (size_t i = 0; i < n; ++i) { if (W.u[0][i]) xhat.l[i] = y.l[i]; if (W.u[1][i]) xhat.r[i] = y.r[i]; }
+        for (int h = 0; h < 2; ++h) if (k2[h] == 1)
+        {
+            double r[NG]; tidy (F.S[h], spreadMost, r); const double c = st[h].c;
+            R->tab[h] = std::make_shared<const Curve> (Curve::nodes (c, Vec { c }, Vec { c }, c * std::pow (10.0, r[NG - 1] / 20.0), c));
+        }
+        R->did = true; return R;
+    }
+    std::vector<declip::Piece> only[2]; declip::Flags seen[2];
+    const bool whole = ! soft || first <= 0 || declip::choose (W.u, N / 2, (size_t) first, part, only, seen); R->whole = whole;
+    Stereo out; if (! declip::rebuild (W.x, W.u, out, bud[0], bud[1], N, stop, whole ? nullptr : only)) return nullptr;
+    if (look != nullptr) look->first = out;
+    FlatStart W2; Vec cy[2], cx[2]; const declip::Flags* uf = W.u;
+    if (soft)
+    {
+        Vec ty[2], tx[2];
+        if (flatSecond (y, W, out, st, W2, ty, tx, whole ? nullptr : seen))
+        {
+            Stereo out1 = W2.x; if (W2.unknown > 0 && ! declip::rebuild (W2.x, W2.u, out1, budSecond[0], budSecond[1], N, stop)) return nullptr;
+            if (look != nullptr) look->second = out1;
+            R->ratio = declip::dense (out1, N) / std::max (declip::dense (out, N), 1e-30);
+            if (R->ratio <= denseMax) { out = std::move (out1); uf = W2.u; for (int h = 0; h < 2; ++h) { cy[h] = ty[h]; cx[h] = tx[h]; } R->second = true; }
+        }
+        if (! R->second && ! whole && ! declip::rebuild (W.x, W.u, out, bud[0], bud[1], N, stop)) return nullptr;       // the first pass is the answer after all: on the whole sound
+    }
+    for (int h = 0; h < 2; ++h) if (W.kind[h] != 0) R->tab[h] = flatTable (h, y, out, uf, W.half[h], cy[h], cx[h], W.kind[h], st[h], F.vp[h]);
+    xhat = std::move (out); R->did = R->rebuilt = true; return R;
+}
+// The declipper's part of a found bend, put into F. sound: the sound at the app's rate. raw, rate: the file's own
+// samples where the file is at another rate (its tops are flat only there), else null. A plain cut whose peaks were
+// rebuilt by topCut dB or more shows by itself, whatever the meter said.
+inline void addFlat (Found& F, const Stereo& sound, const Stereo* raw = nullptr, double rate = SR, const Stop& stop = {}, int first = declip::FIRST, int part = declip::PART, FlatLook* look = nullptr)
+{
+    if (! F.looked || F.stopped) return;
+    const Stereo& y = raw != nullptr ? *raw : sound; Stereo xhat;
+    std::shared_ptr<Flat> R = flatTops (y, raw != nullptr ? rate : SR, F, xhat, stop, first, part, look);
+    if (R == nullptr) { if (stop && stop()) F.stopped = true; return; }         // given up; or the rebuilding could not be done: the meter's curve alone, as before
+    if (R->did)
+    {
+        // the sound before the bend less the sound in hand, where this engine made it (a half-wave without a flat top is the meter's curve's to walk back)
+        Stereo d; d.l.assign (y.size(), 0.0); d.r.assign (y.size(), 0.0); const Vec* ys[2] = { &y.l, &y.r }; const Vec* hs[2] = { &xhat.l, &xhat.r }; Vec* ds[2] = { &d.l, &d.r };
+        for (int c = 0; c < 2; ++c) for (size_t i = 0; i < y.size(); ++i) { const double v = (*ys[c])[i]; if (v != 0.0 && R->tab[v > 0.0 ? 0 : 1] != nullptr) (*ds[c])[i] = (*hs[c])[i] - v; }
+        if (raw != nullptr) d = resampled (d, rate, SR);
+        d.l.resize (sound.size(), 0.0); d.r.resize (sound.size(), 0.0);
+        R->dl.assign (d.l.begin(), d.l.end()); R->dr.assign (d.r.begin(), d.r.end());
+        bool cut = false, plain = false; double top = 0.0;
+        for (int h = 0; h < 2; ++h)
+        {
+            if (R->tab[h] == nullptr) { plain = true; continue; }
+            top = std::max (top, R->tab[h]->top); if (R->kind[h] == 1 && R->rebuilt && R->tab[h]->top >= topCut) cut = true;
+        }
+        if (plain) top = std::max (top, F.top);
+        if (cut) { F.found = true; F.sure = std::max (F.sure, sureCut); F.cut = true; }
+        F.top = top;
+    }
+    F.flat = R;
+}
+// A half-wave's curve as the engine has it for a second sound and for the picture: a plain cut's own, a rebuilt soft
+// top's own (rebuilt true), else the meter's.
+inline Curve curveOf (const Found& F, int h, bool rebuilt)
+{
+    if (F.flat != nullptr && F.flat->did && F.flat->tab[h] != nullptr && (rebuilt || F.flat->kind[h] == 1)) return *F.flat->tab[h];
+    return Curve (F.S[h], F.vp[h]);
+}
+
+// The sound itself where the declipper had a part. With x the sound before the bend (rebuilt where its tops were flat)
+// and f a half-wave's curve: f (g x) + w (y - f (x)), g the drive the fader stands for. What the curve does not
+// explain of the sound in hand (little: the spread of rebuilt tops around the curve) comes back as the fader nears its
+// middle, w = g squared up to 1, so that the middle is the sound itself and far left the rebuilt sound.
+inline Stereo ownFlat (const Stereo& y, const Found& F, double s, const Stop& stop = {})
+{
+    const Flat& A = *F.flat; double Sp[NG], Sn[NG];
+    if (s < 1.0) { careful (F.S[0], Sp); careful (F.S[1], Sn); } else { std::copy (F.S[0], F.S[0] + NG, Sp); std::copy (F.S[1], F.S[1] + NG, Sn); }
+    const Curve mp (Sp, F.vp[0]), mn (Sn, F.vp[1]); const bool tab[2] = { A.tab[0] != nullptr, A.tab[1] != nullptr }; const Curve* cv[2] = { tab[0] ? A.tab[0].get() : &mp, tab[1] ? A.tab[1].get() : &mn };
+    const double g = drive (std::clamp (s, 0.0, 2.0), std::max (cv[0]->top, cv[1]->top)), w = std::min (g, 1.0) * std::min (g, 1.0), pk = peakOf (y, 0.0);
+    Stereo o = y; Vec* os[2] = { &o.l, &o.r }; const std::vector<float>* ds[2] = { &A.dl, &A.dr };
+    for (int c = 0; c < 2; ++c)
+    {
+        if (stop && stop()) return y;
+        Vec& ch = *os[c]; const std::vector<float>& d = *ds[c];
+        for (size_t i = 0; i < ch.size(); ++i)
+        {
+            const double v = ch[i]; const int h = v >= 0.0 ? 0 : 1; const double pol = h == 0 ? 1.0 : -1.0, a = pol * v;
+            const double x = tab[h] ? std::max (a + pol * (double) d[i], 0.0) : cv[h]->back (a);
+            ch[i] = pol * (g <= 0.0 ? x : cv[h]->fwd (g * x) + w * (a - cv[h]->fwd (x)));
+        }
+    }
+    const double k = pk / std::max (peakOf (o, 0.0), 1e-30); for (Vec* ch : { &o.l, &o.r }) for (double& v : *ch) v *= k;
+    return o;
+}
+// The sound itself. s: 0 = the bend walked back (as far as careful() goes; flat tops as the declipper rebuilt them),
+// 1 = untouched, 2 = pushed as far again. The sound's peak stays where it was.
 inline Stereo own (const Stereo& y, const Found& F, double s, const Stop& stop = {})
 {
     if (! F.found || s == 1.0 || y.size() == 0) return y;
+    if (F.flat != nullptr && F.flat->did && F.flat->dl.size() == y.size() && F.flat->dr.size() == y.size()) return ownFlat (y, F, s, stop);
     double Sp[NG], Sn[NG];
     if (s < 1.0) { careful (F.S[0], Sp); careful (F.S[1], Sn); } else { std::copy (F.S[0], F.S[0] + NG, Sp); std::copy (F.S[1], F.S[1] + NG, Sn); }
     const Curve cp (Sp, F.vp[0]), cn (Sn, F.vp[1]); const double g = drive (std::clamp (s, 0.0, 2.0), std::max (cp.top, cn.top)), pk = peakOf (y, 0.0);
@@ -329,11 +638,24 @@ inline Stereo own (const Stereo& y, const Found& F, double s, const Stop& stop =
 }
 // Another sound through the found curve. s: 0 = none, 1 = its peak pushed as far into the curve as the first sound's
 // was, 2 = as far again. Its peak stays where it was.
+// With a plain cut the drive is not set by peaks (how high the first sound's cut-off peaks stood is the least sure thing
+// about them): the second sound is pushed so far that as many of its values are cut as of the first sound's. A soft
+// flat top goes onto a second sound as the meter read it.
 inline Stereo onto (const Stereo& b, const Found& F, double s, const Stop& stop = {})
 {
     if (! F.found || s <= 0.0 || b.size() == 0) return b;
     const double pb = peakOf (b, 0.0); if (! (pb > 1e-12)) return b;
-    const Curve cp (F.S[0], F.vp[0]), cn (F.S[1], F.vp[1]); const double k = drive (std::min (s, 2.0), std::max (cp.top, cn.top)) * std::max (cp.xp, cn.xp) / pb;
+    const bool plain = F.flat != nullptr && F.flat->did && (F.flat->kind[0] == 1 || F.flat->kind[1] == 1);
+    const Curve cp = curveOf (F, 0, false), cn = curveOf (F, 1, false); double k = drive (std::min (s, 2.0), std::max (cp.top, cn.top));
+    if (plain)
+    {
+        const Flat& A = *F.flat; Vec r; r.reserve (2 * b.size());          // how far each value reaches towards the cut
+        for (const Vec* ch : { &b.l, &b.r }) for (double v : *ch) { double a = 0.0; if (A.kind[0] == 1) a = std::max (a, v / A.c[0]); if (A.kind[1] == 1) a = std::max (a, -v / A.c[1]); r.push_back (a); }
+        const size_t m = std::min ((size_t) std::floor (A.cut * (double) r.size() + 0.5), r.size()); double top = 0.0;
+        if (m >= 1) { const auto at = r.begin() + (std::ptrdiff_t) (r.size() - m); std::nth_element (r.begin(), at, r.end()); top = *at; } else top = *std::max_element (r.begin(), r.end());
+        k /= std::max (top, 1e-30);
+    }
+    else k = k * std::max (cp.xp, cn.xp) / pb;
     Stereo o = b;
     for (Vec* ch : { &o.l, &o.r })
     {

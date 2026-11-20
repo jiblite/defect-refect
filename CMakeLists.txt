@@ -94,3 +94,4 @@ add_executable(drfilter Tests/filter.cpp)
 
 # The bend engine (distortion, saturation) without the UI (no JUCE): Tests/bend.cpp
 add_executable(drbend Tests/bend.cpp)
+target_link_libraries(drbend PRIVATE Threads::Threads)         # the declipper rebuilds flat tops on a few threads
