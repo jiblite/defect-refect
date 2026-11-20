@@ -21,6 +21,8 @@ working folders it ran in, and no audio is in the repo.
   their value is exact).
 - `lagcheck.py export.wav reference.wav` says how many samples an export comes after the render test's output and
   how equal the two are once lined up.
+- `valgrind.sh` (build 0.5.1) runs the two new engines' own test programs under valgrind, which sees a read of a
+  value that was never set.
 
 Without a window manager the atoms of the close protocol do not exist and JUCE only looks them up: `wmdel intern`
 makes them before the app starts. The fader rows' places depend on which groups are shown and how many faders each
@@ -171,6 +173,14 @@ higher:
 | 44.1 kHz: the same onto a 44.1 kHz second sound | Amount far right | -131.0 dB |
 
 MEMCHECK_PLACEHOLDER
+
+The sanitizer does not see a value that is read before it was ever set. For that the two new engines' own test
+programs (`Tests/filter.cpp`, `Tests/bend.cpp`) ran under valgrind (`valgrind.sh`): each of the 15 sounds made for
+the memory check's new stage alone, with the faders at both ends and in between, and four of them onto four second
+sounds (a mono one, one at 44.1 kHz, two short ones) with the faders in the middle and far right, and each engine
+once made to work on a sound in which it finds nothing: 156 runs, no report. The whole render test ran under it
+once as well (a sound with a low-pass and a saturation, onto a mono second sound with both groups' faders far
+right, and alone with them far left; 15 minutes): no report, and all memory given back at the end.
 
 ## What it does not cover
 Dropping a file onto the window and the Open dialog (the sounds come in on the command line), playback (no sound
