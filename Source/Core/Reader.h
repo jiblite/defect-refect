@@ -179,8 +179,9 @@ struct Net
     }
 };
 
-// Several nets taught the same thing from different starts, read together: their mean is the answer, and where they
-// lie far apart none of them knows.
+// Several nets taught the same thing, each from a start of its own, read together. Band by band the answer is the
+// one nearest to zero, and zero where they do not agree on the sign: what only one of them reads is not taken. (A cut
+// that is read too deep does harm when it is undone, one read too shallow leaves some of the filter in.)
 struct Reader
 {
     std::vector<Net> nets;
@@ -200,8 +201,9 @@ struct Reader
         nets = std::move (m);
     }
 
-    // The nets' answer for one sound's curves: the mean curve (dB per band), the mean of how sure they are (a logit:
-    // above 0 = more likely there than not), and per band how far the nets lie apart (dB, largest minus smallest).
+    // The nets' answer for one sound's curves: the curve (dB per band; the least of what they read), the mean of how
+    // sure they are (a logit: above 0 = more likely there than not), and per band how far the nets lie apart (dB,
+    // largest minus smallest).
     void run (const Curves& C, Vec& out, double& sure, Vec* apart = nullptr) const
     {
         out.assign ((size_t) NBAND, 0.0); sure = -99.0; if (apart != nullptr) apart->assign ((size_t) NBAND, 0.0);
@@ -210,9 +212,10 @@ struct Reader
         for (const Net& n : nets)
         {
             n.run (C, one, s1); s += s1;
-            for (int b = 0; b < NBAND; ++b) { const double v = one[(size_t) b]; out[(size_t) b] += v; lo[(size_t) b] = std::min (lo[(size_t) b], v); hi[(size_t) b] = std::max (hi[(size_t) b], v); }
+            for (int b = 0; b < NBAND; ++b) { const double v = one[(size_t) b]; lo[(size_t) b] = std::min (lo[(size_t) b], v); hi[(size_t) b] = std::max (hi[(size_t) b], v); }
         }
-        const double k = 1.0 / (double) nets.size(); for (double& v : out) v *= k; sure = s * k;
+        sure = s / (double) nets.size();
+        for (int b = 0; b < NBAND; ++b) out[(size_t) b] = lo[(size_t) b] > 0.0 ? lo[(size_t) b] : hi[(size_t) b] < 0.0 ? hi[(size_t) b] : 0.0;
         if (apart != nullptr) for (int b = 0; b < NBAND; ++b) (*apart)[(size_t) b] = hi[(size_t) b] - lo[(size_t) b];
     }
 };

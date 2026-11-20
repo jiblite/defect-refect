@@ -611,7 +611,27 @@ inline Plot bendPlot (const FoundFx& F, double s, bool onSecond)
     P.x0 = -1.1; P.x1 = 1.1; P.y0 = -1.15; P.y1 = 1.15; P.xLabel = "in"; P.yLabel = "out"; P.xTicks = { -1.0, -0.5, 0.0, 0.5, 1.0 }; P.yTicks = { -1.0, -0.5, 0.0, 0.5, 1.0 };
     Curve line; line.colour = 2; line.dim = true; line.pts = { { -1.0, -1.0 }, { 1.0, 1.0 } }; P.curves.push_back (line);
     Curve c;
-    if (g > 1e-9)
+    if (! onSecond && amount < 1.0)
+    {
+        // what is left of the bend on the sound itself: the found curve, the way back as the engine goes it
+        // (bend::careful), and from there the part of the drive that the fader leaves
+        double sp[bend::NG], sn[bend::NG]; bend::careful (f.S[0], sp); bend::careful (f.S[1], sn); const bend::Curve bp (sp, f.vp[0]), bn (sn, f.vp[1]);
+        auto through = [&] (double x)
+        {
+            const bool up = x >= 0.0; const double v = up ? cp.fwd (x) : cn.fwd (-x), u = up ? bp.back (v) : bn.back (v), d = g * u, o = g <= 1e-9 ? u : up ? bp.fwd (d) : bn.fwd (d);
+            return up ? o : -o;
+        };
+        const double xa = cp.xp, xb = cn.xp, X = std::max (xa, xb), Y = std::max ({ through (xa), -through (-xb), 1e-30 });
+        c.pts.push_back ({ -xb / X, through (-xb) / Y });
+        for (int i = -400; i <= 400; ++i)
+        {
+            const double t = (double) i / 400.0, a = t * std::abs (t), x = a * X;
+            if (x <= -xb || x >= xa) continue;
+            c.pts.push_back ({ a, through (x) / Y });
+        }
+        c.pts.push_back ({ xa / X, through (xa) / Y });
+    }
+    else if (g > 1e-9)
     {
         const double xa = g * cp.xp, xb = g * cn.xp, X = std::max (xa, xb), Y = std::max ({ cp.fwd (xa), cn.fwd (xb), 1e-30 });
         c.pts.push_back ({ -xb / X, -cn.fwd (xb) / Y });
@@ -633,8 +653,12 @@ inline Plot bendPlot (const FoundFx& F, double s, bool onSecond)
     if (std::abs (cp.top - cn.top) >= 1.5) t += " (those above the middle line by " + num (cp.top, 0) + ", those under it by " + num (cn.top, 0) + ")";
     t += allOfIt ? "; the curve bends even the quiet values." : "; the curve starts to bend " + num (-from, 0) + " dB under them.";
     t += " Drawn: what goes in against what comes out (grey: no bend).";
-    if (amount < 1e-3) t += onSecond ? " Amount at zero: not put on the second sound." : " Amount at zero: the bend is walked back as far as the sound still shows how.";
-    else if (! onSecond && amount < 1.0 - 0.005 && f.hard()) t += " Tops that were pressed flat stay flat.";
+    if (onSecond) { if (amount < 1e-3) t += " Amount at zero: not put on the second sound."; }
+    else if (amount < 1.0 - 0.005)
+    {
+        if (amount < 1e-3) t += " Amount at zero: the bend is walked back most of the way. Not all of it: reading too much would do harm there.";
+        if (f.hard()) t += " Tops that were pressed flat stay flat.";
+    }
     P.caption = t; return P;
 }
 

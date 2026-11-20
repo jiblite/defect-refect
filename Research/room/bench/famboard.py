@@ -16,7 +16,7 @@
 import sys, os, json, subprocess, tempfile, re
 import numpy as np, soundfile as sf
 HERE = os.path.dirname(os.path.abspath(__file__)); sys.path.insert(0, HERE); sys.path.insert(0, os.path.join(HERE, '..', 'proto'))
-SETS = os.path.join(HERE, 'sets'); SKIP = ('reverb', 'tone'); SR = 48000
+SETS = os.environ.get('SETS', os.path.join(HERE, 'sets')); SKIP = ('reverb', 'tone'); SR = 48000      # SETS in the environment: another folder of cases laid out the same way
 
 def show(path):
     rows = [json.loads(l) for l in open(path)]; fams = sorted({r['fam'] for r in rows})

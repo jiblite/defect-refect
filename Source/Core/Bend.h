@@ -5,12 +5,14 @@
 //               how the frame's values lie under its peak (eleven places in their order), how steep the wave is at six
 //               heights against the frame's own steepness, and how many frames the class has; and how much of the
 //               half-wave sits within 0.1, 0.5, 1 and 2 dB of its peak
-//   Meter       a small net taught with sounds through curves of many shapes (Research/bend): per half-wave, by how
-//               many dB the curve squeezed each of eleven levels of the sound as it was (30 dB under its peak up to
-//               the peak) against its plain gain for small values; and whether a bend is there to be heard
+//   Meter       a few small nets taught with sounds through curves of many shapes (Research/bend): per half-wave, by
+//               how many dB the curve squeezed each of eleven levels of the sound as it was (30 dB under its peak up
+//               to the peak) against its plain gain for small values; and whether a bend is there to be heard. The
+//               nets are taught alike from different starts and their answers averaged: on a real bend they agree, on
+//               a chance find they do not
 //   find()      the meter's answer for one sound
-//   own()       the sound itself with the group's Amount at s: 0 = the bend walked back, 1 = untouched (bit for bit),
-//               2 = pushed as far again
+//   own()       the sound itself with the group's Amount at s: 0 = the bend walked back (three quarters of what was
+//               read, less 1 dB: careful()), 1 = untouched (bit for bit), 2 = pushed as far again
 //   onto()      another sound through the found curve: 0 = none, 1 = its peak pushed as far into the curve as the
 //               first sound's was, 2 = as far again
 // The curve is not one of a few textbook shapes: it is the eleven numbers per half-wave, joined smoothly, so a tube's
@@ -38,9 +40,9 @@ constexpr double SMALL = -34.0;                 // values this far under the pea
 constexpr double maxSqueeze = 40.0;             // no answer is used beyond this many dB
 constexpr double spreadMost = 6.0;              // the way back spreads values at most this many times as far apart as they lie in the sound (in dB)
 constexpr size_t minLen = 24000;                // half a second: under that nothing is read
-constexpr double sureAt = 1.5;                  // the meter's own number (a logit) from which a bend is shown with the Sureness slider where it stands at first
-constexpr double lowAt = 0.0;                   // ... and from which it is kept at all: such a bend shows when the slider is turned down
-constexpr double topAt = 3.0;                   // either way the loudest values must have been squeezed by this many dB
+constexpr double backPart = 0.75, backLess = 1.0;        // the way back takes this part of the read squeeze, less this many dB (see careful())
+constexpr double sureAt = -2.0, sureTop = 5.0;  // the meter's verdict (a logit) and the squeeze it reads at the peak (dB) from which a bend is shown with the Sureness slider where it stands at first: both must be there
+constexpr double lowAt = -6.0, topAt = 3.0;     // ... and from which it is kept at all: such a bend shows when the slider is turned down
 constexpr double hardAt = 10.0;                 // squeezed by this much at the peak the group is called DISTORTION, under it SATURATION
 constexpr double shownSure = 0.65;              // what the Sureness slider cuts at by default: a bend just found shows this
 
@@ -105,8 +107,9 @@ inline bool features (const Stereo& y, double pol, float* out, double& peak, con
 struct Meter
 {
     struct Lin { int in = 0, out = 0; std::vector<float> w, b; };       // w[out][in]
-    std::vector<float> mean, sd; std::vector<Lin> lin;
-    bool ready() const { return ! lin.empty(); }
+    struct Net { std::vector<float> mean, sd; std::vector<Lin> lin; };
+    std::vector<Net> nets;              // several nets, taught alike from different starts: the meter's answer is the mean of theirs
+    bool ready() const { return ! nets.empty(); }
     [[noreturn]] static void fail (const char* why) { throw std::runtime_error (std::string ("bend meter model: ") + why); }
 
     // Reads the file written by Tools/export_bend_model.py from memory. Throws std::runtime_error, and stays as it
@@ -124,19 +127,25 @@ struct Meter
             for (float f : v) if (! std::isfinite (f)) fail ("a number is not finite");
         };
         char magic[4]; take (magic, 4); if (std::memcmp (magic, "DRBM", 4) != 0) fail ("not a bend meter model file");
-        if (u32() != 1) fail ("unknown format version");
+        if (u32() != 2) fail ("unknown format version");
         if (u32() != (uint32_t) NF) fail ("made for a different number of inputs");
         if (u32() != (uint32_t) NG) fail ("made for a different number of levels");
-        const uint32_t layers = u32(); if (layers < 1 || layers > 16) fail ("bad number of layers");
-        Meter m; floats (m.mean, (size_t) NF); floats (m.sd, (size_t) NF);
-        for (float s : m.sd) if (! (s > 0.0f)) fail ("a spread is not above zero");
-        int in = 2 * NF + 1;
-        for (uint32_t i = 0; i < layers; ++i)
+        const uint32_t count = u32(); if (count < 1 || count > 16) fail ("bad number of nets");
+        Meter m;
+        for (uint32_t k = 0; k < count; ++k)
         {
-            const uint32_t out = u32(); if (out < 1 || out > 4096) fail ("bad layer width");
-            Lin l; l.in = in; l.out = (int) out; floats (l.w, (size_t) out * (size_t) in); floats (l.b, (size_t) out); m.lin.push_back (std::move (l)); in = (int) out;
+            const uint32_t layers = u32(); if (layers < 1 || layers > 16) fail ("bad number of layers");
+            Net net; floats (net.mean, (size_t) NF); floats (net.sd, (size_t) NF);
+            for (float s : net.sd) if (! (s > 0.0f)) fail ("a spread is not above zero");
+            int in = 2 * NF + 1;
+            for (uint32_t i = 0; i < layers; ++i)
+            {
+                const uint32_t out = u32(); if (out < 1 || out > 4096) fail ("bad layer width");
+                Lin l; l.in = in; l.out = (int) out; floats (l.w, (size_t) out * (size_t) in); floats (l.b, (size_t) out); net.lin.push_back (std::move (l)); in = (int) out;
+            }
+            if (in != NG + 1) fail ("the last layer does not give the levels and the verdict");
+            m.nets.push_back (std::move (net));
         }
-        if (in != NG + 1) fail ("the last layer does not give the levels and the verdict");
         if (left != 0) fail ("more data than the header gives");
         *this = std::move (m);
     }
@@ -147,28 +156,33 @@ struct Meter
     {
         logit = -99.0; for (int h = 0; h < 2; ++h) for (int g = 0; g < NG; ++g) S[h][g] = 0.0;
         if (! ready()) return;
-        std::vector<float> Z ((size_t) 2 * (size_t) NF); for (int h = 0; h < 2; ++h) for (int i = 0; i < NF; ++i) Z[(size_t) (h * NF + i)] = (X[h * NF + i] - mean[(size_t) i]) / sd[(size_t) i];
-        double sum = 0;
-        for (int h = 0; h < 2; ++h)        // each half-wave in turn: its own numbers first, the other half's after, and how their peaks compare
+        std::vector<float> Z ((size_t) 2 * (size_t) NF); double sum = 0;
+        for (const Net& net : nets)
         {
-            std::vector<float> a ((size_t) (2 * NF + 1)), b;
-            for (int i = 0; i < NF; ++i) { a[(size_t) i] = Z[(size_t) (h * NF + i)]; a[(size_t) (NF + i)] = Z[(size_t) ((1 - h) * NF + i)]; }
-            a[(size_t) (2 * NF)] = (float) ((h == 0 ? ratioDb : -ratioDb) / 20.0);
-            for (size_t li = 0; li < lin.size(); ++li)
+            for (int h = 0; h < 2; ++h) for (int i = 0; i < NF; ++i) Z[(size_t) (h * NF + i)] = (X[h * NF + i] - net.mean[(size_t) i]) / net.sd[(size_t) i];
+            for (int h = 0; h < 2; ++h)        // each half-wave in turn: its own numbers first, the other half's after, and how their peaks compare
             {
-                const Lin& L = lin[li]; b.assign ((size_t) L.out, 0.0f);
-                for (int o = 0; o < L.out; ++o)
+                std::vector<float> a ((size_t) (2 * NF + 1)), b;
+                for (int i = 0; i < NF; ++i) { a[(size_t) i] = Z[(size_t) (h * NF + i)]; a[(size_t) (NF + i)] = Z[(size_t) ((1 - h) * NF + i)]; }
+                a[(size_t) (2 * NF)] = (float) ((h == 0 ? ratioDb : -ratioDb) / 20.0);
+                for (size_t li = 0; li < net.lin.size(); ++li)
                 {
-                    const float* w = L.w.data() + (size_t) o * (size_t) L.in; double s = L.b[(size_t) o];
-                    for (int i = 0; i < L.in; ++i) s += (double) w[i] * (double) a[(size_t) i];
-                    b[(size_t) o] = li + 1 < lin.size() ? (float) std::max (s, 0.0) : (float) s;
+                    const Lin& L = net.lin[li]; b.assign ((size_t) L.out, 0.0f);
+                    for (int o = 0; o < L.out; ++o)
+                    {
+                        const float* w = L.w.data() + (size_t) o * (size_t) L.in; double s = L.b[(size_t) o];
+                        for (int i = 0; i < L.in; ++i) s += (double) w[i] * (double) a[(size_t) i];
+                        b[(size_t) o] = li + 1 < net.lin.size() ? (float) std::max (s, 0.0) : (float) s;
+                    }
+                    a.swap (b);
                 }
-                a.swap (b);
+                for (int g = 0; g < NG; ++g) S[h][g] += 10.0 * (double) a[(size_t) g];
+                sum += (double) a[(size_t) NG];
             }
-            for (int g = 0; g < NG; ++g) S[h][g] = 10.0 * (double) a[(size_t) g];
-            sum += (double) a[(size_t) NG];
         }
-        logit = sum;
+        const double k = 1.0 / (double) nets.size();
+        for (int h = 0; h < 2; ++h) for (int g = 0; g < NG; ++g) S[h][g] *= k;
+        logit = sum * k;
     }
 };
 
@@ -237,13 +251,22 @@ struct Found
 {
     bool found = false, looked = false, stopped = false;
     size_t n = 0;                       // the sound it belongs to: its length
-    double logit = -99.0, sure = 0.0;   // the meter's own number, and the same as a sureness 0 .. 1
+    double logit = -99.0, sure = 0.0;   // the meter's verdict, and the sureness 0 .. 1 made of it and of the squeeze at the peak
     double S[2][NG] = {};               // the squeeze per half-wave (the upper first) and level, as the meter read it (dB)
     double vp[2] = { 0, 0 };            // each half-wave's peak in the sound
     double top = 0;                     // how far the loudest values were squeezed, the stronger half-wave's (dB, made fit for use)
     bool hard() const { return top >= hardAt; }
 };
-inline double sureness (double logit) { return 1.0 / (1.0 + std::exp (-(logit - sureAt) * 0.5 - std::log (shownSure / (1.0 - shownSure)))); }
+// How sure a bend is: the weaker of two witnesses, the meter's verdict and the squeeze it reads at the peak. The
+// verdict alone is cautious (it was taught to say no where a bend cannot be heard, and says no to many a soft one
+// that can); the squeeze alone takes any flat-topped sound. Together, on 96 sounds through outside boxes and 198
+// clean ones: 45 of 48 distorted and 21 of 25 saturated sounds (6 dB and more at the peak) are shown where the slider
+// stands at first, and of the clean ones only the four that have flat tops themselves (Research/bend).
+inline double sureness (double logit, double top)
+{
+    const double e = std::min (logit - sureAt, top - sureTop);
+    return 1.0 / (1.0 + std::exp (-e * 0.5 - std::log (shownSure / (1.0 - shownSure))));
+}
 
 inline Found find (const Stereo& x, const Meter& m, const Stop& stop = {})
 {
@@ -251,9 +274,9 @@ inline Found find (const Stereo& x, const Meter& m, const Stop& stop = {})
     std::vector<float> X ((size_t) 2 * (size_t) NF);
     if (! features (x, 1.0, X.data(), F.vp[0], stop) || ! features (x, -1.0, X.data() + NF, F.vp[1], stop)) { F.stopped = true; return F; }
     F.looked = true;
-    m.run (X.data(), 20.0 * std::log10 (F.vp[0] / F.vp[1]), F.S, F.logit); F.sure = sureness (F.logit);
+    m.run (X.data(), 20.0 * std::log10 (F.vp[0] / F.vp[1]), F.S, F.logit);
     double r[NG]; for (int h = 0; h < 2; ++h) { tidy (F.S[h], spreadMost, r); F.top = std::max (F.top, r[NG - 1]); }
-    F.found = F.logit >= lowAt && F.top >= topAt;
+    F.sure = sureness (F.logit, F.top); F.found = F.logit >= lowAt && F.top >= topAt;
     return F;
 }
 
@@ -277,11 +300,20 @@ inline Found findAt (const Stereo& raw, double rate, size_t n, const Meter& m, c
 // The Amount as a drive: 0 = none of the found drive, 1 = as found, 2 = as far again in dB as the loudest values were squeezed.
 inline double drive (double s, double top) { return s <= 1.0 ? s * s : std::pow (10.0, (s - 1.0) * top / 20.0); }
 
-// The sound itself. s: 0 = the bend out, 1 = untouched, 2 = pushed as far again. The sound's peak stays where it was.
+// The read squeeze as the way back uses it: three quarters of it, less 1 dB. The meter is off by a dB or two, and the
+// two ways of being off are not alike: read too low, some of the bend stays in; read too high, values are spread apart
+// that were never squeezed, which is a new fault and a worse one than the bend. On 48 outside cases this way back
+// scores more than twice what the plain reading does and harms fewer of them (Research/bend).
+inline void careful (const double* S, double* r) { for (int i = 0; i < NG; ++i) r[i] = std::max (backPart * std::min (std::max (S[i], 0.0), maxSqueeze) - backLess, 0.0); }
+
+// The sound itself. s: 0 = the bend walked back (as far as careful() goes), 1 = untouched, 2 = pushed as far again.
+// The sound's peak stays where it was.
 inline Stereo own (const Stereo& y, const Found& F, double s, const Stop& stop = {})
 {
     if (! F.found || s == 1.0 || y.size() == 0) return y;
-    const Curve cp (F.S[0], F.vp[0]), cn (F.S[1], F.vp[1]); const double g = drive (std::clamp (s, 0.0, 2.0), std::max (cp.top, cn.top)), pk = peakOf (y, 0.0);
+    double Sp[NG], Sn[NG];
+    if (s < 1.0) { careful (F.S[0], Sp); careful (F.S[1], Sn); } else { std::copy (F.S[0], F.S[0] + NG, Sp); std::copy (F.S[1], F.S[1] + NG, Sn); }
+    const Curve cp (Sp, F.vp[0]), cn (Sn, F.vp[1]); const double g = drive (std::clamp (s, 0.0, 2.0), std::max (cp.top, cn.top)), pk = peakOf (y, 0.0);
     Stereo o = y;
     for (Vec* ch : { &o.l, &o.r })
     {

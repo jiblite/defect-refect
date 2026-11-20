@@ -517,6 +517,92 @@ second sound that would be a thump. Such a frame now takes the reading of the ne
 the sounding side (`wholeFrames` in `Movement.h`): on steady test sounds the reading beside a cut went from 18
 dB off to under 1. Loudness and Stereo read levels and their ratios and have no such fault.
 
+**Fixed filter (new engine in 0.5.1):** a low-pass, a high-pass or a band-pass that stands still while the sound
+plays, with or without a resonance at its corner. A filter leaves no mark that a sound could not have by itself: a
+sound without highs may be a filtered sound or a dull one. What can be read is that sounds are not built the way
+filters are. A filter's skirt falls by the same number of dB in every frame, loud or quiet, on a straight line per
+octave; a sound's own spectrum moves from frame to frame and has no such edge. So the engine looks at how the
+sound's energy lies in 104 bands a twelfth of an octave wide over all its frames (the average, the quietest and
+the loudest frame and three places between), and two small readers, taught on 390,000 and on 780,000 made
+examples, each give the filter's curve band by band. The engine takes the lesser of the two readings in every band (a cut read too deep
+does harm when it is undone), reads a second time what is left once the first answer is taken off, and lets the
+skirt run on where the filter left nothing of the sound to read. The group is called LOW-PASS FILTER, HIGH-PASS
+FILTER or BAND-PASS FILTER after the curve it found, and works on that curve, 104 numbers and not one of a few
+textbook shapes, as a minimum-phase filter (so taking it off also undoes the filter's phase):
+- one sound: Amount takes the filter out or puts it on a second time. Taking it out lifts what was cut, by 40 dB
+  at the most, and by 12 dB in a band that holds still while the rest of the sound moves (noise that came after
+  the filter); Cutoff moves the curve along the frequency axis, two octaves each way; Resonance, there when the
+  curve has a peak of 1 dB or more, scales the peak from none to twice as high;
+- two sounds: the second sound goes through the found curve, with the same three faders;
+- the display shows the curve, and with a fader moved the curve that results.
+
+@@FB@@
+
+Known limits: a sound that is dull or thin by itself is not told from a filtered one beyond a point, both ways. A
+filter that is not there is shown on none of the 198 clean clips and on 9 of the 624 scoreboard sounds of the
+other effects (3 of the clean ones and 46 of the others with the Sureness slider down), most of them a high-pass
+read into a sound with little low end; and of the 32 cases 10 are not shown where the slider stands at first, 4
+not at all. The read curve is 6.3 dB off on average where the clean sound can be heard, and a corner may sit half
+an octave off where the sound has little near it. Where the filter left nothing of the first sound, the curve is
+carried on and not read, and a second sound gets that guess. Not read at all: a filter on one side only, a shelf
+or a bell of an equaliser, a band-stop, and a sound of under a second. A filter that moves is the FILTER SWEEP
+group's, and the two never show side by side: a sweep that is sure enough to show where the slider stands at first
+wins, a fainter one only when it is as sure as the fixed filter (on 4 of the 32 cases the moving-tone engine has
+such a faint suspicion; until this rule those four filters were not shown). Method, numbers and limits:
+`Research/filter/README.md`.
+
+**Distortion and saturation (new engine in 0.5.1):** the two are one thing at two strengths, a fixed curve that
+every value of the sound is pushed through: small values pass in a line, large ones are squeezed. A curve leaves
+the quiet frames of a sound as they were and presses the loud ones together, so the same sound shows its own
+shape in the quiet frames and the bent one in the loud ones. The engine sorts the sound's frames by how high they
+reach, half-wave by half-wave (a tube or a tape does not bend the two alike), and reads where the values lie
+under each frame's top and how steep the wave is there. A meter of four small nets, taught on 90,000 made examples
+(78,000 from sounds through a family of boxes or through none, limiters among them as things that are not a bend,
+and 12,000 with steady tones, whose values pile up near the top much as a bent sound's do), gives by how many dB
+the curve squeezed each of eleven levels of the sound, from 30 dB under its peak up to the peak. That is the
+curve: not one of a few textbook shapes, and one for each half-wave. The group is called DISTORTION when the
+loudest values were squeezed by 10 dB or more and SATURATION under that, and has one fader:
+- two sounds: the second sound is scaled so that its loudest values reach as far into the curve as the first
+  sound's did, pushed through, and brought back to its own peak; Amount says how far into the curve;
+- one sound, right of the middle: the bend is walked back and the sound pushed through the same curve again,
+  further in, up to as far again;
+- one sound, left of the middle: the way back. The curve is read the other way round and the squeezed levels are
+  spread apart again. Two limits are built in. Where the curve pressed many levels into one, nothing in the sound
+  says which was which, so tops that were pressed flat stay flat. And the meter is off by a dB or two: read too
+  high, the way back spreads values that were never squeezed, which is a new fault and a worse one than the bend.
+  So the way back takes three quarters of the read squeeze, less 1 dB;
+- the display shows the curve for both half-waves, and left of the middle what is left of the bend.
+
+@@BB@@
+
+Known limits: a hard bend is not undone. Taking a DISTORTION out puts the level relations right and scores about
+20 of 100 on the outside cases; the flat tops are not filled in (a declipper, which makes up what the tops were
+from the sound around them, would be another engine). A soft saturation, under 6 dB at the peak, changes too
+little of the wave to be told from the sound itself and is mostly not shown (3 of 23 such sounds). Only one of
+the eight outside effects is a curve and nothing else; the others filter before or behind their curve or mix
+sound in, and the two that are least like one curve are read 4 dB off on average at the peak. A square or a pulse
+wave reads as a distorted sound (a square wave is what a sine pushed hard through a curve looks like), and a
+sound that has flat tops by itself is shown as bent: four of the 198 clean clips, three of them one steady sound
+a quarter of whose values lie in one half-dB band under its peak. A steady tone alone through a box comes out as
+another steady tone and reads as that. A limiter or a compressor is not a bend (a level held down by a moving
+gain leaves the wave's shape alone) and is shown on 3 % of limited test sounds. With a low-pass at 4 kHz or
+higher behind the bend it is found as before, and at 2 kHz nearly (the squeeze then reads 2.4 dB lower); under a
+room 6 dB under the sound a third of the distortions and most of the saturations are no longer shown, and the
+squeeze reads 8 dB too low. Method, numbers and limits: `Research/bend/README.md`.
+
+**Exciter (tested and withdrawn in 0.5.1).** An exciter drives the sound above a corner through a curve and mixes
+the result back in: more highs, some of them new. Up to 0.5.0 the detector could show an EXCITER group, and the
+engine behind it put a made-up exciter onto the second sound; on the scoreboard it was found on 1 of 8 cases, and
+that one went onto the second sound far worse than nothing. Two ways of reading an exciter off the sound itself
+were built and measured on 40 sounds through three outside exciters, each with the sound as it was before. The
+new highs do not hang on the old ones in a way that shows: what can be foretold of the highs from the upper
+middle, squared and cubed, is 4 to 12 % in the median after the exciter and 5 to 10 % before. And a reader for the lift itself,
+of the same kind as the fixed filter's and taught on 260,000 made examples, found 8 of the 40 excited sounds, the
+heavy-handed ones, and 2 of the same 40 sounds before the exciter. A sound with 8 dB more highs than it had is,
+to anything that looks at that sound alone, a bright sound. So the group is gone: a sound with added highs is
+shown as it is, and with two sounds TONE MATCH carries the first sound's long-term highs over to the second, an
+exciter's among them. The study: `Research/exciter/README.md`.
+
 **What is shown (new in 0.4.2):** up to 0.4.1 an effect was shown as soon as one 3 s window of the sound scored
 above the cut. Measured with the app's own code that showed 1.6 effects per sound that are not there. Now every
 effect is checked against the whole sound before it is shown (`Verify.h`): per effect a small model reads what the

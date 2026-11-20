@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(DefectRefect VERSION 0.5.0 LANGUAGES C CXX)
+project(DefectRefect VERSION 0.5.1 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -88,3 +88,9 @@ target_link_libraries(drchorus PRIVATE Threads::Threads)       # the frames are 
 # The MOVEMENT faders without the UI (no JUCE): Tests/move.cpp
 add_executable(drmove Tests/move.cpp)
 target_link_libraries(drmove PRIVATE Threads::Threads)         # the pitch reader's two looks run at the same time
+
+# The fixed-filter engine without the UI (no JUCE): Tests/filter.cpp
+add_executable(drfilter Tests/filter.cpp)
+
+# The bend engine (distortion, saturation) without the UI (no JUCE): Tests/bend.cpp
+add_executable(drbend Tests/bend.cpp)

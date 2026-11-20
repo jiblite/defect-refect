@@ -4,6 +4,7 @@
 #   python3 memcheck.py [jobs] [rest|room|long|new|tiny|soft|move|movefx|four]    writes /dev/shm/mc/<name>.log, prints one line per run
 # Two stages side by side: give each a folder of its own (MC_DIR=/dev/shm/mc2/ in the environment).
 # Another build of the render test: MC_EXE=/path/to/drrender_asan in the environment.
+# A stage taken up again where it was stopped: MC_SKIP="name name ..." leaves out the runs that are done.
 import sys, os, json, subprocess, numpy as np, soundfile as sf
 from concurrent.futures import ThreadPoolExecutor
 sys.path[:0] = ['/tmp/claude-0/v2/sweep']; from lab import load
@@ -100,5 +101,6 @@ if 'four' in sys.argv:           # the engines of build 0.5.1 (filter, bend; sou
                                           ('distortion', 'dist_caps_00'), ('saturation', 'sat_calf_tape_00'), ('saturation', 'sat_tap_tube_01'), ('saturation', 'sat_swh_valve_00'))]
     four += [(n, Q + n + '.wav') for n in 'filtLong filt1s filt0s9 filt44 filtMono bendLong bendShort bendHalf bend44 bend96 bend192 bend44pcm bendMono both bothOther'.split()]
     jobs = [(n, p, None) for n, p in four] + [(n + '_s5', p, 5) for n, p in four if n in ('fil_calf_00', 'fil_swh_ls_01', 'dist_caps_00', 'sat_swh_valve_00', 'filt1s', 'bendHalf', 'bend192', 'both', 'bothOther')]
+skip = set(os.environ.get('MC_SKIP', '').split()); jobs = [j for j in jobs if j[0] not in skip]      # runs that an earlier part of the same stage has already done
 with ThreadPoolExecutor(int(sys.argv[1]) if len(sys.argv) > 1 else 3) as ex:
     for line in ex.map(one, jobs): print(line, flush=True)

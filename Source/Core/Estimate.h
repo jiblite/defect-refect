@@ -960,12 +960,18 @@ inline FoundFx filterFx (std::shared_ptr<const fixed::Found> found, double prob)
     return F;
 }
 // The filter engine's verdict goes into the inspection and the detector's own guess about a filter goes out. A filter
-// that moves is the moving-tone engine's: where that one found a FILTER SWEEP, its curve's resting place is not shown
-// as a fixed filter beside it.
+// that moves is the moving-tone engine's, and the two groups never show side by side: both would work on the same
+// filter. A sweep that is sure enough to show where the Sureness slider stands at first wins, and so does a fainter
+// one that is at least as sure as the fixed filter. Otherwise the fixed filter wins, and the faint sweep is not shown
+// at all. (The moving-tone engine has such a faint suspicion on 4 of 32 fixed filters from outside effects, 0.07 to
+// 0.54 sure, where the filter engine is 0.90 to 0.98 sure; on the scoreboard's eight sweeps it is 0.68 to 1.00 sure.
+// Until this rule any sweep won, and on those four sounds neither group was shown: Research/filter/both.py.)
 inline void mergeFixed (Inspection& I, const fixed::Found& f, const moving::Found* mov = nullptr)
 {
-    const bool sweeps = mov != nullptr && mov->found && mov->kind == "filtersweep";
-    I.prob["filter"] = f.found && ! sweeps ? f.sure : level::sureNone;
+    const bool sweep = mov != nullptr && mov->found && mov->kind == "filtersweep";
+    const bool sweepWins = sweep && (! f.found || mov->sure >= fixed::shownSure || mov->sure >= f.sure);
+    I.prob["filter"] = f.found && ! sweepWins ? f.sure : level::sureNone;
+    if (sweep && ! sweepWins) I.prob["filtersweep"] = level::sureNone;
 }
 
 // ---------------------------------------------------------------- the bend engine's group (Bend.h)
@@ -979,8 +985,8 @@ inline FoundFx bendFx (std::shared_ptr<const bend::Found> found, double prob)
 {
     const bool hard = found->hard(); FoundFx F; F.name = bendName (*found); F.title = titleFor (F.name); F.prob = prob; F.bend = std::move (found);
     Knob a; a.id = F.name + ".amount"; a.label = "Amount"; a.neutral = 0; a.lo = 0; a.hi = 2; a.ownTip = true;
-    a.tip = hard ? "Middle = as found. Left = the bend walked back: the squeezed levels are spread out again. Tops that were pressed flat stay flat: nothing in the sound says how high each of them stood. Right = pushed further into the same curve, up to as far again."
-                 : "Middle = as found. Left = take it out, far left = the sound before it: the squeezed levels are spread out again. Right = pushed further into the same curve, up to as far again.";
+    a.tip = hard ? "Middle = as found. Left = the bend walked back: the squeezed levels are spread out again, most of the way. Tops that were pressed flat stay flat: nothing in the sound says how high each of them stood. Right = pushed further into the same curve, up to as far again."
+                 : "Middle = as found. Left = the bend walked back: the squeezed levels are spread out again, most of the way (a little is left in, to be on the safe side). Right = pushed further into the same curve, up to as far again.";
     a.tip2 = "How far the second sound is pushed into the found curve. Middle = its loudest values as far as the first sound's were. Left = less far, far left = not at all. Right = further, up to as far again.";
     F.knobs = { a }; return F;
 }

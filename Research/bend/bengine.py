@@ -2,7 +2,7 @@
 # as it was, 14 levels under its peak), take the bend out of a sound, drive it further, or put it on another sound.
 import numpy as np
 import bfeat
-GRID = bfeat.GRID; MAXSQ = 40.0; SPREAD = 6.0; SURE_AT = 1.5; TOP_AT = 3.0; HARD_AT = 10.0
+GRID = bfeat.GRID; MAXSQ = 40.0; SPREAD = 6.0; SURE_AT = -2.0; SURE_TOP = 5.0; LOW_AT = -6.0; TOP_AT = 3.0; HARD_AT = 10.0; SHOWN = 0.65; BACK_PART = 0.75; BACK_LESS = 1.0
 def smooth(xk, yk, x):
     """A smooth curve through rising points that never turns back between them (cubic pieces; the steepness at a point is the
     harmonic mean of the two straight pieces that meet there, at the two ends that of the one piece)."""
@@ -34,19 +34,31 @@ class Curve:
     def fwd(s, x):
         """Value(s) x >= 0 before the bend -> bent."""
         x = np.asarray(x, float); return np.where(x < s.inn[0], x, np.interp(x, s.inn, s.out))
+def sure(logit, top):
+    """How sure a bend is, 0 .. 1: the weaker of the meter's verdict and the squeeze it reads at the peak. SHOWN (the Sureness
+    slider where it stands at first) when the verdict is SURE_AT and the squeeze SURE_TOP dB."""
+    e = min(logit - SURE_AT, top - SURE_TOP); return 1.0 / (1.0 + np.exp(-e * 0.5 - np.log(SHOWN / (1.0 - SHOWN))))
+def shown(logit, top): return bool(logit >= SURE_AT and top >= SURE_TOP)            # at the default: the same as sure(...) >= SHOWN
+def kept(logit, top): return bool(logit >= LOW_AT and top >= TOP_AT)                # at all: shows when the slider is turned down
 def find(y, meter):
     """The meter's answer for one sound. meter: the app's model file (.bin) or the trainer's (.pt)."""
     import bmeter
     X, vp = bfeat.features(y); S, logit = bmeter.model(meter).run(X, 20 * np.log10(vp[0] / vp[1])); top = max(tidy(S[0], SPREAD)[-1], tidy(S[1], SPREAD)[-1])
-    return dict(S=S, vp=vp, logit=logit, top=float(top), found=bool(logit >= SURE_AT and top >= TOP_AT), kind='distortion' if top >= HARD_AT else 'saturation')
+    return dict(S=S, vp=vp, logit=logit, top=float(top), found=kept(logit, top), shown=shown(logit, top), sure=float(sure(logit, top)), kind='distortion' if top >= HARD_AT else 'saturation')
 def halves(v, cp, cn, fn):
     return np.where(v >= 0, getattr(cp, fn)(np.maximum(v, 0)), -getattr(cn, fn)(np.maximum(-v, 0)))
 def gamma(s, top):
     """The Amount as a drive: 0 = none of the found drive, 1 = as found, 2 = as far again in dB as the loudest values were squeezed."""
     return s * s if s <= 1.0 else 10 ** ((s - 1.0) * top / 20)
-def own(y, S, vp, s, K=SPREAD, arch_db=0.0):
-    """The sound itself: s = 0 the bend out, 1 untouched, 2 driven as far again. The sound's peak stays where it was."""
+def careful(S):
+    """The read squeeze as the way back uses it: three quarters of it, less 1 dB. Read too low, some of the bend stays in;
+    read too high, values are spread apart that were never squeezed, which is worse than the bend."""
+    return np.maximum(BACK_PART * np.minimum(np.maximum(np.asarray(S, float), 0.0), MAXSQ) - BACK_LESS, 0.0)
+def own(y, S, vp, s, K=SPREAD, arch_db=0.0, plain=False):
+    """The sound itself: s = 0 the bend walked back (as far as careful() goes; plain: all of what was read), 1 untouched,
+    2 driven as far again. The sound's peak stays where it was."""
     if s == 1.0: return y
+    if s < 1.0 and not plain: S = careful(S)
     cp, cn = Curve(S[0], vp[0], K), Curve(S[1], vp[1], K); x = halves(y, cp, cn, 'back'); g = gamma(s, max(cp.top, cn.top)); pk = bfeat.peak_of(y)
     if arch_db > 0.0:
         import arch

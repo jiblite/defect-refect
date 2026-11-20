@@ -3,12 +3,25 @@ import numpy as np, scipy.signal as ss
 import ffeat, filt, reader
 SR = 48000; FC = ffeat.FC; BOOST = 40.0; CUT = 80.0; NOISE_LIFT = 12.0; MAXBOOST = 24.0
 SKIRT = True       # the second look only adds where the first read a deep cut (the reader was taught curves held at -40 dB: a skirt runs on under that)
+SILENT_NEAR = 6.0; SILENT_FROM = 12.0      # a band holds nothing when its level is within 6 dB of the lowest the reader is given; the skirt runs on there once the curve is 12 dB down
+def skirt_on(L, E):
+    """Where a filter has cut everything, the reader has nothing to read and its answer drifts back towards no cut at all. A
+    filter's skirt runs on: in a band that holds nothing, the curve keeps the lowest point it reached on the way out from
+    its highest point (the pass band), once that is SILENT_FROM dB down."""
+    X, ref = ffeat.curves6(np.asarray(E, np.float64)); silent = X[0] <= ffeat.FLOOR + SILENT_NEAR; L = np.array(L, float); top = int(np.argmax(L))
+    for bands in (range(top + 1, len(L)), range(top - 1, -1, -1)):
+        m = L[top]
+        for b in bands:
+            m = min(m, L[b])
+            if silent[b] and m <= -SILENT_FROM: L[b] = m
+    return L
 def together(C, how):
-    """Several nets' curves (nets, bands) as one. mean: their mean. least: band by band the one nearest to zero, and zero where they do not agree on the sign."""
+    """Several nets' curves (nets, bands) as one. least (what the app does): band by band the one nearest to zero, and zero
+    where they do not agree on the sign: what only one of them reads is not taken. mean: their mean."""
     C = np.asarray(C)
     if how == 'mean' or len(C) == 1: return C.mean(0)
     lo = C.min(0); hi = C.max(0); return np.where(lo > 0, lo, np.where(hi < 0, hi, 0.0))
-def read(E, nets, rounds=2, how='mean'):
+def read(E, nets, rounds=2, how='least', plain=False):
     """E (frames, bands) -> (curve dB per band, sureness, how far the nets lie apart per band in the first look). nets: the
     app's model file, or the trainer's files. rounds 2: the read curve is taken off and the rest read again."""
     m = reader.model(nets); tot = np.zeros(E.shape[1]); e = E.astype(np.float64); first = None; apart = None
@@ -17,7 +30,7 @@ def read(E, nets, rounds=2, how='mean'):
         if first is None: first = float(T.mean()); apart = C.max(0) - C.min(0)
         if r > 0 and SKIRT: c = c * np.clip((-tot - 24.0) / 12.0, 0.0, 1.0)
         tot += c; e = E.astype(np.float64) * 10 ** (-tot / 10)
-    return np.clip(tot, -CUT, MAXBOOST), first, apart
+    L = np.clip(tot, -CUT, MAXBOOST); return (L if plain else skirt_on(L, E)), first, apart
 def dense(L, f):
     """The curve at any frequencies f (Hz): straight lines between the bands on a log-frequency axis; beyond the first and the
     last band it runs on with the slope it has over the half octave there (a filter's skirt goes on), never upwards."""
@@ -34,8 +47,9 @@ def lift_cap(E, L):
     return cap
 def softcap(v, cap):
     k = 0.75 * cap; return np.where(v <= k, v, k + (cap - k) * np.tanh((v - k) / np.maximum(cap - k, 1e-9)))
-def find(y, nets, rounds=2, how='mean', E=None):
-    E = ffeat.energies(y) if E is None else E; L, sure, apart = read(E, nets, rounds, how); return dict(curve=L, sure=sure, apart=apart, E=E, lift=lift_cap(E, L))
+def find(y, nets, rounds=2, how='least', E=None, plain=False):
+    """plain: the curve as the nets read it, without the skirt running on where the sound holds nothing (for the studies)."""
+    E = ffeat.energies(y) if E is None else E; L, sure, apart = read(E, nets, rounds, how, plain); return dict(curve=L, sure=sure, apart=apart, E=E, lift=lift_cap(E, L))
 def moved(L, octaves):
     """A curve moved along the frequency axis (up when positive); what comes in from beyond the ends is the end's own value."""
     if octaves == 0.0: return L

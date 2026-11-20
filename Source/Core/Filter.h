@@ -2,7 +2,8 @@
 // The filter engine (FILTER): a fixed low-pass, high-pass or band-pass on a sound, with or without a resonance.
 //   find()    reads the filter's curve off one sound (Reader.h: band energies, six curves, the reader's nets), in two
 //             looks: the second on the sound as it would be with the first answer undone; it only adds where the
-//             first read a deep cut (the reader was taught curves held at -40 dB, and a skirt runs on under that)
+//             first read a deep cut (the reader was taught curves held at -40 dB, and a skirt runs on under that).
+//             Where the filter left nothing of the sound there is nothing to read: there the skirt runs on (skirtOn)
 //   own()     the sound itself with the group's Amount at s: 0 = the filter out, 1 = untouched, 2 = the filter twice;
 //             Cutoff moves the curve along the frequency axis, Resonance scales its peak
 //   onto()    the found curve on another sound: 0 = none, 1 = as found, 2 = twice
@@ -23,10 +24,11 @@ namespace fixed
 using Stop = room::Stop;
 using reader::NBAND;
 constexpr int minFrames = 20;                   // under 20 frames that count (0.9 s) nothing is read
-constexpr double sureAt = 3.0;                  // the reader's own number (a logit) from which a filter is shown with the Sureness slider where it stands at first
+constexpr double sureAt = 2.5;                  // the reader's own number (a logit) from which a filter is shown with the Sureness slider where it stands at first
 constexpr double lowAt = 0.0;                   // ... and from which it is kept at all: such a filter shows when the slider is turned down
 constexpr double deepAt = 6.0;                  // either way its curve must cut this many dB somewhere the sound can be heard
 constexpr double skirtFrom = 24.0, skirtOver = 12.0;        // the second look adds nothing where the first read less than 24 dB of cut, all of its answer from 36 dB on
+constexpr double silentNear = 6.0, silentFrom = 12.0;       // a band holds nothing when its level is within 6 dB of the lowest the reader is given; the skirt runs on there once the curve is 12 dB down
 constexpr double maxLift = 40.0, noiseLift = 12.0, maxCut = 80.0, maxBoost = 24.0;
 constexpr double shownSure = 0.65;              // what the Sureness slider cuts at by default: a filter just found shows this
 constexpr double peakShown = 1.0;               // a peak of this many dB above the pass band is a resonance: the group then has a Resonance fader
@@ -89,6 +91,24 @@ inline double slopeOf (const Found& F, bool up)
     return (-6.0 - far) / (std::abs (b - a) / 12.0);
 }
 
+// Where a filter has cut everything, the reader has nothing to read and its answer drifts back towards no cut at all.
+// A filter's skirt runs on: in a band that holds nothing, the curve keeps the lowest point it reached on the way out
+// from its highest point (the pass band), once that is silentFrom dB down. C: the sound's own curves (Reader.h).
+inline void skirtOn (Vec& L, const reader::Curves& C)
+{
+    if (L.size() != (size_t) NBAND) return;
+    int top = 0; for (int b = 1; b < NBAND; ++b) if (L[(size_t) b] > L[(size_t) top]) top = b;
+    for (int step = 1; step >= -1; step -= 2)
+    {
+        double m = L[(size_t) top];
+        for (int b = top + step; b >= 0 && b < NBAND; b += step)
+        {
+            m = std::min (m, L[(size_t) b]);
+            if ((double) C.at (0, b) <= reader::FLOOR + silentNear && m <= -silentFrom) L[(size_t) b] = m;
+        }
+    }
+}
+
 // One sound's filter. rd: the reader taught with fixed filters (Resources/filter.bin).
 inline Found find (const Stereo& x, const reader::Reader& rd, const Stop& stop = {})
 {
@@ -102,6 +122,7 @@ inline Found find (const Stereo& x, const reader::Reader& rd, const Stop& stop =
     F.curve.resize ((size_t) NBAND);
     for (int b = 0; b < NBAND; ++b)
         F.curve[(size_t) b] = std::clamp (first[(size_t) b] + second[(size_t) b] * std::clamp ((-first[(size_t) b] - skirtFrom) / skirtOver, 0.0, 1.0), -maxCut, maxBoost);
+    skirtOn (F.curve, C);
     F.logit = s1; F.sure = sureness (s1);
     // where the sound can be heard: bands within 50 dB of its strongest (as it is now)
     double strongest = -1e9; for (int b = 0; b < NBAND; ++b) strongest = std::max (strongest, (double) C.at (0, b));

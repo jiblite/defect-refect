@@ -3,7 +3,8 @@
 #   python3 Tools/bend_parity.py path/to/drbend Resources/bend.bin a.wav b.wav [a2.wav b2.wav ...]
 # Every pair: the bend is read off a, taken out of it (all the way, half way) and pushed further, and put onto b.
 # 48 kHz WAVs. Prints the numbers side by side; exit code 1 if what the meter sees differs by more than 1e-4, its
-# answer by more than 0.01 dB, or a sound is further than -100 dB from the prototype's.
+# answer by more than 0.01 dB, its sureness or whether the bend counts as found, or a sound is further than -100 dB from
+# the prototype's.
 import sys, os, subprocess, tempfile, numpy as np, soundfile as sf
 HERE = os.path.dirname(os.path.abspath(__file__)); sys.path[:0] = [os.path.join(HERE, '..', 'Research', 'bend')]
 import bfeat, bengine as E
@@ -23,7 +24,9 @@ def main():
         a = rd(pa); b = rd(pb); X, vp = bfeat.features(a); F = E.find(a, model); out, y = app(pa, '-', 0.0, len(a)); Q = np.fromfile(pre + '.feat.f64'); B = np.fromfile(pre + '.bend.f64'); n = 2 * bfeat.NF; g = 2 * len(bfeat.GRID)
         df = float(np.abs(Q[:n] - X.ravel()).max()); dp = float(np.abs(Q[n:n + 2] / vp - 1).max()); dS = float(np.abs(B[:g] - F['S'].ravel()).max()); dl = abs(B[g] - F['logit']); dt = abs(B[g + 1] - F['top'])
         print('%s: %s' % (os.path.basename(pa), out.splitlines()[0])); print('  what the meter sees differs by %.2e at the most, the peaks by %.2e; its answer by %.2e dB, the logit by %.2e (prototype %.3f), the squeeze at the peak by %.2e' % (df, dp, dS, dl, F['logit'], dt))
-        if df > 1e-4 or dp > 1e-9 or dS > 0.01 or dl > 0.01: bad += 1; print('  DIFFERENT ANSWERS')
+        w = out.splitlines()[0].split(); af, asure = int(w[1]), float(w[5]); ds = abs(asure - F['sure'])          # "found F logit L sure S top ..."
+        print('  found %d in the app, %d in the prototype; the sureness differs by %.2e (prototype %.3f)' % (af, int(F['found']), ds, F['sure']))
+        if df > 1e-4 or dp > 1e-9 or dS > 0.01 or dl > 0.01 or ds > 2e-3 or af != int(F['found']): bad += 1; print('  DIFFERENT ANSWERS')
         for tag, s in (('out', 0.0), ('half', 0.5), ('further', 1.5), ('twice', 2.0)):
             d = db(app(pa, '-', s, len(a))[1], E.own(a, F['S'], F['vp'], s)); worst = max(worst, d); print('  %-10s app against prototype: %.1f dB' % (tag, d), flush=True)
         for tag, s in (('onto', 1.0), ('onto half', 0.5), ('onto twice', 2.0)):
