@@ -54,19 +54,24 @@ def careful(S):
     """The read squeeze as the way back uses it: three quarters of it, less 1 dB. Read too low, some of the bend stays in;
     read too high, values are spread apart that were never squeezed, which is worse than the bend."""
     return np.maximum(BACK_PART * np.minimum(np.maximum(np.asarray(S, float), 0.0), MAXSQ) - BACK_LESS, 0.0)
+def same_level(out, y):
+    """The level of a result made from the sound y: the sound's peak (peak_of: without its few largest values) stays where it
+    was, and no value comes out higher than the sound's highest was (values that were spread apart stand above that peak; a
+    file that sat at full scale would come out over it)."""
+    return out * min(bfeat.peak_of(y) / max(bfeat.peak_of(out), 1e-30), float(np.abs(y).max()) / max(float(np.abs(out).max()), 1e-30))
 def own(y, S, vp, s, K=SPREAD, arch_db=0.0, plain=False):
     """The sound itself: s = 0 the bend walked back (as far as careful() goes; plain: all of what was read), 1 untouched,
-    2 driven as far again. The sound's peak stays where it was."""
+    2 driven as far again. The sound's peak stays where it was (same_level)."""
     if s == 1.0: return y
     if s < 1.0 and not plain: S = careful(S)
-    cp, cn = Curve(S[0], vp[0], K), Curve(S[1], vp[1], K); x = halves(y, cp, cn, 'back'); g = gamma(s, max(cp.top, cn.top)); pk = bfeat.peak_of(y)
+    cp, cn = Curve(S[0], vp[0], K), Curve(S[1], vp[1], K); x = halves(y, cp, cn, 'back'); g = gamma(s, max(cp.top, cn.top))
     if arch_db > 0.0:
         import arch
         for c in range(y.shape[1]):
             for pol, cv in ((1.0, cp), (-1.0, cn)):
                 if cv.lflat is None: continue
                 h = arch.arches(np.maximum(pol * x[:, c], 0.0), pol * y[:, c] >= cv.yflat, cv.xp * 10 ** ((cv.lflat + arch_db) / 20)); m = pol * y[:, c] >= cv.yflat; x[m, c] = pol * h[m]
-    out = x if g <= 0.0 else halves(g * x, cp, cn, 'fwd'); return out * (pk / max(bfeat.peak_of(out), 1e-30))
+    out = x if g <= 0.0 else halves(g * x, cp, cn, 'fwd'); return same_level(out, y)
 def onto(b, S, vp, s, K=SPREAD):
     """Another sound through the found bend: its peak driven as far into the curve as the first sound's was."""
     if s <= 0.0: return b

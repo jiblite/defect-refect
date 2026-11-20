@@ -575,10 +575,11 @@ loudest values were squeezed by 10 dB or more and SATURATION under that, and has
 - one sound, right of the middle: the bend is walked back and the sound pushed through the same curve again,
   further in, up to as far again;
 - one sound, left of the middle: the way back. The curve is read the other way round and the squeezed levels are
-  spread apart again. Two limits are built in. Where the curve pressed many levels into one, nothing in the sound
-  says which was which, so tops that were pressed flat stay flat. And the meter is off by a dB or two: read too
-  high, the way back spreads values that were never squeezed, which is a new fault and a worse one than the bend.
-  So the way back takes three quarters of the read squeeze, less 1 dB;
+  spread apart again. Two limits are built in. Where the curve pressed many levels into one, no value says how
+  high it stood, so in 0.5.1 tops that were pressed flat stay flat (since 0.5.2 they are rebuilt from the sound
+  around them, see below). And the meter is off by a dB or two: read too high, the way back spreads values that
+  were never squeezed, which is a new fault and a worse one than the bend. So the way back takes three quarters
+  of the read squeeze, less 1 dB;
 - the display shows the curve for both half-waves, and left of the middle what is left of the bend.
 
 On the scoreboard (eight cases each, 0.5.0 in brackets) DISTORTION is shown on 7 of 8 (4). On a second sound
@@ -596,9 +597,9 @@ or more, 3 of the 23 that are saturated by less. Of the 48 cases 33 are shown: o
 on average (median 51; 5 worse than nothing), taken out 22 (7 worse). A bend that is not there is shown on 4 of
 the 198 clean clips and on 12 of 608 scoreboard sounds of the other effects.
 
-Known limits: a hard bend is not undone. Taking a DISTORTION out puts the level relations right and scores about
-20 of 100 on the outside cases; the flat tops are not filled in (a declipper, which makes up what the tops were
-from the sound around them, would be another engine). A soft saturation, under 6 dB at the peak, changes too
+Known limits: in 0.5.1 a hard bend is not undone. Taking a DISTORTION out puts the level relations right and
+scores about 20 of 100 on the outside cases; the flat tops are not filled in (the declipper of 0.5.2, below, makes
+up what the tops were from the sound around them). A soft saturation, under 6 dB at the peak, changes too
 little of the wave to be told from the sound itself and is mostly not shown (3 of 23 such sounds). Only one of
 the eight outside effects is a curve and nothing else; the others filter before or behind their curve or mix
 sound in, and the two that are least like one curve are read 4 dB off on average at the peak. A square or a pulse
@@ -610,6 +611,61 @@ gain leaves the wave's shape alone) and is shown on 3 % of limited test sounds. 
 higher behind the bend it is found as before, and at 2 kHz nearly (the squeeze then reads 2.4 dB lower); under a
 room 6 dB under the sound a third of the distortions and most of the saturations are no longer shown, and the
 squeeze reads 8 dB too low. Method, numbers and limits: `Research/bend/README.md`.
+
+**Flat tops rebuilt (new in 0.5.2).** Where a curve pressed many levels into one, a value no longer says how
+high it stood. The sound around it does: a real sound is made of few partials that last a while, and the cut-off
+tops are what is missing for them to go on smoothly. The declipper (`Declip.h`) rebuilds the tops from that,
+behind the far left of DISTORTION and SATURATION. Each half-wave is looked at by itself:
+- a plain cut (many values at exactly one level, no pile under them, and next to nothing on the next value down):
+  nothing under the cut is touched, and the values at the cut are rebuilt above it. This is looked for on every
+  sound, and a cut whose rebuilt peaks stand half a dB or more above it shows as DISTORTION whatever the meter
+  says. Build 0.5.1 did harm here. Its meter reads a soft curve where there is a sharp cut, and walking that back
+  spreads values apart that were never squeezed: on twelve sounds through outside hard clippers its far left
+  scored -69 on average;
+- a soft flat top (a pile of values under the top, on a sound where the meter has found a bend): the read curve
+  is walked back up to where it turns flat, and the rest is rebuilt. The rebuilt values then tell how the curve
+  runs further up, the lower part of the top is walked back along that, and only the very top is rebuilt once
+  more;
+- neither: the careful way back of 0.5.1, to the last bit.
+
+The rebuilding is tried on the sound itself first, one step down: the known values are cut again 3 dB lower,
+rebuilt, and held against what was there. A dense, noise-like sound fails that and is left as it was, because
+nothing in it says what its tops were. Four more checks, all read off the sound, stop a rebuild that would do
+harm: a sound cut almost to a square wave is left alone, both sides of a wave are taken the same way, a first
+pass whose values contradict each other is refused, and a second pass that leaves the tops rough is thrown away
+(as after a clipper that works at a higher rate inside, whose flat tops ripple). The rebuilt sound keeps the
+file's level: its peak stays where it was, and no value comes out higher than the file's highest was, so a file
+that was cut at full scale comes out under full scale with its tops rebuilt (left to stand above it, they met
+the app's limiter, which pressed them down again: on a test case 44 fell to 29). On a second sound a soft top
+goes on as before. A plain cut whose tops were rebuilt goes on as a cut, the second sound's peak as far past it
+as the first sound's rebuilt peak stands: on the six such cases among twelve outside hard clippers the second
+sound scores 72 on average, where 0.5.1 scored 13. The display shows the curve with the rebuilt top, and its
+caption and the fader's tip say what the far left does on this sound: rebuild, or nothing where the sound is too
+dense.
+
+In numbers (Amount at far left; 100 = the sound before the effect, 0 = left alone): on 84 cases through outside
+distortions, saturations and clippers, the 15 with a soft flat top go from -1 to 58 on average and the 13 with a
+plain cut from -64 to 22 (seven are rebuilt, six fail the test and are left alone, where 0.5.1 made five of those
+six worse). The other 56 come out as from 0.5.1 to the last bit, and no case is worse than before. On 162 more
+soft clippings 63 are rebuilt: 54 gain 5 points or more, 5 lose 5 or more, and the mean gain is 53. On the
+scoreboard two of the 16 distortion and saturation cases have flat tops: taken out they score 80 and 54 (-10 and
+29), so the seven shown distortions now come out at 27 on average (10), five with a gain (1 to 80) and two a
+little worse than left alone (-7, -11). Files at 44.1 and 96 kHz and mono files score as at 48 kHz. The waiting
+on four threads: about a tenth of the sound's length for a plain cut, about a quarter for a soft flat top on a
+long sound and up to all of it on a short one.
+
+Known limits: most outside distortions and saturations are more than a curve or bend softly, leave no pile at
+the top, and come out as from 0.5.1 (56 of the 84 cases). A wave that was flat-topped before it was clipped can
+come back too tall: one such case was found among 246 and is caught, but the kind cannot be told from the sound.
+A clipper that works at a higher rate inside is rebuilt less often and gains less. On a lightly bent sound the
+rebuilding can score a little under the old way. A long file is judged by its three most clipped seconds, and a
+sound of more than 20 minutes is not rebuilt. Cut levels that differ between left and right are not handled. A
+few clipped peaks (rebuilt by under half a dB) do not show DISTORTION by themselves. A sound that a crusher cut
+down to few steps is not taken for clipped (its top step holds many equal values, but so does the next one down).
+Where a cut's tops are not rebuilt, how hard the sound was driven is not known: a second sound then goes through
+the curve as the meter read it, as in 0.5.1, and on a dense sound the meter reads a plain cut 6 to 9 dB too deep.
+On three of the six such cases the second sound comes out far worse than untouched, as it did before.
+Method, numbers and limits: `Research/declip/README.md`.
 
 **Exciter (tested and withdrawn in 0.5.1).** An exciter drives the sound above a corner through a curve and mixes
 the result back in: more highs, some of them new. Up to 0.5.0 the detector could show an EXCITER group, and the
@@ -641,14 +697,14 @@ And the whole app on the scoreboard (`Research/room/bench/famboard.py`, `famsum.
 was the look with silence after the sound, the drop in 0.4.5 is the room model trained again and the look without
 the other effects, both described above):
 
-| 136 cases, 17 effects from outside tools                        | 0.4.1    | 0.4.2   | 0.4.3   | 0.4.4  | 0.4.5  | 0.4.6 | 0.4.7 | 0.5.1 |
-|------------------------------------------------------------------|----------|---------|---------|--------|--------|-------|-------|-------|
-| the case's own effect shown                                      | 77       | 75      | 79      | 89     | 89     | 89    | 92    | 102   |
-| other groups shown: REVERB / the rest                            | 63 / 156 | 19 / 12 | 19 / 10 | 19 / 7 | 13 / 7 | 9 / 7 | 9 / 4 | 9 / 3 |
-| cases with no other group shown                                  | 16       | 107     | 109     | 112    | 116    | 120   | 123   | 125   |
-| own group far left: cases made worse than doing nothing          | 12 %     | 3 %     | 3 %     | 1 %    | 1 %    | 1 %   | 1 %   | 3 %   |
-| every shown group far left: cases made worse than doing nothing  | 78 %     | 19 %    | 19 %    | 15 %   | 9 %    | 7 %   | 7 %   | 10 %  |
-| everything shown put onto a second sound: cases made worse       | 71 %     | 36 %    | 30 %    | 27 %   | 24 %   | 23 %  | 9 %   | 6 %   |
+| 136 cases, 17 effects from outside tools                        | 0.4.1    | 0.4.2   | 0.4.3   | 0.4.4  | 0.4.5  | 0.4.6 | 0.4.7 | 0.5.1 | 0.5.2 |
+|------------------------------------------------------------------|----------|---------|---------|--------|--------|-------|-------|-------|-------|
+| the case's own effect shown                                      | 77       | 75      | 79      | 89     | 89     | 89    | 92    | 102   | 102   |
+| other groups shown: REVERB / the rest                            | 63 / 156 | 19 / 12 | 19 / 10 | 19 / 7 | 13 / 7 | 9 / 7 | 9 / 4 | 9 / 3 | 9 / 3 |
+| cases with no other group shown                                  | 16       | 107     | 109     | 112    | 116    | 120   | 123   | 125   | 125   |
+| own group far left: cases made worse than doing nothing          | 12 %     | 3 %     | 3 %     | 1 %    | 1 %    | 1 %   | 1 %   | 3 %   | 2 %   |
+| every shown group far left: cases made worse than doing nothing  | 78 %     | 19 %    | 19 %    | 15 %   | 9 %    | 7 %   | 7 %   | 10 %  | 9 %   |
+| everything shown put onto a second sound: cases made worse       | 71 %     | 36 %    | 30 %    | 27 %   | 24 %   | 23 %  | 9 %   | 6 %   | 6 %   |
 
 (From 0.4.7 on the eight stutter cases are left out of the two far-left rows. Build 0.5.0 scores as 0.4.7 does. A
 stutter's far left closes the sound up, and the scoreboard compares with the dry sound at the same times;
@@ -707,6 +763,13 @@ far-left rows rise, from 1 case to 4 and from 9 to 13 of the 128 that are scored
 taken out before, which counts as 0. Walking the bend back gains on four of the seven that are shown and loses a
 little on three (-7, -10, -11), and the fourth new case is the exciter read as a distortion.
 
+What changed from 0.5.1 to 0.5.2: two cases, both distortions whose tops were pressed flat. Taken out they score
+80 and 54 where they scored -10 and 29, which takes one case out of each of the two far-left rows (3 and 12 of
+the 128 that are scored there). The other 134 cases come out the same, groups and scores (one distortion moves
+by 0.07 of a point: no value comes out higher than the file's highest was now, and that file sat at full scale).
+A first run showed DISTORTION on a sound that a crusher had cut down to 3 bits; the rule that a plain cut's top
+must stand alone came of that.
+
 The price is in the third row of the first table, and it is uneven: flanger, phaser, filter sweep and a fixed filter are found less
 often than before (9, 39, 39 and 9 % against 36, 73, 61 and 34 %), because most of their earlier finds came with
 as many false ones; ring mod and stutter are found far more often (82 and 93 % against 23 and 52 %). The
@@ -754,7 +817,11 @@ above.
   and `Filter.h` (the two looks, the skirt carried on where nothing is left, what counts as found, corners and
   peak, the lift's caps, the curve taken out, moved or put onto a second sound).
   The bend engine (distortion, saturation): `Bend.h` (what is read per half-wave, the meter of four nets, the
-  curve from the read squeeze, how sure, the careful way back, the drive, files at their own sample rate).
+  curve from the read squeeze, how sure, the careful way back, the drive, files at their own sample rate; since
+  0.5.2 the flat tops: the kinds of top, the two passes, the checks, the fader on a rebuilt sound, a plain cut
+  onto a second sound) and `Declip.h` (the declipper's tools: the time-frequency picture, the solver, a sound
+  rebuilt stretch by stretch on a few threads, the top's statistics, the curve the rebuilt values tell, the
+  self-test).
   `Verify.h` the check of every effect against the whole sound before it is shown.
   `Resample.h` the change of sample rate for a file that is not at 48 kHz (no delay, low-passed at the lower
   rate), used by the app's loader and by the tests.
@@ -789,7 +856,8 @@ above.
   prototypes.
 - `Tests/filter.cpp` and `Tests/bend.cpp` the two engines of 0.5.1 alone: `drfilter filter.bin a.wav b.wav|- prefix
   amount cutoff resonance`, `drbend bend.bin a.wav b.wav|- prefix amount` (see the top of each file);
-  `Tools/filter_parity.py` and `bend_parity.py` compare them with the prototypes.
+  `Tools/filter_parity.py` and `bend_parity.py` compare them with the prototypes. `drbend` also runs the declipper
+  of 0.5.2 (without it: `DR_BEND_PLAIN=1`); `Tools/declip_parity.py` compares that with its prototype.
 - `Research/room/` the Python side of the reverb engine as it was run: the scoreboard, the reference engine the
   C++ matches, training and the experiments (see its README).
 - `Research/tone/` the Python side of the tone engine: the prototype the C++ matches, its scores and the report.
@@ -818,6 +886,9 @@ above.
   rule between a fixed filter and a sweep.
 - `Research/bend/` the Python side of the bend engine: what is read, the examples and the training of the meter,
   the engine the C++ matches, the blind test on outside effects, the made tones, the limits.
+- `Research/declip/` the Python side of the declipper: the prototype the C++ matches, the outside clippers and
+  the trial cases, the app's code against build 0.5.1 on them, long files and other rates, the clean clips, and
+  the sounds and the script of its own checks before a build.
 - `Research/exciter/` the study that ended with the EXCITER group taken out: two ways of reading an exciter off
   one sound, and what they found on sounds before and after three outside exciters.
 - `Research/listening/` the scripts that make the listening page: its examples are rendered by `drrender`.

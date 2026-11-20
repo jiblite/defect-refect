@@ -980,14 +980,23 @@ inline void mergeFixed (Inspection& I, const fixed::Found& f, const moving::Foun
 // a drive: on the sound itself 0 = the bend walked back (the squeezed levels spread out again, as far as the engine's
 // cap allows), 1 = untouched (bit for bit), 2 = pushed as far again into the same curve; on a second sound 0 = none,
 // 1 = its loudest values pushed as far into the curve as the first sound's were, 2 = as far again.
+// Where the sound's tops were cut flat and the declipper rebuilt them (bend::addFlat), 0 on the sound itself is the
+// rebuilt sound; a plain cut whose tops were rebuilt goes onto a second sound as a cut, that sound's peak as far past
+// it as the first sound's rebuilt peak stands.
 inline const char* bendName (const bend::Found& f) { return f.hard() ? "distortion" : "saturation"; }
 inline FoundFx bendFx (std::shared_ptr<const bend::Found> found, double prob)
 {
-    const bool hard = found->hard(); FoundFx F; F.name = bendName (*found); F.title = titleFor (F.name); F.prob = prob; F.bend = std::move (found);
+    const bool hard = found->hard(); const bend::Flat* A = found->flat != nullptr && found->flat->did ? found->flat.get() : nullptr;
+    const bool plain = A != nullptr && (A->kind[0] == 1 || A->kind[1] == 1), back = A != nullptr && A->rebuilt, stays = plain && ! back && A->tab[0] != nullptr && A->tab[1] != nullptr, tested = A != nullptr && A->tested;
+    FoundFx F; F.name = bendName (*found); F.title = titleFor (F.name); F.prob = prob; F.bend = std::move (found);
     Knob a; a.id = F.name + ".amount"; a.label = "Amount"; a.neutral = 0; a.lo = 0; a.hi = 2; a.ownTip = true;
-    a.tip = hard ? "Middle = as found. Left = the bend walked back: the squeezed levels are spread out again, most of the way. Tops that were pressed flat stay flat: nothing in the sound says how high each of them stood. Right = pushed further into the same curve, up to as far again."
+    a.tip = plain && back ? "Middle = as found. Left = the cut-off tops come back: they are rebuilt from the sound around them, and what lies under the cut is not touched. Right = cut deeper, up to as far again."
+          : stays ? std::string ("Middle = as found. Left does nothing here: the tops were cut off flat, and this sound is too ") + (tested ? "dense" : "long") + " for them to be rebuilt. Right = cut deeper, up to as far again."
+          : back ? "Middle = as found. Left = the bend walked back: the squeezed levels are spread out again, and the tops that were pressed flat are rebuilt from the sound around them. Right = pushed further into the same curve, up to as far again."
+          : hard ? "Middle = as found. Left = the bend walked back: the squeezed levels are spread out again, most of the way. Tops that were pressed flat stay flat: this sound gives too little to rebuild them from. Right = pushed further into the same curve, up to as far again."
                  : "Middle = as found. Left = the bend walked back: the squeezed levels are spread out again, most of the way (a little is left in, to be on the safe side). Right = pushed further into the same curve, up to as far again.";
-    a.tip2 = "How far the second sound is pushed into the found curve. Middle = its loudest values as far as the first sound's were. Left = less far, far left = not at all. Right = further, up to as far again.";
+    a.tip2 = plain && back ? "How far the second sound is pushed into the found cut. Middle = its loudest values as far past the cut as the first sound's rebuilt tops stand. Left = less far, far left = not at all. Right = further, up to as far again."
+                   : "How far the second sound is pushed into the found curve. Middle = its loudest values as far as the first sound's were. Left = less far, far left = not at all. Right = further, up to as far again.";
     F.knobs = { a }; return F;
 }
 // The bend engine's verdict goes into the inspection and the detectors' own guesses about distortion and saturation go out.

@@ -602,23 +602,33 @@ inline Plot filterPlot (const FoundFx& F, const Params& p, double s, bool onSeco
 // Across: a value before the bend, against the loudest the sound has there; up: what the curve makes of it, against
 // the loudest that comes out. The grey line from corner to corner is no bend at all. Each half of the wave (the values
 // above the middle line and those under it) has its own curve and is drawn as far as the sound reaches.
+// A half-wave whose tops were cut flat and that the declipper took has a curve of its own (a plain cut's: the line up
+// to the cut; a rebuilt soft top's: as the rebuilt values tell it), and on the sound itself that curve is what the
+// fader drives: far left the line, the rebuilt sound. A second sound goes through the meter's curve, or through the
+// cut where the cut-off tops were rebuilt (bend::curveOf).
 inline Plot bendPlot (const FoundFx& F, double s, bool onSecond)
 {
     using namespace disp;
     Plot P; P.title = F.title; if (F.bend == nullptr || ! F.bend->found) return P;
     const bend::Found& f = *F.bend; const double amount = std::clamp (s, 0.0, 2.0);
-    const bend::Curve cp (f.S[0], f.vp[0]), cn (f.S[1], f.vp[1]); const double top = std::max (cp.top, cn.top), g = bend::drive (amount, top);
+    const bend::Flat* A = f.flat != nullptr && f.flat->did ? f.flat.get() : nullptr;
+    const bool tab[2] = { A != nullptr && A->tab[0] != nullptr, A != nullptr && A->tab[1] != nullptr };
+    const bool plain = A != nullptr && (A->kind[0] == 1 || A->kind[1] == 1), cutBack = plain && A->rebuilt, cutStays = plain && ! A->rebuilt && tab[0] && tab[1], softBack = A != nullptr && A->rebuilt && ! plain;
+    const bend::Curve cp = bend::curveOf (f, 0, ! onSecond), cn = bend::curveOf (f, 1, ! onSecond); const double top = std::max (cp.top, cn.top), g = bend::drive (amount, top);
     P.x0 = -1.1; P.x1 = 1.1; P.y0 = -1.15; P.y1 = 1.15; P.xLabel = "in"; P.yLabel = "out"; P.xTicks = { -1.0, -0.5, 0.0, 0.5, 1.0 }; P.yTicks = { -1.0, -0.5, 0.0, 0.5, 1.0 };
     Curve line; line.colour = 2; line.dim = true; line.pts = { { -1.0, -1.0 }, { 1.0, 1.0 } }; P.curves.push_back (line);
     Curve c;
     if (! onSecond && amount < 1.0)
     {
         // what is left of the bend on the sound itself: the found curve, the way back as the engine goes it
-        // (bend::careful), and from there the part of the drive that the fader leaves
+        // (bend::careful), and from there the part of the drive that the fader leaves. A half-wave with a curve of its
+        // own: that curve at the part of the drive the fader leaves (none of it: the line)
         double sp[bend::NG], sn[bend::NG]; bend::careful (f.S[0], sp); bend::careful (f.S[1], sn); const bend::Curve bp (sp, f.vp[0]), bn (sn, f.vp[1]);
         auto through = [&] (double x)
         {
-            const bool up = x >= 0.0; const double v = up ? cp.fwd (x) : cn.fwd (-x), u = up ? bp.back (v) : bn.back (v), d = g * u, o = g <= 1e-9 ? u : up ? bp.fwd (d) : bn.fwd (d);
+            const bool up = x >= 0.0; const double a = std::abs (x); const bend::Curve& own = up ? cp : cn; const bend::Curve& safe = up ? bp : bn; double o;
+            if (tab[up ? 0 : 1]) o = g <= 1e-9 ? a : own.fwd (g * a);
+            else { const double u = safe.back (own.fwd (a)); o = g <= 1e-9 ? u : safe.fwd (g * u); }
             return up ? o : -o;
         };
         const double xa = cp.xp, xb = cn.xp, X = std::max (xa, xb), Y = std::max ({ through (xa), -through (-xb), 1e-30 });
@@ -649,15 +659,31 @@ inline Plot bendPlot (const FoundFx& F, double s, bool onSecond)
     const int h = cp.top >= cn.top ? 0 : 1; double r[bend::NG]; bend::tidy (f.S[h], bend::spreadMost, r);
     double from = bend::GRID[0]; const bool allOfIt = r[0] >= 1.0;
     for (int i = 1; i < bend::NG && ! allOfIt; ++i) if (r[i] >= 1.0) { from = bend::GRID[i - 1] + (1.0 - r[i - 1]) / std::max (r[i] - r[i - 1], 1e-9) * (bend::GRID[i] - bend::GRID[i - 1]); break; }
-    std::string t = "The loudest values were squeezed by " + num (top, 0) + " dB";
-    if (std::abs (cp.top - cn.top) >= 1.5) t += " (those above the middle line by " + num (cp.top, 0) + ", those under it by " + num (cn.top, 0) + ")";
-    t += allOfIt ? "; the curve bends even the quiet values." : "; the curve starts to bend " + num (-from, 0) + " dB under them.";
+    std::string t;
+    if (plain)
+    {
+        t = "The tops were cut off flat.";
+        if (cutBack) t += " The loudest of them stood " + num (top, top < 3.0 ? 1 : 0) + " dB above the cut, as far as the sound around them tells.";
+        else if (onSecond) t += " How high they stood is not known on this sound, so the second sound goes through the curve as it was read.";
+    }
+    else
+    {
+        t = "The loudest values were squeezed by " + num (top, 0) + " dB";
+        if (std::abs (cp.top - cn.top) >= 1.5) t += " (those above the middle line by " + num (cp.top, 0) + ", those under it by " + num (cn.top, 0) + ")";
+        t += allOfIt ? "; the curve bends even the quiet values." : "; the curve starts to bend " + num (-from, 0) + " dB under them.";
+    }
     t += " Drawn: what goes in against what comes out (grey: no bend).";
     if (onSecond) { if (amount < 1e-3) t += " Amount at zero: not put on the second sound."; }
     else if (amount < 1.0 - 0.005)
     {
-        if (amount < 1e-3) t += " Amount at zero: the bend is walked back most of the way. Not all of it: reading too much would do harm there.";
-        if (f.hard()) t += " Tops that were pressed flat stay flat.";
+        if (cutBack) { if (amount < 1e-3) t += " Amount at zero: the cut-off tops are back, rebuilt from the sound around them. What lies under the cut is not touched."; }
+        else if (cutStays) t += A->tested ? " This sound is too dense for the cut-off tops to be rebuilt: left of the middle nothing changes." : " This sound is too long for the cut-off tops to be rebuilt: left of the middle nothing changes.";
+        else if (softBack) { if (amount < 1e-3) t += " Amount at zero: the bend is walked back, and the tops that were pressed flat are rebuilt from the sound around them."; }
+        else
+        {
+            if (amount < 1e-3) t += " Amount at zero: the bend is walked back most of the way. Not all of it: reading too much would do harm there.";
+            if (f.hard()) t += " Tops that were pressed flat stay flat.";
+        }
     }
     P.caption = t; return P;
 }

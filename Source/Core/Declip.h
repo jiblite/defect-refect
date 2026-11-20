@@ -9,16 +9,18 @@
 //               Kowalski, Doerfler 2014). The cells' threshold comes down in steps (the schedule), a few rounds per step
 //   rebuild()   a whole sound's unknown values, stretch by stretch (a long file never has its whole picture in memory),
 //               on a few threads; each stretch is solved with some of its known surroundings
-//   stats()     what kind of top a half-wave has: how many of its values sit exactly at the top, and how dense the
-//               values just under it are against those further down
+//   stats()     what kind of top a half-wave has: how many of its values sit exactly at the top, how many at the next
+//               value down, and how dense the values just under the top are against those further down; regimes():
+//               both half-waves judged together
 //   curveFrom() the curve the rebuilt values tell: per level of the bent sound the middle one of the rebuilt values
 //   selfTest()  the rebuilding tried on the sound itself, one step down: the known values are cut again 3 dB lower,
 //               rebuilt, and held against what was there. A dense, noise-like sound fails it: its tops cannot be told
 //               from what is around them
-//   dense()     how densely a sound fills its picture
+//   rankCorr()  whether one row of numbers rises with another (Spearman's rank correlation)
 // The numbers are those of the prototype, Research/declip/dengine.py, where they were set on 84 sounds through
-// outside clippers, distortions and saturations.
+// outside clippers, distortions and saturations and on 162 more soft clippings.
 #include <atomic>
+#include <cstddef>
 #include <functional>
 #include <thread>
 #include <utility>
@@ -34,8 +36,10 @@ constexpr int N0 = 2048;                        // the picture's window at 44.1 
 constexpr int MARGIN = 3, CORE = 192;           // hops of known sound kept around what is rebuilt; hops rebuilt in one go at most
 constexpr double TOL = 1e-4, LAM_HI = -0.5, LAM_LO = -3.5;      // when a step of the schedule has settled; the schedule (powers of ten of the picture's top)
 constexpr double TIE_DB = 0.01, LIVE_DB = -60.0, TIE_SHARE = 0.002, HARD_RATIO = 1.3, PILE_SHARE = 0.01, PILE_RATIO = 1.0; constexpr size_t TIE_N = 16;
+constexpr double TIE_STEP = 3.0;                // a plain cut's ties stand alone: they are this many times the values at the next value down (in a sound cut down to few steps every step holds many)
+constexpr double TIE_CAP = 0.75;                // a soft top with this share of its live values at the very top is left alone: there is nothing to go on
 constexpr int BINS = 300, LEAST = 64, SMOOTH = 2, TEST_HOPS = 144;
-constexpr int FIRST = 300, PART = 48;           // a soft top's first pass on a long sound: hops per channel it works on, in parts of this many hops spread evenly over the sound (see choose())
+constexpr int FIRST = 900, PART = 48;           // a soft top's first pass on a long sound: hops per channel it works on, in parts of this many hops spread evenly over the sound (see choose())
 constexpr double TEST_DB = 3.0;
 
 inline double db (double v) { return std::pow (10.0, v / 20.0); }
@@ -157,23 +161,6 @@ struct Solver
         const double want = 0.999 * (double) (T * (size_t) B); size_t c = 0, k = 0;
         for (; k < 5999; ++k) { c += hist[k]; if ((double) c >= want) break; }
         return std::sqrt (std::pow (10.0, (-240.0 + 0.05 * (double) (k + 1)) / 10.0));
-    }
-    // How densely a channel fills its picture: the sum of its cells' sizes, and their energy. off: stretches [a, b) of
-    // the channel; the frames that touch one of them do not count.
-    void fill (const double* x, size_t n, double& sum, double& energy, const std::vector<std::pair<size_t, size_t>>* off = nullptr)
-    {
-        const size_t T = frames (n); Vec r ((size_t) B), q ((size_t) B); Flags skip;
-        if (off != nullptr && ! off->empty())
-        {
-            skip.assign (T, 0);         // frame t holds the samples (t - 2) H .. t H
-            for (const auto& o : *off) for (size_t t = o.first / (size_t) H + 1; t < T && (t < 2 || (t - 2) * (size_t) H < o.second); ++t) skip[t] = 1;
-        }
-        for (size_t t = 0; t < T; ++t)
-        {
-            if (! skip.empty() && skip[t]) continue;
-            if (! frame (x, n, t, r.data(), q.data())) continue;
-            for (int b = 0; b < B; ++b) { const double p = r[(size_t) b] * r[(size_t) b] + q[(size_t) b] * q[(size_t) b]; sum += std::sqrt (p); energy += p; }
-        }
     }
     // One stretch. y: its known values and, where u says unknown, the bound (its sign says on which side of zero; the
     // value lies at the bound or further out). lams: the schedule, inner: rounds per step. out: the stretch rebuilt, the
@@ -310,42 +297,46 @@ inline bool rebuild (const Stereo& x, const Flags u[2], Stereo& out, int nlam, i
     return true;
 }
 
-// How densely a sound fills its picture: the sum of the cells' sizes over the root of their energy (both channels).
-// off: per channel stretches of the sound; the frames that touch one of them do not count.
-inline double dense (const Stereo& x, int N, const std::vector<std::pair<size_t, size_t>>* off = nullptr)
-{
-    Solver S (N); double a = 0.0, b = 0.0; S.fill (x.l.data(), x.l.size(), a, b, off != nullptr ? &off[0] : nullptr); S.fill (x.r.data(), x.r.size(), a, b, off != nullptr ? &off[1] : nullptr);
-    return a / std::max (std::sqrt (b), 1e-30);
-}
-
 // ---------------------------------------------------------------- what kind of top a half-wave has
 // c: its top value. tn, t: the number and the share of its live values (those above LIVE_DB under its peak vp) within
-// TIE_DB of the top. p25: the share within 0.25 dB of the peak. R: the density of values (per dB) just under the ties
-// against that 1 to 2 dB under the top. P: the density in the top quarter dB under the peak (ties and all) against that
-// 1 to 2 dB under the peak.
-struct Stat { double c = 0, t = 0, p25 = 0, R = 0, P = 0; size_t n = 1, tn = 0; };
+// TIE_DB of the top. tn2: the number within TIE_DB of the next value down (the highest one under the ties). p25: the
+// share within 0.25 dB of the peak. R: the density of values (per dB) just under the ties against that 1 to 2 dB under
+// the top. P: the density in the top quarter dB under the peak (ties and all) against that 1 to 2 dB under the peak.
+struct Stat { double c = 0, t = 0, p25 = 0, R = 0, P = 0; size_t n = 1, tn = 0, tn2 = 0; };
 inline Stat stats (const Stereo& y, double pol, double vp)
 {
     Stat s; const double live = vp * db (LIVE_DB); size_t n = 0; double c = 0.0;
     for (const Vec* ch : { &y.l, &y.r }) for (double v : *ch) { const double a = pol * v; if (a > live) { ++n; c = std::max (c, a); } }
     s.c = c; s.n = std::max<size_t> (n, 1); if (n == 0) return s;
     const double tie = c * db (-TIE_DB), q25 = c * db (-0.25), l1 = c * db (-1.0), l2 = c * db (-2.0), p25 = vp * db (-0.25), r1 = vp * db (-1.0), r2 = vp * db (-2.0);
-    size_t tn = 0, dt = 0, dl = 0, np = 0, pl = 0;
+    size_t tn = 0, dt = 0, dl = 0, np = 0, pl = 0; double c2 = 0.0;
     for (const Vec* ch : { &y.l, &y.r }) for (double v : *ch)
     {
         const double a = pol * v; if (! (a > live)) continue;
-        if (a >= tie) ++tn; else if (a >= q25) ++dt;
+        if (a >= tie) ++tn; else { c2 = std::max (c2, a); if (a >= q25) ++dt; }
         if (a >= l2 && a < l1) ++dl;
         if (a >= p25) ++np;
         if (a >= r2 && a < r1) ++pl;
     }
+    const double next = c2 * db (-TIE_DB);
+    if (c2 > 0.0) for (const Vec* ch : { &y.l, &y.r }) for (double v : *ch) { const double a = pol * v; if (a > live && a < tie && a >= next) ++s.tn2; }
     const double N = (double) s.n; s.tn = tn; s.t = (double) tn / N; s.p25 = (double) np / N;
     s.R = ((double) dt / N / (0.25 - TIE_DB)) / std::max ((double) dl / N, 1e-9); s.P = (s.p25 / 0.25) / std::max ((double) pl / N, 1e-9);
     return s;
 }
 inline bool tied (const Stat& s) { return s.tn >= TIE_N && s.t >= TIE_SHARE; }
-// 1: a plain cut. 2: a soft flat top (only looked for where the meter has found a bend). 0: neither.
-inline int regime (const Stat& s, bool kept) { return tied (s) && s.R <= HARD_RATIO ? 1 : kept && s.p25 >= PILE_SHARE && s.P >= PILE_RATIO ? 2 : 0; }
+// One half-wave by itself. 1: a plain cut (its ties stand alone: the next value down holds far fewer). 2: a soft flat
+// top (only looked for where the meter has found a bend, and not where TIE_CAP of the live values sit at the very
+// top). 0: neither.
+inline bool softLike (const Stat& s, bool kept) { return kept && s.p25 >= PILE_SHARE && s.P >= PILE_RATIO && s.t < TIE_CAP; }
+inline int regime (const Stat& s, bool kept) { return tied (s) && s.R <= HARD_RATIO && (double) s.tn >= TIE_STEP * (double) s.tn2 ? 1 : softLike (s, kept) ? 2 : 0; }
+// Both half-waves: one wave, one way. A side that reads as a plain cut next to a soft one, and fits a soft top too, is
+// taken as soft (its ties are then the first height).
+inline void regimes (const Stat* st, bool kept, int* kinds)
+{
+    for (int h = 0; h < 2; ++h) kinds[h] = regime (st[h], kept);
+    for (int h = 0; h < 2; ++h) if (kinds[h] == 1 && kinds[1 - h] == 2 && softLike (st[h], kept)) kinds[h] = 2;
+}
 
 // ---------------------------------------------------------------- the curve the rebuilt values tell
 inline double median (Vec& v)       // the middle value (of an even number: the mean of the middle two); v is reordered
@@ -357,6 +348,28 @@ inline double quantile (Vec v, double p)
 {
     std::sort (v.begin(), v.end()); const double t = p * (double) (v.size() - 1); const size_t i = (size_t) std::floor (t), j = std::min (i + 1, v.size() - 1);
     return v[i] + (t - (double) i) * (v[j] - v[i]);
+}
+// Spearman's rank correlation of the pairs' two sides (equal values share their mean rank). 0 for fewer than three pairs.
+inline double rankCorr (const std::vector<std::pair<double, double>>& pr)
+{
+    const size_t n = pr.size(); if (n < 3) return 0.0;
+    std::vector<size_t> idx (n); Vec ra (n), rb (n);
+    auto ranks = [&pr, &idx, n] (bool second, Vec& r)
+    {
+        auto val = [&pr, second] (size_t k) { return second ? pr[k].second : pr[k].first; };
+        for (size_t i = 0; i < n; ++i) idx[i] = i;
+        std::sort (idx.begin(), idx.end(), [&val] (size_t a, size_t b) { return val (a) < val (b); });
+        for (size_t i = 0; i < n;)
+        {
+            size_t j = i; while (j + 1 < n && val (idx[j + 1]) == val (idx[i])) ++j;
+            const double m = 0.5 * (double) (i + j); for (size_t k = i; k <= j; ++k) r[idx[k]] = m;
+            i = j + 1;
+        }
+    };
+    ranks (false, ra); ranks (true, rb);
+    const double mean = 0.5 * (double) (n - 1); double saa = 0.0, sbb = 0.0, sab = 0.0;
+    for (size_t i = 0; i < n; ++i) { const double a = ra[i] - mean, b = rb[i] - mean; saa += a * a; sbb += b * b; sab += a * b; }
+    const double d = std::sqrt (saa * sbb); return d > 0.0 ? sab / d : 0.0;
 }
 // The curve from (y0, x0) on, read from pairs (bent value, rebuilt value), both positive: nodes (ym, xm). The pairs in
 // order of the bent value, in up to BINS groups of equal size (LEAST pairs at least); per group the middle values;

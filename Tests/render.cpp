@@ -184,7 +184,7 @@ int main (int argc, char** argv)
             if (bd->flat != nullptr && (bd->flat->kind[0] != 0 || bd->flat->kind[1] != 0))
             {
                 const dr::bend::Flat& A = *bd->flat; const char* names[3] = { "none", "cut", "soft" };
-                std::cout << " tops=" << names[A.kind[0]] << "/" << names[A.kind[1]] << " rebuilt=" << (int) A.rebuilt << " second=" << (int) A.second << " test=" << A.test << " ratio=" << A.ratio << " meter_top_db=" << meterTop;
+                std::cout << " tops=" << names[A.kind[0]] << "/" << names[A.kind[1]] << " rebuilt=" << (int) A.rebuilt << " second=" << (int) A.second << " test=" << A.test << " spread=" << A.spread << " rho=" << A.rho << " rough=" << A.rough << " meter_top_db=" << meterTop;
             }
             if (bd->looked) { std::cout << " logit=" << bd->logit << " sure=" << bd->sure << " top_db=" << bd->top << " upper="; for (int i = 0; i < dr::bend::NG; ++i) std::cout << (i ? "," : "") << bd->S[0][i]; std::cout << " lower="; for (int i = 0; i < dr::bend::NG; ++i) std::cout << (i ? "," : "") << bd->S[1][i]; }
             std::cout << "\n";

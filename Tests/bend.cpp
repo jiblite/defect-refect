@@ -66,7 +66,7 @@ int main (int argc, char** argv)
         if (F.flat != nullptr)
         {
             const dr::bend::Flat& A = *F.flat; const char* names[3] = { "none", "hard", "soft" };
-            std::printf ("flat: did %d kinds %s/%s rebuilt %d second %d tested %d whole %d test %.2f ratio %.4f share %.5f cut %.6f tops %.3f %.3f\n", (int) A.did, names[A.kind[0]], names[A.kind[1]], (int) A.rebuilt, (int) A.second, (int) A.tested, (int) A.whole, A.test, A.ratio, A.share, A.cut,
+            std::printf ("flat: did %d kinds %s/%s rebuilt %d second %d tested %d whole %d test %.2f spread %.3f rho %.4f rough %.4f share %.5f cut %.6f tops %.3f %.3f\n", (int) A.did, names[A.kind[0]], names[A.kind[1]], (int) A.rebuilt, (int) A.second, (int) A.tested, (int) A.whole, A.test, A.spread, A.rho, A.rough, A.share, A.cut,
                          A.tab[0] != nullptr ? A.tab[0]->top : -1.0, A.tab[1] != nullptr ? A.tab[1]->top : -1.0);
         }
         {

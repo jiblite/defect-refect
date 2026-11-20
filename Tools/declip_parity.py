@@ -4,7 +4,8 @@
 # Every pair: a's flat tops are looked for and rebuilt, the fader is set far left, half way, further and far right, and
 # the found bend is put onto b. 48 kHz WAVs (16 or 24 bit, or 32 bit float). Prints the numbers side by side; exit code 1
 # if a verdict differs (what kind of top each half-wave has, whether it was rebuilt, whether the second pass was kept,
-# whether the bend shows), the self-test's score by more than 1, a curve's top by more than 0.1 dB, or a sound is
+# whether the bend shows), the self-test's score by more than 1, the passes' own measures (spread, rank correlation,
+# roughness) by more than a little, a curve's top by more than 0.1 dB, or a sound is
 # further than -60 dB from the prototype's (the rebuilding is hundreds of rounds long: the two do not agree to the last
 # digit, and need not).
 import sys, os, subprocess, tempfile, time, numpy as np, soundfile as sf
@@ -26,11 +27,12 @@ def main():
         a = rd(pa); b = rd(pb); F = E.find(a, model); t0 = time.time(); A = D.analyse(a, F['S'], F['vp'], F['found']); V = D.verdict(F['logit'], F['top'], A); sec = time.time() - t0
         r = subprocess.run([exe, model, pa, '-', pre, '0'], capture_output=True, text=True, env=dict(os.environ)); lines = r.stdout.splitlines(); w = lines[0].split(); fl = [l for l in lines if l.startswith('flat:')][0].split()
         g = lambda key, src=fl: src[src.index(key) + 1]; kinds = '/'.join(A['kinds']); tops = [(-1.0 if (not A['did'] or A['tabs'][h] is None) else A['tabs'][h].top) for h in (0, 1)]; at = [float(v) for v in fl[fl.index('tops') + 1:fl.index('tops') + 3]]
-        print('%s: prototype %s did %d rebuilt %d second %d test %s ratio %s cut %.6f tops %.3f %.3f | %s sure %.3f %s top %.2f (%.0f s)' % (os.path.basename(pa), kinds, A['did'], A['rebuilt'], A['second'], 'none' if A['test'] is None else '%.2f' % A['test'],
-              'none' if A['ratio'] is None else '%.4f' % A['ratio'], A['cut'], tops[0], tops[1], 'found' if V['found'] else 'not found', V['sure'], V['kind'], V['top'], sec))
+        nn = lambda v, f: 'none' if v is None else f % v
+        print('%s: prototype %s did %d rebuilt %d second %d test %s spread %s rho %s rough %s cut %.6f tops %.3f %.3f | %s sure %.3f %s top %.2f (%.0f s)' % (os.path.basename(pa), kinds, A['did'], A['rebuilt'], A['second'], nn(A['test'], '%.2f'),
+              nn(A['spread'], '%.3f'), nn(A['rho'], '%.4f'), nn(A['rough'], '%.4f'), A['cut'], tops[0], tops[1], 'found' if V['found'] else 'not found', V['sure'], V['kind'], V['top'], sec))
         print('  app: %s\n       %s\n       %s' % (lines[0], ' '.join(fl), lines[-1]))
         same = (g('kinds') == kinds and int(g('did')) == int(A['did']) and int(g('rebuilt')) == int(A['rebuilt']) and int(g('second')) == int(A['second']) and int(w[1]) == int(V['found']) and w[10] == V['kind'] and abs(float(w[5]) - V['sure']) < 2e-3 and abs(float(w[7]) - V['top']) < 0.11
-                and abs(float(g('cut')) - A['cut']) < 2e-6 and (A['test'] is None or abs(float(g('test')) - A['test']) < 1.0) and (A['ratio'] is None or abs(float(g('ratio')) - A['ratio']) < 0.02) and max(abs(at[0] - tops[0]), abs(at[1] - tops[1])) < 0.1)
+                and abs(float(g('cut')) - A['cut']) < 2e-6 and (A['test'] is None or abs(float(g('test')) - A['test']) < 1.0) and (A['spread'] is None or abs(float(g('spread')) - A['spread']) < 0.05) and (A['rho'] is None or abs(float(g('rho')) - A['rho']) < 0.02) and (A['rough'] is None or abs(float(g('rough')) - A['rough']) < 0.05 * max(A['rough'], 1.0)) and max(abs(at[0] - tops[0]), abs(at[1] - tops[1])) < 0.1)
         if not same: bad += 1; print('  DIFFERENT ANSWERS')
         for tag, s in (('out', 0.0), ('half', 0.5), ('further', 1.5), ('twice', 2.0)):
             d = db(app(pa, '-', s, len(a))[1], D.own(a, F['S'], F['vp'], A, s)); worst = max(worst, d); print('  %-10s app against prototype: %.1f dB' % (tag, d), flush=True)

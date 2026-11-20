@@ -4,7 +4,7 @@
 import sys, os, json, numpy as np, soundfile as sf
 sys.path[:0] = ['/tmp/claude-0/v2/detect/py']
 import zoo_fx as Z
-SR = 48000; OUT = '/dev/shm/mvl/'; r = np.random.default_rng(404); meta = json.load(open('/tmp/claude-0/v2/corpus/meta.json')); ids = sorted(meta)
+SR = 48000; OUT = '/dev/shm/mvl/'; os.makedirs(OUT, exist_ok=True); r = np.random.default_rng(404); meta = json.load(open('/tmp/claude-0/v2/corpus/meta.json')); ids = sorted(meta)
 def rd(cid):
     x = sf.read('/tmp/claude-0/v2/corpus/dry/%s.wav' % cid, dtype='float64', always_2d=True)[0]; return x[:, :2] if x.shape[1] > 1 else np.repeat(x, 2, 1)
 def chain(names, fade=2400):
