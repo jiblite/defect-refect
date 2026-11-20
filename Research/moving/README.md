@@ -22,9 +22,15 @@ with hard cuts and gaps, without a pitch, zaps, with found effects, at other rat
 engine could trip over, alone and onto second sounds) and `memcheck.py movefx` (MOVEMENT next to every effect type
 that is found, where the first sound is measured without its level movement or its moving filter): 80 runs, 522
 renders, every one clean. The older stages were not run again for 0.5.0: they keep MOVEMENT's faders in the middle,
-where the render test measures no movement and gives the files of 0.4.7 bit for bit (`Research/movement/same.py`). The scripts are a record of how the
-engine was built and judged, as they were run: paths point to the working folder they ran in, and no audio is in
-the repo.
+where the render test measures no movement and gives the files of 0.4.7 bit for bit (`Research/movement/same.py`).
+Build 0.5.1 added `memcheck.py four` for the FILTER engine and the DISTORTION and SATURATION engine: ten scoreboard
+cases, long sounds, sounds at the limits of what is read, mono files, files at 44.1, 96 and 192 kHz and two sounds
+with both (`Research/filter/mkcheck.py` makes these), alone and onto five second sounds, with the MOVEMENT faders
+pulled as well, and nine of them once more with the Sureness slider down: 34 runs, 1,632 renders. The two engines
+measure every sound, so all the older stages ran again on the final code too: 271 runs and 4,899 renders in all, every
+one clean. (`MC_SKIP` leaves out the runs that are done, so a stage that was cut off goes on where it stopped.) The
+scripts are a record of how the engine was built and judged, as they were run: paths point to the working folder
+they ran in, and no audio is in the repo.
 
 ## The method
 A phaser and a filter sweep are a filter whose curve moves. In the picture of the band levels over time (96 bands,

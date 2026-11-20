@@ -172,7 +172,9 @@ higher:
 | 44.1 kHz: a distortion, alone | Amount far left | -129.9 dB |
 | 44.1 kHz: the same onto a 44.1 kHz second sound | Amount far right | -131.0 dB |
 
-MEMCHECK_PLACEHOLDER
+The memory check ran every one of its stages again for this build, because the two new engines measure every sound:
+the new stage (`Research/moving/memcheck.py four`: 34 runs, 1,632 renders) and the nine older ones, 271 runs and 4,899
+renders in all, every one clean.
 
 The sanitizer does not see a value that is read before it was ever set. For that the two new engines' own test
 programs (`Tests/filter.cpp`, `Tests/bend.cpp`) ran under valgrind (`valgrind.sh`): each of the 15 sounds made for
