@@ -23,17 +23,17 @@ case $way in
 esac
 add() { echo "$*" >> $jobs; }
 if [ $way = tsan ]; then
-    for n in cut soft cutLong softLong trOneSoftLong trSpreadLong cutGap cut192 soft96 cutMono cutNearTwin trSides; do add "$P $R/bend.bin $Q/$n.wav - @ 0"; done
+    for n in cut soft cutLong softLong trOneSoftLong trSpreadLong cutGap cut192 soft96 soft96P cutMono softMonoP cutNoiseUp cutNearTwin trSides; do add "$P $R/bend.bin $Q/$n.wav - @ 0"; done
     add "env DR_FLAT_FIRST=96 DR_FLAT_PART=24 $P $R/bend.bin $Q/soft.wav - @ 0"
 else
     for f in $Q/*.wav; do add "$P $R/bend.bin $f - @ 0"; done
 fi
 if [ $way = asan ]; then
-    for n in cut soft cutUp cutNoise cutDeep cutHeld square softSquare cutTwo cut44 soft96 cutMono trSpread trRank trOneSoft cut1s cutHalf; do
+    for n in cut soft cutUp cutNoise cutNoiseUp cutDeep cutHeld square softSquare cutTwo cut44 soft96 soft96P cutMono softMonoP trSpread trRank trOneSoft cut1s cutHalf; do
         add "$P $R/bend.bin $Q/$n.wav - @ 2"; add "$P $R/bend.bin $Q/$n.wav - @ 0.5"; add "env DR_BEND_ANY=1 $P $R/bend.bin $Q/$n.wav - @ 0.01"
     done
     for s in $N/secMono.wav $N/sec44.wav $N/secTen.wav $Q/cutShort.wav $Q/square.wav; do
-        for n in cut soft cutUp cutNoise cut44 softMono square cutTwo; do add "$P $R/bend.bin $Q/$n.wav $s @ 1"; add "env DR_BEND_ANY=1 $P $R/bend.bin $Q/$n.wav $s @ 2"; done
+        for n in cut soft cutUp cutNoise cutNoiseUp cut44 softMono softMonoP square cutTwo; do add "$P $R/bend.bin $Q/$n.wav $s @ 1"; add "env DR_BEND_ANY=1 $P $R/bend.bin $Q/$n.wav $s @ 2"; done
     done
     for n in soft softOther soft1s trRough trSpread trOneSoft cut; do add "env DR_FLAT_FIRST=96 DR_FLAT_PART=24 $P $R/bend.bin $Q/$n.wav - @ 0"; add "env DR_FLAT_FIRST=48 DR_FLAT_PART=7 DR_BEND_ANY=1 $P $R/bend.bin $Q/$n.wav - @ 0"; done
     add "env DR_FLAT_FIRST=0 $P $R/bend.bin $Q/softLong.wav - @ 0"; add "env DR_BEND_PLAIN=1 $P $R/bend.bin $Q/soft.wav - @ 0"
