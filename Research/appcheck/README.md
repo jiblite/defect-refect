@@ -240,6 +240,21 @@ The app's exports against the render test's:
 | 96 kHz: soft flat tops, alone | Amount far left | -128.8 dB |
 | 96 kHz: soft flat tops that are not shown, alone | none | -130.6 dB |
 
+The memory check ran every one of its stages again for this build, because the declipper looks at every sound: the
+new stage (`Research/moving/memcheck.py flat`: 56 runs, 1,626 renders, on the 43 sounds of
+`Research/declip/mkcheck.py`) and the ten older ones, 327 runs and 6,525 renders in all, every one clean. (The
+machine restarted during the last two stages; the long test sounds were made again and the two stages ran from
+their start.)
+
+The sanitizer does not see a value that is read before it was ever set. For that the declipper's own test program
+(`Tests/bend.cpp`) ran under valgrind on each of the 43 sounds with the fader far left (`Research/declip/check.sh`):
+no report. The same script ran it under the address sanitizer (220 runs: every sound far left, some at other fader
+places and onto second sounds, some with the first pass forced onto parts of a short sound) and under the thread
+sanitizer (16 runs: the sounds whose rebuilding runs on several threads): no report. The whole render test ran under
+valgrind as well (`Research/declip/vg_render.sh`: a cut onto a mono second sound with the fader far right and alone
+with it far left and half way, a second of soft flat tops alone and onto a second sound of ten samples): no report,
+and all memory given back at the end.
+
 ## What it does not cover
 Dropping a file onto the window and the Open dialog (the sounds come in on the command line), playback (no sound
 device here), the Export IR dialogs, and anything that only Windows or the Mac does differently. The JUCE objects
