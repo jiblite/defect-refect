@@ -101,7 +101,7 @@ html += ('<h2>What the declipper cannot do</h2>'
  'A few clipped peaks, with less than half a dB to rebuild, do not show DISTORTION by themselves.</p>'
  '<p><b>A cut whose tops are not rebuilt, on a second sound.</b> How hard the first sound was driven is then not known. The second sound gets the curve as build 0.5.1 read it, and on a dense sound that reading is %d to %d dB too deep. '
  'On %s of the %s test cases of that kind the second sound comes out far worse than untouched, exactly as it did in build 0.5.1. This build does not mend that.</p>'
- '<p><b>Waiting.</b> Rebuilding takes time when a file is dropped: for a plain cut about %s of the sound\'s length, for pressed tops about a quarter of a long sound\'s length (a %d-second file: about %d seconds) and up to all of a short one\'s. '
+ '<p><b>Waiting.</b> Rebuilding takes time when a file is dropped: for a plain cut about %s of the sound\'s length, for pressed tops about a quarter of a long sound\'s length (a %d-second file: about %d seconds), and a very short sound can take longer than it lasts (one second of sound: a second and a half). '
  'The thresholds of all the checks rest on about 250 test sounds, which is not many.</p>'
  % (len(none), len(A), ex['a'], ex['w'], S['over'][0][0], S['over'][0][1], n_word[len(far)], n_word[len(t_not)], S['cut_wait'], S['long_s'], S['long_wait']))
 html += ('<p>The five examples below were picked by fixed rules, not by ear. Example %d: of the sounds through outside clippers whose tops are rebuilt, the middle one by score. Examples %d and %d: the two scoreboard cases that this build changes. '

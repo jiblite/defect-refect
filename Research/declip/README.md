@@ -225,8 +225,11 @@ for a cut on a second sound see `second.py`.
   known. The second sound goes through the curve as the meter read it, as in 0.5.1, and on a dense sound the
   meter reads a plain cut 6 to 9 dB too deep (23, 15 and 9 dB where 14.5, 6 and 3 are true). On three of the six
   such cases the second sound comes out far worse than untouched (-175, -137, -698), as it did in 0.5.1.
-- **Time.** A soft flat top costs half to nearly all of a short sound's length in waiting on four threads (few
-  stretches to share out, and twice that at 96 kHz), about a quarter of a long one's; a plain cut about a tenth.
+- **Time.** A soft flat top costs half of a short sound's length in waiting on four threads and more than the
+  whole length of a very short one (few stretches to share out, and twice that at 96 kHz), about a quarter of a
+  long one's and less where little has to be rebuilt; a plain cut about a tenth. Measured on a quiet machine with
+  the sounds of `mkcheck.py`: a soft flat top of 1 s 1.5 s, of 6 s 2.8 s, of a minute 5.5 s; a plain cut of 1 s
+  0.3 s, of 6 s 0.6 s, of 96 s 4.3 s.
 - The thresholds rest on about 250 cases.
 
 ## Files
